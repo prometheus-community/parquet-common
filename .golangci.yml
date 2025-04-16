@@ -1,0 +1,29 @@
+version: "2"
+linters:
+  enable:
+    - revive
+    - misspell
+    - depguard
+    - sloglint
+  settings:
+    revive:
+      rules:
+        - name: package-comments
+          disabled: true
+
+    depguard:
+      rules:
+        prevent_unmaintained_packages:
+          list-mode: lax # allow unless explicitely denied
+          files:
+            - $all
+            - "!$test"
+          allow:
+            - $gostd
+
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - gofumpt
+    - goimports

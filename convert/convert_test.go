@@ -1,3 +1,16 @@
+// Copyright 2021 The Prometheus Authors
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package convert
 
 import (
@@ -20,35 +33,35 @@ func Test_Convert_TSDB(t *testing.T) {
 	ctx := context.Background()
 
 	tc := []struct {
-		dataColDurationMs      time.Duration
+		dataColDuration        time.Duration
 		step                   time.Duration
 		numberOfSamples        int
 		expectedNumberOfChunks int
 		expectedPointsPerChunk int
 	}{
 		{
-			dataColDurationMs:      time.Hour,
+			dataColDuration:        time.Hour,
 			step:                   time.Hour,
 			numberOfSamples:        3,
 			expectedNumberOfChunks: 3,
 			expectedPointsPerChunk: 1,
 		},
 		{
-			dataColDurationMs:      time.Hour,
+			dataColDuration:        time.Hour,
 			step:                   time.Hour,
 			numberOfSamples:        48,
 			expectedNumberOfChunks: 48,
 			expectedPointsPerChunk: 1,
 		},
 		{
-			dataColDurationMs:      8 * time.Hour,
+			dataColDuration:        8 * time.Hour,
 			step:                   time.Hour / 2,
 			numberOfSamples:        10,
 			expectedNumberOfChunks: 1,
 			expectedPointsPerChunk: 10,
 		},
 		{
-			dataColDurationMs:      8 * time.Hour,
+			dataColDuration:        8 * time.Hour,
 			step:                   time.Hour / 2,
 			numberOfSamples:        32,
 			expectedNumberOfChunks: 2,
@@ -57,9 +70,9 @@ func Test_Convert_TSDB(t *testing.T) {
 	}
 
 	for _, tt := range tc {
-		t.Run(fmt.Sprintf("dataColDurationMs:%v,step:%v,numberOfSamples:%v", tt.dataColDurationMs.Hours(), tt.step.Seconds(), tt.numberOfSamples), func(t *testing.T) {
+		t.Run(fmt.Sprintf("dataColDurationMs:%v,step:%v,numberOfSamples:%v", tt.dataColDuration.Hours(), tt.step.Seconds(), tt.numberOfSamples), func(t *testing.T) {
 			st := teststorage.New(t)
-			t.Cleanup(func() { st.Close() })
+			t.Cleanup(func() { _ = st.Close() })
 
 			app := st.Appender(ctx)
 			seriesHash := make(map[uint64]struct{})
@@ -74,8 +87,8 @@ func Test_Convert_TSDB(t *testing.T) {
 
 			require.NoError(t, app.Commit())
 
-			h := st.DB.Head()
-			rr, err := newTsdbRowReader(ctx, h.MinTime(), h.MaxTime(), tt.dataColDurationMs.Milliseconds(), []Convertible{h})
+			h := st.Head()
+			rr, err := newTsdbRowReader(ctx, h.MinTime(), h.MaxTime(), tt.dataColDuration.Milliseconds(), []Convertible{h})
 			require.NoError(t, err)
 
 			defer func() { _ = rr.Close() }()
@@ -114,7 +127,7 @@ func Test_Convert_TSDB(t *testing.T) {
 func Test_CreateParquetWithReducedTimestampSamples(t *testing.T) {
 	ctx := context.Background()
 	st := teststorage.New(t)
-	t.Cleanup(func() { st.Close() })
+	t.Cleanup(func() { _ = st.Close() })
 
 	app := st.Appender(ctx)
 
@@ -127,7 +140,7 @@ func Test_CreateParquetWithReducedTimestampSamples(t *testing.T) {
 
 	require.NoError(t, app.Commit())
 
-	h := st.DB.Head()
+	h := st.Head()
 	mint, maxt := (time.Minute * 30).Milliseconds(), (time.Minute*90).Milliseconds()-1
 	rr, err := newTsdbRowReader(ctx, mint, maxt, (time.Minute * 10).Milliseconds(), []Convertible{h})
 	require.NoError(t, err)
