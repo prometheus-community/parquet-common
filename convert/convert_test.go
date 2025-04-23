@@ -148,7 +148,14 @@ func Test_CreateParquetWithReducedTimestampSamples(t *testing.T) {
 	mint, maxt := (time.Minute * 30).Milliseconds(), (time.Minute*90).Milliseconds()-1
 
 	datColDuration := time.Minute * 10
-	shards, err := ConvertTSDBBlock(ctx, bkt, mint, maxt, []Convertible{h}, WithColDuration(datColDuration), WithSortBy(labels.MetricName))
+	shards, err := ConvertTSDBBlock(
+		ctx, bkt, mint, maxt,
+		[]Convertible{h},
+		WithColDuration(datColDuration),
+		WithSortBy(labels.MetricName),
+		WithColumnPageBuffers(parquet.NewFileBufferPool(t.TempDir(), "buffers.*")),
+	)
+
 	require.NoError(t, err)
 	require.Equal(t, 1, shards)
 
@@ -242,7 +249,16 @@ func Test_SortedLabels(t *testing.T) {
 	h := st.Head()
 	h2 := st2.Head()
 	// lets sort first by `zzz` as its not the default sorting on TSDB
-	shards, err := ConvertTSDBBlock(ctx, bkt, 0, time.Minute.Milliseconds(), []Convertible{h2, h}, WithColDuration(time.Minute*10), WithSortBy("zzz", labels.MetricName))
+	shards, err := ConvertTSDBBlock(
+		ctx,
+		bkt,
+		0,
+		time.Minute.Milliseconds(),
+		[]Convertible{h2, h},
+		WithColDuration(time.Minute*10),
+		WithSortBy("zzz", labels.MetricName),
+		WithColumnPageBuffers(parquet.NewFileBufferPool(t.TempDir(), "buffers.*")),
+	)
 	require.NoError(t, err)
 	require.Equal(t, 1, shards)
 
