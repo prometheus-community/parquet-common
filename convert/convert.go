@@ -323,10 +323,11 @@ func (rr *TsdbRowReader) ReadRows(buf []parquet.Row) (int, error) {
 		}
 	}()
 
-	i := 0
+	i, j := 0, 0
 	for promise := range c {
+		j++
 		if promise.err != nil {
-			return 0, promise.err
+			return i, promise.err
 		}
 
 		rr.rowBuilder.Reset()
@@ -338,7 +339,6 @@ func (rr *TsdbRowReader) ReadRows(buf []parquet.Row) (int, error) {
 		})
 
 		chkBytes := <-promise.chunkBytesChan
-
 		// skip series that have no chunks in the requested time
 		if allChunksEmpty(chkBytes) {
 			continue
@@ -353,14 +353,13 @@ func (rr *TsdbRowReader) ReadRows(buf []parquet.Row) (int, error) {
 		buf[i] = rr.rowBuilder.AppendRow(buf[i][:0])
 		i++
 	}
-
 	rr.totalRead += int64(i)
 
 	if rr.ctx.Err() != nil {
-		return 0, rr.ctx.Err()
+		return i, rr.ctx.Err()
 	}
 
-	if i < len(buf) {
+	if j < len(buf) {
 		return i, io.EOF
 	}
 

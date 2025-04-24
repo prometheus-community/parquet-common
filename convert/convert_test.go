@@ -189,6 +189,73 @@ func Test_CreateParquetWithReducedTimestampSamples(t *testing.T) {
 	require.Equal(t, 120, totalSamples)
 }
 
+func Test_BlockHasOnlySomeSeriesInConvertTime(t *testing.T) {
+	ctx := context.Background()
+	st := teststorage.New(t)
+	t.Cleanup(func() { _ = st.Close() })
+
+	bkt, err := filesystem.NewBucket(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = bkt.Close() })
+
+	app := st.Appender(ctx)
+
+	// one series before convert time
+	_, err = app.Append(0, labels.FromStrings(
+		labels.MetricName, fmt.Sprintf("metric_%d", 0),
+		"i", fmt.Sprintf("%v", 0),
+	), 0, float64(0))
+	require.NoError(t, err)
+
+	// one series inside convert time
+	_, err = app.Append(0, labels.FromStrings(
+		labels.MetricName, fmt.Sprintf("metric_%d", 1),
+		"i", fmt.Sprintf("%v", 1),
+	), 11, float64(0))
+	require.NoError(t, err)
+
+	// one series after convert time
+	_, err = app.Append(0, labels.FromStrings(
+		labels.MetricName, fmt.Sprintf("metric_%d", 2),
+		"i", fmt.Sprintf("%v", 2),
+	), 21, float64(0))
+	require.NoError(t, err)
+
+	// many series inside convert time
+	for i := 0; i != 240; i++ {
+		_, err = app.Append(0, labels.FromStrings(
+			labels.MetricName, fmt.Sprintf("metric_%d", i+3),
+			"i", fmt.Sprintf("%v", 1),
+		), 11, float64(0))
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, app.Commit())
+
+	h := st.Head()
+
+	shards, err := ConvertTSDBBlock(
+		ctx,
+		bkt,
+		10,
+		20-1,
+		[]Convertible{h},
+		WithColDuration(time.Millisecond*10),
+		WithColumnPageBuffers(parquet.NewFileBufferPool(t.TempDir(), "buffers.*")),
+	)
+	require.NoError(t, err)
+	require.Equal(t, 1, shards)
+
+	labelsFileName := schema.LabelsPfileNameForShard(DefaultConvertOpts.name, 0)
+	chunksFileName := schema.ChunksPfileNameForShard(DefaultConvertOpts.name, 0)
+	lf, cf, err := openParquetFiles(ctx, bkt, labelsFileName, chunksFileName)
+	require.NoError(t, err)
+
+	series, _, err := readSeries(lf, cf)
+	require.NoError(t, err)
+	require.Len(t, series, 241)
+}
+
 func Test_SortedLabels(t *testing.T) {
 	ctx := context.Background()
 	st := teststorage.New(t)

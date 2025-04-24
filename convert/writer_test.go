@@ -54,7 +54,6 @@ func TestParquetWriter(t *testing.T) {
 
 	require.NoError(t, app.Commit())
 	h := st.Head()
-	mint, maxt := (time.Minute * 30).Milliseconds(), (time.Minute*90).Milliseconds()-1
 
 	convertsOpts := DefaultConvertOpts
 
@@ -64,7 +63,7 @@ func TestParquetWriter(t *testing.T) {
 	convertsOpts.writeBufferSize = 10
 	convertsOpts.sortedLabels = []string{labels.MetricName, "bar"}
 
-	rr, err := NewTsdbRowReader(ctx, mint, maxt, (time.Minute * 10).Milliseconds(), []Convertible{h}, convertsOpts)
+	rr, err := NewTsdbRowReader(ctx, h.MinTime(), h.MaxTime(), (time.Minute * 10).Milliseconds(), []Convertible{h}, convertsOpts)
 	require.NoError(t, err)
 	defer func() { _ = rr.Close() }()
 
