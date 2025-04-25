@@ -68,7 +68,7 @@ func WithCompression(s *parquet.Schema) *parquet.Schema {
 		g[lc.Path[0]] = parquet.Compressed(lc.Node, &zstd.Codec{Level: zstd.SpeedBetterCompression})
 	}
 
-	return parquet.NewSchema("uncompressed", g)
+	return parquet.NewSchema("compressed", g)
 }
 
 func MetadataToMap(md []format.KeyValue) map[string]string {

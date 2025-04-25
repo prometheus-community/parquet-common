@@ -156,11 +156,13 @@ func Test_ShouldRespectContextCancellation(t *testing.T) {
 	bkt, err := filesystem.NewBucket(t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = bkt.Close() })
-	s := parquet.NewSchema("testRow", parquet.Group{
-		"testField": parquet.Leaf(parquet.FixedLenByteArrayType(32)),
-	})
+	s := &schema.TSDBProjection{
+		Schema: parquet.NewSchema("testRow", parquet.Group{
+			"testField": parquet.Leaf(parquet.FixedLenByteArrayType(32)),
+		}),
+	}
 
-	sw, err := newSplitFileWriter(ctx, bkt, s, map[string]*parquet.Schema{"test": s})
+	sw, err := newSplitFileWriter(ctx, bkt, s.Schema, map[string]*schema.TSDBProjection{"test": s})
 	require.NoError(t, err)
 	require.ErrorIs(t, sw.Close(), context.Canceled)
 }

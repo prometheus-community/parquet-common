@@ -111,6 +111,20 @@ func Test_Convert_TSDB(t *testing.T) {
 			require.Equal(t, st.DB.Head().NumSeries(), uint64(len(series)))
 			require.Equal(t, st.DB.Head().NumSeries(), uint64(len(chunks)))
 
+			// Make sure the chunk page bounds are empty
+			for _, ci := range cf.ColumnIndexes() {
+				for _, value := range append(ci.MinValues, ci.MaxValues...) {
+					require.Empty(t, value)
+				}
+			}
+
+			// Make sure labels pages bounds are populated
+			for _, ci := range lf.ColumnIndexes() {
+				for _, value := range append(ci.MinValues, ci.MaxValues...) {
+					require.NotEmpty(t, value)
+				}
+			}
+
 			for i, s := range series {
 				require.Contains(t, seriesHash, s.Hash())
 				require.Len(t, chunks[i], tt.expectedNumberOfChunks)

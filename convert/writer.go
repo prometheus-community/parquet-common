@@ -135,7 +135,7 @@ func (c *ShardedWriter) writeFile(ctx context.Context, schema *schema.TSDBSchema
 	return n, nil
 }
 
-func (c *ShardedWriter) transformations() (map[string]*parquet.Schema, error) {
+func (c *ShardedWriter) transformations() (map[string]*schema.TSDBProjection, error) {
 	lblsProjection, err := c.s.LabelsProjection()
 	if err != nil {
 		return nil, errors.Wrap(err, "unable to get label projection")
@@ -146,9 +146,9 @@ func (c *ShardedWriter) transformations() (map[string]*parquet.Schema, error) {
 		return nil, errors.Wrap(err, "unable to create chunk projection")
 	}
 
-	return map[string]*parquet.Schema{
-		schema.LabelsPfileNameForShard(c.name, c.currentShard): schema.WithCompression(lblsProjection),
-		schema.ChunksPfileNameForShard(c.name, c.currentShard): schema.WithCompression(chksProjection),
+	return map[string]*schema.TSDBProjection{
+		schema.LabelsPfileNameForShard(c.name, c.currentShard): lblsProjection,
+		schema.ChunksPfileNameForShard(c.name, c.currentShard): chksProjection,
 	}, nil
 }
 
@@ -167,19 +167,20 @@ type splitPipeFileWriter struct {
 }
 
 func newSplitFileWriter(ctx context.Context, bkt objstore.Bucket, inSchema *parquet.Schema,
-	files map[string]*parquet.Schema, options ...parquet.WriterOption,
+	files map[string]*schema.TSDBProjection, options ...parquet.WriterOption,
 ) (*splitPipeFileWriter, error) {
 	fileWriters := make(map[string]*fileWriter)
 	errGroup, ctx := errgroup.WithContext(ctx)
-	for file, outSchema := range files {
-		conv, err := parquet.Convert(outSchema, inSchema)
+	for file, projection := range files {
+		conv, err := parquet.Convert(projection.Schema, inSchema)
 		if err != nil {
 			return nil, fmt.Errorf("unable to convert schemas")
 		}
 
 		r, w := io.Pipe()
+		opts := append(options, append(projection.ExtraOptions, projection.Schema)...)
 		fileWriters[file] = &fileWriter{
-			pw:   parquet.NewGenericWriter[any](w, append(options, outSchema)...),
+			pw:   parquet.NewGenericWriter[any](w, opts...),
 			w:    w,
 			r:    r,
 			conv: conv,
