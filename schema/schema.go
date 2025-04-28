@@ -78,3 +78,23 @@ func MetadataToMap(md []format.KeyValue) map[string]string {
 	}
 	return r
 }
+
+func Joined(l, r *parquet.Schema) *parquet.Schema {
+	g := make(parquet.Group)
+
+	for _, c := range l.Columns() {
+		lc, ok := l.Lookup(c...)
+		if !ok {
+			continue
+		}
+		g[c[0]] = lc.Node
+	}
+	for _, c := range r.Columns() {
+		lc, ok := r.Lookup(c...)
+		if !ok {
+			continue
+		}
+		g[c[0]] = lc.Node
+	}
+	return parquet.NewSchema("joined", g)
+}
