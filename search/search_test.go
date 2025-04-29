@@ -1,6 +1,7 @@
 package search
 
 import (
+	"io"
 	"slices"
 	"testing"
 
@@ -126,6 +127,50 @@ func equalRow(l, r parquet.Row) bool {
 	return slices.EqualFunc(l, r, func(lv, rv parquet.Value) bool {
 		return lv.String() == rv.String()
 	})
+}
+
+type testRows struct {
+	p    int
+	rows []parquet.Row
+}
+
+// parquet.Rows interface stuff we care about
+func (trs *testRows) Close() error { return nil }
+
+func (trs *testRows) ReadRows(r []parquet.Row) (int, error) {
+	if trs.p >= len(trs.rows) {
+		return 0, io.EOF
+	}
+	n := copy(r, trs.rows)
+	trs.p += n
+
+	if trs.p == len(trs.rows) {
+		return n, io.EOF
+	}
+	return n, nil
+}
+
+func TestConcatRowReader(t *testing.T) {
+	ccr := newConcatRowReader([]RowReaderCloser{
+		&testRows{
+			rows: []parquet.Row{{parquet.ValueOf(0), parquet.ValueOf(1)}, {parquet.ValueOf(3)}},
+		},
+		&testRows{
+			rows: []parquet.Row{{parquet.ValueOf(4), parquet.ValueOf(5)}, {parquet.ValueOf(6)}},
+		},
+	})
+
+	got := readAll(t, ccr)
+	expect := []parquet.Row{
+		{parquet.ValueOf(0), parquet.ValueOf(1)},
+		{parquet.ValueOf(3)},
+		{parquet.ValueOf(4), parquet.ValueOf(5)},
+		{parquet.ValueOf(6)},
+	}
+
+	if !equalRows(got, expect) {
+		t.Fatalf("expected %q to equal %q", got, expect)
+	}
 }
 
 func readAll(t *testing.T, rr parquet.RowReader) []parquet.Row {
