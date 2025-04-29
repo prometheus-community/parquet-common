@@ -39,13 +39,13 @@ type RowReaderCloser interface {
 
 func Match(
 	c Constraint,
-	labelPfile *parquet.File, // TODO suggest rename to labelFile
+	labelFile *parquet.File,
 	labelSchema *parquet.Schema,
-	chunkPfile *parquet.File, // TODO suggest rename to chunkFile
+	chunkFile *parquet.File,
 	chunkSchema *parquet.Schema,
 ) (RowReaderCloser, error) {
-	labelRowGroups := labelPfile.RowGroups()
-	chunkRowGroups := chunkPfile.RowGroups()
+	labelRowGroups := labelFile.RowGroups()
+	chunkRowGroups := chunkFile.RowGroups()
 
 	joinedSchema := schema.Joined(labelSchema, chunkSchema)
 	if err := c.init(joinedSchema); err != nil {
