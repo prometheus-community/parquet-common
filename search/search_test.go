@@ -100,7 +100,9 @@ func TestSearch(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer rr.Close()
+			defer func() {
+				_ = rr.Close()
+			}()
 
 			got := readAll(t, rr)
 			expect := []parquet.Row{

@@ -20,7 +20,6 @@ import (
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/parquet-go/parquet-go"
-
 	"github.com/prometheus-community/parquet-common/schema"
 )
 
@@ -122,7 +121,6 @@ func (r *rangesRowReader) ReadRows(buf []parquet.Row) (int, error) {
 	}
 	r.rCurRow += n
 	return n, err
-
 }
 
 func (r *rangesRowReader) Close() error {
@@ -152,7 +150,7 @@ func (r *columnChunkValueReader) Reset() {
 		// Ignore errors because we are resetting the reader, if the error
 		// persists we will see it on the next read, and otherwise we can
 		// read back from the beginning.
-		r.pages.SeekToRow(0)
+		_ = r.pages.SeekToRow(0)
 	}
 	r.clear()
 }
