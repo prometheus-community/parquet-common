@@ -31,7 +31,7 @@ func TestMaterializeE2E(t *testing.T) {
 
 	app := st.Appender(ctx)
 	seriesHash := make(map[uint64]*struct{})
-	totalMetricNames := 10
+	totalMetricNames := 1_000
 	metricsPerMetricsName := 20
 	numberOfLabels := 5
 	randomLabels := 3
@@ -67,6 +67,7 @@ func TestMaterializeE2E(t *testing.T) {
 	require.NoError(t, app.Commit())
 
 	h := st.Head()
+	colDuration := time.Hour
 	shards, err := convert.ConvertTSDBBlock(
 		ctx,
 		bkt,
@@ -74,7 +75,7 @@ func TestMaterializeE2E(t *testing.T) {
 		h.MaxTime(),
 		[]convert.Convertible{h},
 		convert.WithName("block"),
-		convert.WithColDuration(time.Hour), // lets force more than 1 data col
+		convert.WithColDuration(colDuration), // lets force more than 1 data col
 		convert.WithRowGroupSize(500),
 		convert.WithPageBufferSize(300), // force create multiples pages
 	)
@@ -89,7 +90,7 @@ func TestMaterializeE2E(t *testing.T) {
 
 	// Query by unique label (not sorted label)
 	eq := Equal(schema.LabelToColumn("unique"), parquet.ValueOf("unique_0"))
-	found := query(t, eq, h.MinTime(), h.MaxTime(), lf, cf)
+	found := query(t, h.MinTime(), h.MaxTime(), lf, cf, eq)
 	require.Len(t, found, totalMetricNames)
 
 	for _, series := range found {
@@ -102,7 +103,7 @@ func TestMaterializeE2E(t *testing.T) {
 		name := fmt.Sprintf("metric_%d", rand.Int()%totalMetricNames)
 		eq := Equal(schema.LabelToColumn(labels.MetricName), parquet.ValueOf(name))
 
-		found := query(t, eq, h.MinTime(), h.MaxTime(), lf, cf)
+		found := query(t, h.MinTime(), h.MaxTime(), lf, cf, eq)
 
 		require.Len(t, found, metricsPerMetricsName, fmt.Sprintf("metric_%d", i))
 
@@ -121,11 +122,24 @@ func TestMaterializeE2E(t *testing.T) {
 			require.Equal(t, totalSamples, numberOfSamples)
 		}
 	}
+
+	// Query block with partial timestamp (make sure we only open the correct cols
+	c1 := Equal(schema.LabelToColumn(labels.MetricName), parquet.ValueOf("metric_0"))
+	c2 := Equal(schema.LabelToColumn("unique"), parquet.ValueOf("unique_0"))
+	found = query(t, h.MinTime(), h.MinTime()+colDuration.Milliseconds()-1, lf, cf, c1, c2)
+	require.Len(t, found, 1)
+	require.Len(t, found[0].(*concreteChunksSeries).chks, 1)
+	found = query(t, h.MinTime(), h.MinTime()+(2*colDuration).Milliseconds()-1, lf, cf, c1, c2)
+	require.Len(t, found, 1)
+	require.Len(t, found[0].(*concreteChunksSeries).chks, 2)
 }
 
-func query(t *testing.T, c Constraint, mint, maxt int64, lf, cf *parquet.File) []storage.ChunkSeries {
+func query(t *testing.T, mint, maxt int64, lf, cf *parquet.File, constraints ...Constraint) []storage.ChunkSeries {
 	ctx := context.Background()
-	require.NoError(t, c.init(lf.Schema()))
+	for _, c := range constraints {
+		require.NoError(t, c.init(lf.Schema()))
+	}
+
 	s, err := schema.FromLabelsFile(lf)
 	require.NoError(t, err)
 	d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
@@ -134,7 +148,7 @@ func query(t *testing.T, c Constraint, mint, maxt int64, lf, cf *parquet.File) [
 
 	found := make([]storage.ChunkSeries, 0, 100)
 	for i, group := range lf.RowGroups() {
-		rr, err := filter(group, c)
+		rr, err := filter(group, constraints...)
 		total := int64(0)
 		for _, r := range rr {
 			total += r.count
