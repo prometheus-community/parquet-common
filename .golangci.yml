@@ -23,7 +23,11 @@ linters:
 
 formatters:
   enable:
-    - gci
     - gofmt
     - gofumpt
     - goimports
+
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/prometheus-community/parquet-common
