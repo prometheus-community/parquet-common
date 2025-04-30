@@ -24,15 +24,15 @@ import (
 	"time"
 
 	"github.com/parquet-go/parquet-go"
-	"github.com/prometheus-community/parquet-common/schema"
-	"github.com/prometheus-community/parquet-common/util"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/prometheus/tsdb/chunks"
 	"github.com/prometheus/prometheus/util/teststorage"
 	"github.com/stretchr/testify/require"
-	"github.com/thanos-io/objstore"
 	"github.com/thanos-io/objstore/providers/filesystem"
+
+	"github.com/prometheus-community/parquet-common/schema"
+	"github.com/prometheus-community/parquet-common/util"
 )
 
 func Test_Convert_TSDB(t *testing.T) {
@@ -104,8 +104,9 @@ func Test_Convert_TSDB(t *testing.T) {
 
 			labelsFileName := schema.LabelsPfileNameForShard(DefaultConvertOpts.name, 0)
 			chunksFileName := schema.ChunksPfileNameForShard(DefaultConvertOpts.name, 0)
-			lf, cf, err := openParquetFiles(ctx, bkt, labelsFileName, chunksFileName)
+			lf, cf, err := util.OpenParquetFiles(ctx, bkt, labelsFileName, chunksFileName)
 			require.NoError(t, err)
+			require.Equal(t, len(lf.RowGroups()), len(cf.RowGroups()))
 			series, chunks, err := readSeries(t, lf, cf)
 			require.NoError(t, err)
 			require.Equal(t, st.DB.Head().NumSeries(), uint64(len(series)))
@@ -176,7 +177,7 @@ func Test_CreateParquetWithReducedTimestampSamples(t *testing.T) {
 
 	labelsFileName := schema.LabelsPfileNameForShard(DefaultConvertOpts.name, 0)
 	chunksFileName := schema.ChunksPfileNameForShard(DefaultConvertOpts.name, 0)
-	lf, cf, err := openParquetFiles(ctx, bkt, labelsFileName, chunksFileName)
+	lf, cf, err := util.OpenParquetFiles(ctx, bkt, labelsFileName, chunksFileName)
 	require.NoError(t, err)
 
 	// Check metadatas
@@ -265,7 +266,7 @@ func Test_BlockHasOnlySomeSeriesInConvertTime(t *testing.T) {
 
 	labelsFileName := schema.LabelsPfileNameForShard(DefaultConvertOpts.name, 0)
 	chunksFileName := schema.ChunksPfileNameForShard(DefaultConvertOpts.name, 0)
-	lf, cf, err := openParquetFiles(ctx, bkt, labelsFileName, chunksFileName)
+	lf, cf, err := util.OpenParquetFiles(ctx, bkt, labelsFileName, chunksFileName)
 	require.NoError(t, err)
 
 	series, _, err := readSeries(t, lf, cf)
@@ -342,7 +343,7 @@ func Test_SortedLabels(t *testing.T) {
 
 	labelsFileName := schema.LabelsPfileNameForShard(DefaultConvertOpts.name, 0)
 	chunksFileName := schema.ChunksPfileNameForShard(DefaultConvertOpts.name, 0)
-	lf, cf, err := openParquetFiles(ctx, bkt, labelsFileName, chunksFileName)
+	lf, cf, err := util.OpenParquetFiles(ctx, bkt, labelsFileName, chunksFileName)
 	require.NoError(t, err)
 
 	series, chunks, err := readSeries(t, lf, cf)
@@ -370,28 +371,6 @@ func Test_SortedLabels(t *testing.T) {
 
 		require.NoError(t, st.Err())
 	}
-}
-
-func openParquetFiles(ctx context.Context, bkt objstore.Bucket, labelsFileName, chunksFileName string) (*parquet.File, *parquet.File, error) {
-	labelsAttr, err := bkt.Attributes(ctx, labelsFileName)
-	if err != nil {
-		return nil, nil, err
-	}
-	labelsFile, err := parquet.OpenFile(util.NewBucketReadAt(ctx, labelsFileName, bkt), labelsAttr.Size)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	chunksAttr, err := bkt.Attributes(ctx, chunksFileName)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	chunksFile, err := parquet.OpenFile(util.NewBucketReadAt(ctx, chunksFileName, bkt), chunksAttr.Size)
-	if err != nil {
-		return nil, nil, err
-	}
-	return labelsFile, chunksFile, nil
 }
 
 func readSeries(t *testing.T, labelsFile, chunksFile *parquet.File) ([]labels.Labels, [][]chunks.Meta, error) {

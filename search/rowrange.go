@@ -22,6 +22,14 @@ type rowRange struct {
 	count int64
 }
 
+// Overlaps returns true if the receiver and the given rowRange share any overlapping rows.
+// Both ranges are treated as half-open intervals: [from, from+count).
+func (rr rowRange) Overlaps(o rowRange) bool {
+	endA := rr.from + rr.count
+	endB := o.from + o.count
+	return rr.from < endB && o.from < endA
+}
+
 // intersect intersects the row ranges from left hand sight with the row ranges from rhs
 // it assumes that lhs and rhs are simplified and returns a simplified result.
 // it operates in o(l+r) time by cursoring through ranges with a two pointer approach.

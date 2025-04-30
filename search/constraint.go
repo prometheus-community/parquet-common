@@ -48,7 +48,8 @@ func filter(rg parquet.RowGroup, cs ...Constraint) ([]rowRange, error) {
 	}
 	rr := []rowRange{{from: int64(0), count: rg.NumRows()}}
 	for i := range cs {
-		srr, err := cs[i].filter(rg, i == 0, rr)
+		isPrimary := len(sc) > 0 && cs[i].path() == sc[0].Path()[0]
+		srr, err := cs[i].filter(rg, isPrimary, rr)
 		if err != nil {
 			return nil, fmt.Errorf("unable to filter with constraint %d: %w", i, err)
 		}
