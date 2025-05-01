@@ -15,7 +15,7 @@ package util
 
 import (
 	"context"
-	
+
 	"github.com/parquet-go/parquet-go"
 	"github.com/thanos-io/objstore"
 )
@@ -27,15 +27,15 @@ func CloneRows(rows []parquet.Row) []parquet.Row {
 	}
 	return rr
 }
-// OpenParquetFiles opens the labels and chunks files, reading their magic bytes 
-// and footers to validate that the files are properly formatted. 
-// It is the caller's responsibility to close file descriptors when using the files.
-func OpenParquetFiles(ctx context.Context, bkt objstore.Bucket, labelsFileName, chunksFileName string) (*parquet.File, *parquet.File, error) {
+
+// OpenParquetFiles opens the provided labels and chunks Parquet files from the object store,
+// using the options param.
+func OpenParquetFiles(ctx context.Context, bkt objstore.Bucket, labelsFileName, chunksFileName string, options ...parquet.FileOption) (*parquet.File, *parquet.File, error) {
 	labelsAttr, err := bkt.Attributes(ctx, labelsFileName)
 	if err != nil {
 		return nil, nil, err
 	}
-	labelsFile, err := parquet.OpenFile(NewBucketReadAt(ctx, labelsFileName, bkt), labelsAttr.Size)
+	labelsFile, err := parquet.OpenFile(NewBucketReadAt(ctx, labelsFileName, bkt), labelsAttr.Size, options...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -45,7 +45,7 @@ func OpenParquetFiles(ctx context.Context, bkt objstore.Bucket, labelsFileName, 
 		return nil, nil, err
 	}
 
-	chunksFile, err := parquet.OpenFile(NewBucketReadAt(ctx, chunksFileName, bkt), chunksAttr.Size)
+	chunksFile, err := parquet.OpenFile(NewBucketReadAt(ctx, chunksFileName, bkt), chunksAttr.Size, options...)
 	if err != nil {
 		return nil, nil, err
 	}
