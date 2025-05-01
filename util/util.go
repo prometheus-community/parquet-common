@@ -1,12 +1,16 @@
 package util
 
 import (
+	"context"
 	"unsafe"
 
-	"context"
 	"github.com/parquet-go/parquet-go"
 	"github.com/thanos-io/objstore"
 )
+
+func YoloString(buf []byte) string {
+	return *((*string)(unsafe.Pointer(&buf)))
+}
 
 func CloneRows(rows []parquet.Row) []parquet.Row {
 	rr := make([]parquet.Row, len(rows))
@@ -14,10 +18,6 @@ func CloneRows(rows []parquet.Row) []parquet.Row {
 		rr[i] = row.Clone()
 	}
 	return rr
-}
-
-func YoloString(buf []byte) string {
-	return *((*string)(unsafe.Pointer(&buf)))
 }
 
 func OpenParquetFiles(ctx context.Context, bkt objstore.Bucket, labelsFileName, chunksFileName string) (*parquet.File, *parquet.File, error) {
