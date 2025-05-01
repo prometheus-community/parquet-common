@@ -79,6 +79,10 @@ func (s *symbolTable) Get(i int) parquet.Value {
 	}
 }
 
+func (s *symbolTable) GetIndex(i int) int32 {
+	return s.syms[i]
+}
+
 func (s *symbolTable) Reset(pg parquet.Page) {
 	dict := pg.Dictionary()
 	data := pg.Data()
