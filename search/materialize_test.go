@@ -29,35 +29,113 @@ func TestMaterializeE2E(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = bkt.Close() })
 
+	cfg := defaultTestConfig()
+	data := generateTestData(t, st, ctx, cfg)
+
+	// Convert to Parquet
+	lf, cf := convertToParquet(t, ctx, bkt, data, st.Head())
+
+	t.Run("QueryByUniqueLabel", func(t *testing.T) {
+		eq := Equal(schema.LabelToColumn("unique"), parquet.ValueOf("unique_0"))
+		found := query(t, data.minTime, data.maxTime, lf, cf, eq)
+		require.Len(t, found, cfg.totalMetricNames)
+
+		for _, series := range found {
+			require.Equal(t, series.Labels().Get("unique"), "unique_0")
+			require.Contains(t, data.seriesHash, series.Labels().Hash())
+		}
+	})
+
+	t.Run("QueryByMetricName", func(t *testing.T) {
+		for i := 0; i < 50; i++ {
+			name := fmt.Sprintf("metric_%d", rand.Int()%cfg.totalMetricNames)
+			eq := Equal(schema.LabelToColumn(labels.MetricName), parquet.ValueOf(name))
+
+			found := query(t, data.minTime, data.maxTime, lf, cf, eq)
+			require.Len(t, found, cfg.metricsPerMetricName, fmt.Sprintf("metric_%d", i))
+
+			for _, series := range found {
+				require.Equal(t, series.Labels().Get(labels.MetricName), name)
+				require.Contains(t, data.seriesHash, series.Labels().Hash())
+
+				totalSamples := 0
+				ci := series.Iterator(nil)
+				for ci.Next() {
+					si := ci.At().Chunk.Iterator(nil)
+					for si.Next() != chunkenc.ValNone {
+						totalSamples++
+					}
+				}
+				require.Equal(t, totalSamples, cfg.numberOfSamples)
+			}
+		}
+	})
+
+	t.Run("QueryByTimeRange", func(t *testing.T) {
+		colDuration := time.Hour
+		c1 := Equal(schema.LabelToColumn(labels.MetricName), parquet.ValueOf("metric_0"))
+		c2 := Equal(schema.LabelToColumn("unique"), parquet.ValueOf("unique_0"))
+
+		// Test first column only
+		found := query(t, data.minTime, data.minTime+colDuration.Milliseconds()-1, lf, cf, c1, c2)
+		require.Len(t, found, 1)
+		require.Len(t, found[0].(*concreteChunksSeries).chks, 1)
+
+		// Test first two columns
+		found = query(t, data.minTime, data.minTime+(2*colDuration).Milliseconds()-1, lf, cf, c1, c2)
+		require.Len(t, found, 1)
+		require.Len(t, found[0].(*concreteChunksSeries).chks, 2)
+	})
+}
+
+type testConfig struct {
+	totalMetricNames     int
+	metricsPerMetricName int
+	numberOfLabels       int
+	randomLabels         int
+	numberOfSamples      int
+}
+
+func defaultTestConfig() testConfig {
+	return testConfig{
+		totalMetricNames:     1_000,
+		metricsPerMetricName: 20,
+		numberOfLabels:       5,
+		randomLabels:         3,
+		numberOfSamples:      250,
+	}
+}
+
+type testData struct {
+	seriesHash map[uint64]*struct{}
+	minTime    int64
+	maxTime    int64
+}
+
+func generateTestData(t *testing.T, st *teststorage.TestStorage, ctx context.Context, cfg testConfig) testData {
 	app := st.Appender(ctx)
 	seriesHash := make(map[uint64]*struct{})
-	totalMetricNames := 1_000
-	metricsPerMetricsName := 20
-	numberOfLabels := 5
-	randomLabels := 3
-	numberOfSamples := 250
+	builder := labels.NewScratchBuilder(cfg.numberOfLabels)
 
-	builder := labels.NewScratchBuilder(numberOfLabels)
-
-	for i := 0; i < totalMetricNames; i++ {
-		for n := 0; n < metricsPerMetricsName; n++ {
+	for i := 0; i < cfg.totalMetricNames; i++ {
+		for n := 0; n < cfg.metricsPerMetricName; n++ {
 			builder.Reset()
 			builder.Add(labels.MetricName, fmt.Sprintf("metric_%d", i))
 			builder.Add("unique", fmt.Sprintf("unique_%d", n))
 
-			for j := 0; j < numberOfLabels; j++ {
+			for j := 0; j < cfg.numberOfLabels; j++ {
 				builder.Add(fmt.Sprintf("label_name_%v", j), fmt.Sprintf("label_value_%v", j))
 			}
 
 			firstRandom := rand.Int() % 10
-			for k := firstRandom; k < firstRandom+randomLabels; k++ {
+			for k := firstRandom; k < firstRandom+cfg.randomLabels; k++ {
 				builder.Add(fmt.Sprintf("randon_name_%v", k), fmt.Sprintf("randon_value_%v", k))
 			}
 
 			builder.Sort()
 			lbls := builder.Labels()
 			seriesHash[lbls.Hash()] = &struct{}{}
-			for s := 0; s < numberOfSamples; s++ {
+			for s := 0; s < cfg.numberOfSamples; s++ {
 				_, err := app.Append(0, lbls, (1 * time.Minute * time.Duration(s)).Milliseconds(), float64(i))
 				require.NoError(t, err)
 			}
@@ -65,21 +143,28 @@ func TestMaterializeE2E(t *testing.T) {
 	}
 
 	require.NoError(t, app.Commit())
-
 	h := st.Head()
+
+	return testData{
+		seriesHash: seriesHash,
+		minTime:    h.MinTime(),
+		maxTime:    h.MaxTime(),
+	}
+}
+
+func convertToParquet(t *testing.T, ctx context.Context, bkt *filesystem.Bucket, data testData, h convert.Convertible) (*parquet.File, *parquet.File) {
 	colDuration := time.Hour
 	shards, err := convert.ConvertTSDBBlock(
 		ctx,
 		bkt,
-		h.MinTime(),
-		h.MaxTime(),
+		data.minTime,
+		data.maxTime,
 		[]convert.Convertible{h},
 		convert.WithName("block"),
-		convert.WithColDuration(colDuration), // lets force more than 1 data col
+		convert.WithColDuration(colDuration), // let's force more than 1 data col
 		convert.WithRowGroupSize(500),
-		convert.WithPageBufferSize(300), // force create multiples pages
+		convert.WithPageBufferSize(300), // force creating multiples pages
 	)
-
 	require.NoError(t, err)
 	require.Equal(t, 1, shards)
 
@@ -88,50 +173,7 @@ func TestMaterializeE2E(t *testing.T) {
 	lf, cf, err := util.OpenParquetFiles(ctx, bkt, labelsFileName, chunksFileName)
 	require.NoError(t, err)
 
-	// Query by unique label (not sorted label)
-	eq := Equal(schema.LabelToColumn("unique"), parquet.ValueOf("unique_0"))
-	found := query(t, h.MinTime(), h.MaxTime(), lf, cf, eq)
-	require.Len(t, found, totalMetricNames)
-
-	for _, series := range found {
-		require.Equal(t, series.Labels().Get("unique"), "unique_0")
-		require.Contains(t, seriesHash, series.Labels().Hash())
-	}
-
-	// Query some random metric name
-	for i := 0; i < 50; i++ {
-		name := fmt.Sprintf("metric_%d", rand.Int()%totalMetricNames)
-		eq := Equal(schema.LabelToColumn(labels.MetricName), parquet.ValueOf(name))
-
-		found := query(t, h.MinTime(), h.MaxTime(), lf, cf, eq)
-
-		require.Len(t, found, metricsPerMetricsName, fmt.Sprintf("metric_%d", i))
-
-		for _, series := range found {
-			require.Equal(t, series.Labels().Get(labels.MetricName), name)
-			require.Contains(t, seriesHash, series.Labels().Hash())
-
-			totalSamples := 0
-			ci := series.Iterator(nil)
-			for ci.Next() {
-				si := ci.At().Chunk.Iterator(nil)
-				for si.Next() != chunkenc.ValNone {
-					totalSamples++
-				}
-			}
-			require.Equal(t, totalSamples, numberOfSamples)
-		}
-	}
-
-	// Query block with partial timestamp (make sure we only open the correct cols
-	c1 := Equal(schema.LabelToColumn(labels.MetricName), parquet.ValueOf("metric_0"))
-	c2 := Equal(schema.LabelToColumn("unique"), parquet.ValueOf("unique_0"))
-	found = query(t, h.MinTime(), h.MinTime()+colDuration.Milliseconds()-1, lf, cf, c1, c2)
-	require.Len(t, found, 1)
-	require.Len(t, found[0].(*concreteChunksSeries).chks, 1)
-	found = query(t, h.MinTime(), h.MinTime()+(2*colDuration).Milliseconds()-1, lf, cf, c1, c2)
-	require.Len(t, found, 1)
-	require.Len(t, found[0].(*concreteChunksSeries).chks, 2)
+	return lf, cf
 }
 
 func query(t *testing.T, mint, maxt int64, lf, cf *parquet.File, constraints ...Constraint) []storage.ChunkSeries {
