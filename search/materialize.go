@@ -200,8 +200,8 @@ func (m *Materializer) materializeColumn(ctx context.Context, group parquet.RowG
 				return errors.Wrap(err, "could not seek to row")
 			}
 
+			vi := new(valuesIterator)
 			remainingRr := p.rows
-
 			currentRr := remainingRr[0]
 			next := currentRr.from
 			remaining := currentRr.count
@@ -213,36 +213,26 @@ func (m *Materializer) materializeColumn(ctx context.Context, group parquet.RowG
 				if err != nil {
 					return errors.Wrap(err, "could not read page")
 				}
-
-				vr := page.Values()
-				for {
-					values := [1024]parquet.Value{}
-					n, err := vr.ReadValues(values[:])
-					if err != nil && err != io.EOF {
-						parquet.Release(page)
-						return err
-					}
-
-					for _, value := range values[:n] {
-						if currentRow == next {
-							r[currentRr] = append(r[currentRr], value.Clone())
-							remaining--
-							if remaining > 0 {
-								next = next + 1
-							} else if len(remainingRr) > 0 {
-								currentRr = remainingRr[0]
-								next = currentRr.from
-								remaining = currentRr.count
-								remainingRr = remainingRr[1:]
-							}
+				vi.Reset(page)
+				for vi.Next() {
+					if currentRow == next {
+						r[currentRr] = append(r[currentRr], vi.At())
+						remaining--
+						if remaining > 0 {
+							next = next + 1
+						} else if len(remainingRr) > 0 {
+							currentRr = remainingRr[0]
+							next = currentRr.from
+							remaining = currentRr.count
+							remainingRr = remainingRr[1:]
 						}
-						currentRow++
 					}
+					currentRow++
+				}
+				parquet.Release(page)
 
-					if err == io.EOF {
-						parquet.Release(page)
-						break
-					}
+				if vi.Error() != nil {
+					return vi.Error()
 				}
 			}
 			return nil
@@ -302,6 +292,75 @@ func coalescePageRanges(pagedIdx map[int][]rowRange, offset parquet.OffsetIndex)
 	}
 
 	return r
+}
+
+type valuesIterator struct {
+	p             parquet.Page
+	st            symbolTable
+	cachedSymbols map[int32]parquet.Value
+
+	vr parquet.ValueReader
+
+	current            int
+	buffer             []parquet.Value
+	currentBufferIndex int
+	err                error
+}
+
+func (vi *valuesIterator) Reset(p parquet.Page) {
+	vi.p = p
+	vi.vr = nil
+	if p.Dictionary() != nil {
+		vi.st.Reset(p)
+		vi.cachedSymbols = make(map[int32]parquet.Value, p.Dictionary().Len())
+	} else {
+		vi.vr = p.Values()
+		vi.buffer = make([]parquet.Value, 0, 128)
+		vi.currentBufferIndex = -1
+	}
+	vi.current = -1
+}
+
+func (vi *valuesIterator) Next() bool {
+	if vi.err != nil {
+		return false
+	}
+
+	vi.current++
+	if vi.current >= int(vi.p.NumRows()) {
+		return false
+	}
+
+	vi.currentBufferIndex++
+
+	if vi.currentBufferIndex == len(vi.buffer) {
+		n, err := vi.vr.ReadValues(vi.buffer[:cap(vi.buffer)])
+		if err != nil && err != io.EOF {
+			vi.err = err
+		}
+		vi.buffer = vi.buffer[:n]
+		vi.currentBufferIndex = 0
+	}
+
+	return true
+}
+
+func (vi *valuesIterator) Error() error {
+	return vi.err
+}
+
+func (vi *valuesIterator) At() parquet.Value {
+	if vi.vr == nil {
+		dicIndex := vi.st.GetIndex(vi.current)
+		// Cache a clone of the current symbol table entry.
+		// This allows us to release the original page while avoiding unnecessary future clones.
+		if _, ok := vi.cachedSymbols[dicIndex]; !ok {
+			vi.cachedSymbols[dicIndex] = vi.st.Get(vi.current).Clone()
+		}
+		return vi.cachedSymbols[dicIndex]
+	}
+
+	return vi.buffer[vi.currentBufferIndex].Clone()
 }
 
 var _ storage.ChunkSeries = &concreteChunksSeries{}
