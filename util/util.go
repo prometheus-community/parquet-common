@@ -2,10 +2,15 @@ package util
 
 import (
 	"context"
+	"unsafe"
 
 	"github.com/parquet-go/parquet-go"
 	"github.com/thanos-io/objstore"
 )
+
+func YoloString(buf []byte) string {
+	return *((*string)(unsafe.Pointer(&buf)))
+}
 
 func CloneRows(rows []parquet.Row) []parquet.Row {
 	rr := make([]parquet.Row, len(rows))
