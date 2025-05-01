@@ -281,7 +281,7 @@ func (m *Materializer) materializeColumn(ctx context.Context, group parquet.RowG
 		return nil, errors.Wrap(err, "failed to materialize columns")
 	}
 
-	values := make([]parquet.Value, 0, 1024)
+	values := make([]parquet.Value, 0, len(rr))
 	for _, v := range rr {
 		values = append(values, r[v]...)
 	}
@@ -303,6 +303,7 @@ type pageEntryRead struct {
 // Merge nearby pages to enable efficient sequential reads.
 // Pages that are not close to each other will be scheduled for concurrent reads.
 func coalescePageRanges(pagedIdx map[int][]rowRange, offset parquet.OffsetIndex) []pageEntryRead {
+	// TODO: Add the max gap size as parameter
 	partitioner := util.NewGapBasedPartitioner(10 * 1024)
 	if len(pagedIdx) == 0 {
 		return []pageEntryRead{}
@@ -333,9 +334,11 @@ func coalescePageRanges(pagedIdx map[int][]rowRange, offset parquet.OffsetIndex)
 }
 
 type valuesIterator struct {
-	p             parquet.Page
-	st            symbolTable
+	p parquet.Page
+
+	//TODO: consider using unique.Handle
 	cachedSymbols map[int32]parquet.Value
+	st            symbolTable
 
 	vr parquet.ValueReader
 
