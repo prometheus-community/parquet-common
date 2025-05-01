@@ -27,7 +27,9 @@ func CloneRows(rows []parquet.Row) []parquet.Row {
 	}
 	return rr
 }
-
+// OpenParquetFiles opens the labels and chunks files, reading their magic bytes 
+// and footers to validate that the files are properly formatted. 
+// It is the caller's responsibility to close file descriptors when using the files.
 func OpenParquetFiles(ctx context.Context, bkt objstore.Bucket, labelsFileName, chunksFileName string) (*parquet.File, *parquet.File, error) {
 	labelsAttr, err := bkt.Attributes(ctx, labelsFileName)
 	if err != nil {
