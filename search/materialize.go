@@ -336,7 +336,7 @@ func coalescePageRanges(pagedIdx map[int][]rowRange, offset parquet.OffsetIndex)
 type valuesIterator struct {
 	p parquet.Page
 
-	//TODO: consider using unique.Handle
+	// TODO: consider using unique.Handle
 	cachedSymbols map[int32]parquet.Value
 	st            symbolTable
 
