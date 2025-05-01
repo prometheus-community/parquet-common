@@ -215,3 +215,74 @@ func TestSimplify(t *testing.T) {
 		})
 	}
 }
+
+func TestOverlaps(t *testing.T) {
+	for _, tt := range []struct {
+		a, b   rowRange
+		expect bool
+	}{
+		// Identical ranges
+		{
+			a:      rowRange{from: 0, count: 5},
+			b:      rowRange{from: 0, count: 5},
+			expect: true,
+		},
+		// Completely disjoint ranges
+		{
+			a:      rowRange{from: 0, count: 3},
+			b:      rowRange{from: 5, count: 3},
+			expect: false,
+		},
+		// Adjacent ranges (should not overlap as ranges are half-open)
+		{
+			a:      rowRange{from: 0, count: 3},
+			b:      rowRange{from: 3, count: 3},
+			expect: false,
+		},
+		// One range completely contains the other
+		{
+			a:      rowRange{from: 0, count: 10},
+			b:      rowRange{from: 2, count: 5},
+			expect: true,
+		},
+		// Partial overlap from left
+		{
+			a:      rowRange{from: 0, count: 5},
+			b:      rowRange{from: 3, count: 5},
+			expect: true,
+		},
+		// Partial overlap from right
+		{
+			a:      rowRange{from: 3, count: 5},
+			b:      rowRange{from: 0, count: 5},
+			expect: true,
+		},
+		// Zero-count ranges
+		{
+			a:      rowRange{from: 0, count: 0},
+			b:      rowRange{from: 0, count: 5},
+			expect: false,
+		},
+		{
+			a:      rowRange{from: 0, count: 5},
+			b:      rowRange{from: 0, count: 0},
+			expect: false,
+		},
+		// Negative ranges (edge case)
+		{
+			a:      rowRange{from: -5, count: 5},
+			b:      rowRange{from: -3, count: 5},
+			expect: true,
+		},
+	} {
+		t.Run("", func(t *testing.T) {
+			if res := tt.a.Overlaps(tt.b); res != tt.expect {
+				t.Fatalf("Expected %v.Overlaps(%v) to be %v, got %v", tt.a, tt.b, tt.expect, res)
+			}
+			// Test symmetry
+			if res := tt.b.Overlaps(tt.a); res != tt.expect {
+				t.Fatalf("Expected %v.Overlaps(%v) to be %v, got %v", tt.b, tt.a, tt.expect, res)
+			}
+		})
+	}
+}
