@@ -20,8 +20,6 @@ import (
 	"github.com/parquet-go/parquet-go"
 	"github.com/parquet-go/parquet-go/compress/zstd"
 	"github.com/parquet-go/parquet-go/format"
-
-	"github.com/prometheus-community/parquet-common/util"
 )
 
 const (
@@ -42,7 +40,7 @@ func ExtractLabelFromColumn(col string) (string, bool) {
 	if !strings.HasPrefix(col, LabelColumnPrefix) {
 		return "", false
 	}
-	return util.YoloString([]byte(col)[len(LabelColumnPrefix):]), true
+	return col[len(LabelColumnPrefix):], true
 }
 
 func IsDataColumn(col string) bool {

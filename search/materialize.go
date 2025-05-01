@@ -151,7 +151,7 @@ func (m *Materializer) materializeLabels(ctx context.Context, rgi int, rr []rowR
 			}
 			results[i] = append(results[i], labels.Label{
 				Name:  labelName,
-				Value: util.YoloString(value.ByteArray()),
+				Value: value.String(),
 			})
 		}
 	}
