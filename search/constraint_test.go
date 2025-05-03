@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/parquet-go/parquet-go"
+	"github.com/prometheus/prometheus/model/labels"
 )
 
 func buildFile[T any](t testing.TB, rows []T) *parquet.File {
@@ -40,6 +41,14 @@ func buildFile[T any](t testing.TB, rows []T) *parquet.File {
 	return file
 }
 
+func mustNewFastRegexMatcher(t *testing.T, s string) *labels.FastRegexMatcher {
+	res, err := labels.NewFastRegexMatcher(s)
+	if err != nil {
+		t.Fatalf("unable to build fast regex matcher: %s", err)
+	}
+	return res
+}
+
 func TestEqual(t *testing.T) {
 	type expectation struct {
 		constraints []Constraint
@@ -59,46 +68,14 @@ func TestEqual(t *testing.T) {
 		for _, tt := range []testcase[s]{
 			{
 				rows: []s{
-					{
-						A: 1,
-						B: 2,
-						C: "a",
-					},
-					{
-						A: 3,
-						B: 4,
-						C: "b",
-					},
-					{
-						A: 7,
-						B: 12,
-						C: "c",
-					},
-					{
-						A: 9,
-						B: 22,
-						C: "d",
-					},
-					{
-						A: 0,
-						B: 1,
-						C: "e",
-					},
-					{
-						A: 7,
-						B: 1,
-						C: "f",
-					},
-					{
-						A: 7,
-						B: 1,
-						C: "g",
-					},
-					{
-						A: 0,
-						B: 1,
-						C: "h",
-					},
+					{A: 1, B: 2, C: "a"},
+					{A: 3, B: 4, C: "b"},
+					{A: 7, B: 12, C: "c"},
+					{A: 9, B: 22, C: "d"},
+					{A: 0, B: 1, C: "e"},
+					{A: 7, B: 1, C: "f"},
+					{A: 7, B: 1, C: "g"},
+					{A: 0, B: 1, C: "h"},
 				},
 				expectations: []expectation{
 					{
@@ -141,6 +118,15 @@ func TestEqual(t *testing.T) {
 						},
 						expect: []rowRange{
 							{from: 0, count: 8},
+						},
+					},
+					{
+						constraints: []Constraint{
+							Regex("C", mustNewFastRegexMatcher(t, "a|c|d")),
+						},
+						expect: []rowRange{
+							{from: 0, count: 1},
+							{from: 2, count: 2},
 						},
 					},
 				},
@@ -232,6 +218,42 @@ func TestEqual(t *testing.T) {
 						expect: []rowRange{
 							{from: 2, count: 1},
 							{from: 6, count: 1},
+						},
+					},
+				},
+			},
+			{
+				rows: []s{
+					{C: "foo"},
+					{C: "bar"},
+					{C: "foo"},
+					{C: "buz"},
+				},
+				expectations: []expectation{
+					{
+						constraints: []Constraint{
+							Regex("C", mustNewFastRegexMatcher(t, "f.*")),
+						},
+						expect: []rowRange{
+							{from: 0, count: 1},
+							{from: 2, count: 1},
+						},
+					},
+					{
+						constraints: []Constraint{
+							Regex("C", mustNewFastRegexMatcher(t, "b.*")),
+						},
+						expect: []rowRange{
+							{from: 1, count: 1},
+							{from: 3, count: 1},
+						},
+					},
+					{
+						constraints: []Constraint{
+							Regex("C", mustNewFastRegexMatcher(t, "f.*|b.*")),
+						},
+						expect: []rowRange{
+							{from: 0, count: 4},
 						},
 					},
 				},
