@@ -48,13 +48,14 @@ func filter(rg parquet.RowGroup, cs ...Constraint) ([]rowRange, error) {
 			}
 		}
 	}
+	var err error
 	rr := []rowRange{{from: int64(0), count: rg.NumRows()}}
 	for i := range cs {
-		srr, err := cs[i].filter(rg, i == 0, rr)
+		isPrimary := len(sc) > 0 && cs[i].path() == sc[0].Path()[0]
+		rr, err = cs[i].filter(rg, isPrimary, rr)
 		if err != nil {
 			return nil, fmt.Errorf("unable to filter with constraint %d: %w", i, err)
 		}
-		rr = srr
 	}
 	return rr, nil
 }
@@ -229,7 +230,7 @@ func (ec *equalConstraint) filter(rg parquet.RowGroup, primary bool, rr []rowRan
 	if len(res) == 0 {
 		return nil, nil
 	}
-	return simplify(res), nil
+	return intersectRowRanges(simplify(res), rr), nil
 }
 
 func (ec *equalConstraint) init(s *parquet.Schema) error {
@@ -370,7 +371,7 @@ func (rc *regexConstraint) filter(rg parquet.RowGroup, primary bool, rr []rowRan
 	if len(res) == 0 {
 		return nil, nil
 	}
-	return simplify(res), nil
+	return intersectRowRanges(simplify(res), rr), nil
 }
 
 func (rc *regexConstraint) init(s *parquet.Schema) error {
@@ -423,6 +424,7 @@ func (nc *notConstraint) filter(rg parquet.RowGroup, primary bool, rr []rowRange
 	if err != nil {
 		return nil, fmt.Errorf("unable to compute child constraint: %w", err)
 	}
+	// no need to intersect since its already subset of rr
 	return complementRowRanges(base, rr), nil
 }
 

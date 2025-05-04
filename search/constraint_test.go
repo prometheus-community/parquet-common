@@ -24,7 +24,7 @@ import (
 
 func buildFile[T any](t testing.TB, rows []T) *parquet.File {
 	buf := bytes.NewBuffer(nil)
-	w := parquet.NewGenericWriter[T](buf, parquet.PageBufferSize(12), parquet.WriteBufferSize(0))
+	w := parquet.NewGenericWriter[T](buf)
 	for _, row := range rows {
 		if _, err := w.Write([]T{row}); err != nil {
 			t.Fatal(err)
@@ -49,7 +49,7 @@ func mustNewFastRegexMatcher(t *testing.T, s string) *labels.FastRegexMatcher {
 	return res
 }
 
-func TestEqual(t *testing.T) {
+func TestFilter(t *testing.T) {
 	type expectation struct {
 		constraints []Constraint
 		expect      []rowRange
@@ -254,6 +254,27 @@ func TestEqual(t *testing.T) {
 						},
 						expect: []rowRange{
 							{from: 0, count: 4},
+						},
+					},
+				},
+			},
+			{
+				rows: []s{
+					{A: 1, B: 1},
+					{A: 1, B: 2},
+					{A: 2, B: 1},
+					{A: 2, B: 2},
+					{A: 1, B: 1},
+				},
+				expectations: []expectation{
+					{
+						constraints: []Constraint{
+							Equal("A", parquet.ValueOf(1)),
+							Equal("B", parquet.ValueOf(1)),
+						},
+						expect: []rowRange{
+							{from: 0, count: 1},
+							{from: 4, count: 1},
 						},
 					},
 				},
