@@ -52,7 +52,7 @@ func mustNewFastRegexMatcher(t *testing.T, s string) *labels.FastRegexMatcher {
 func TestFilter(t *testing.T) {
 	type expectation struct {
 		constraints []Constraint
-		expect      []rowRange
+		expect      []RowRange
 	}
 	type testcase[T any] struct {
 		rows         []T
@@ -83,7 +83,7 @@ func TestFilter(t *testing.T) {
 							Equal("A", parquet.ValueOf(7)),
 							Equal("C", parquet.ValueOf("g")),
 						},
-						expect: []rowRange{
+						expect: []RowRange{
 							{from: 6, count: 1},
 						},
 					},
@@ -91,7 +91,7 @@ func TestFilter(t *testing.T) {
 						constraints: []Constraint{
 							Equal("A", parquet.ValueOf(7)),
 						},
-						expect: []rowRange{
+						expect: []RowRange{
 							{from: 2, count: 1},
 							{from: 5, count: 2},
 						},
@@ -100,7 +100,7 @@ func TestFilter(t *testing.T) {
 						constraints: []Constraint{
 							Equal("A", parquet.ValueOf(7)), Not(Equal("B", parquet.ValueOf(1))),
 						},
-						expect: []rowRange{
+						expect: []RowRange{
 							{from: 2, count: 1},
 						},
 					},
@@ -108,7 +108,7 @@ func TestFilter(t *testing.T) {
 						constraints: []Constraint{
 							Equal("A", parquet.ValueOf(7)), Not(Equal("C", parquet.ValueOf("c"))),
 						},
-						expect: []rowRange{
+						expect: []RowRange{
 							{from: 5, count: 2},
 						},
 					},
@@ -116,7 +116,7 @@ func TestFilter(t *testing.T) {
 						constraints: []Constraint{
 							Not(Equal("A", parquet.ValueOf(227))),
 						},
-						expect: []rowRange{
+						expect: []RowRange{
 							{from: 0, count: 8},
 						},
 					},
@@ -124,7 +124,7 @@ func TestFilter(t *testing.T) {
 						constraints: []Constraint{
 							Regex("C", mustNewFastRegexMatcher(t, "a|c|d")),
 						},
-						expect: []rowRange{
+						expect: []RowRange{
 							{from: 0, count: 1},
 							{from: 2, count: 2},
 						},
@@ -151,7 +151,7 @@ func TestFilter(t *testing.T) {
 						constraints: []Constraint{
 							Not(Equal("A", parquet.ValueOf(3))),
 						},
-						expect: []rowRange{
+						expect: []RowRange{
 							{from: 0, count: 9},
 						},
 					},
@@ -160,7 +160,7 @@ func TestFilter(t *testing.T) {
 							Not(Equal("A", parquet.ValueOf(3))),
 							Equal("B", parquet.ValueOf(5)),
 						},
-						expect: []rowRange{
+						expect: []RowRange{
 							{from: 4, count: 5},
 						},
 					},
@@ -169,7 +169,7 @@ func TestFilter(t *testing.T) {
 							Not(Equal("A", parquet.ValueOf(3))),
 							Not(Equal("A", parquet.ValueOf(1))),
 						},
-						expect: []rowRange{
+						expect: []RowRange{
 							{from: 6, count: 3},
 						},
 					},
@@ -178,21 +178,21 @@ func TestFilter(t *testing.T) {
 							Equal("A", parquet.ValueOf(2)),
 							Not(Equal("B", parquet.ValueOf(5))),
 						},
-						expect: []rowRange{},
+						expect: []RowRange{},
 					},
 					{
 						constraints: []Constraint{
 							Equal("A", parquet.ValueOf(2)),
 							Not(Equal("B", parquet.ValueOf(5))),
 						},
-						expect: []rowRange{},
+						expect: []RowRange{},
 					},
 					{
 						constraints: []Constraint{
 							Equal("A", parquet.ValueOf(3)),
 							Not(Equal("B", parquet.ValueOf(2))),
 						},
-						expect: []rowRange{
+						expect: []RowRange{
 							{from: 9, count: 2},
 						},
 					},
@@ -215,7 +215,7 @@ func TestFilter(t *testing.T) {
 							Not(Equal("A", parquet.ValueOf(1))),
 							Not(Equal("B", parquet.ValueOf(2))),
 						},
-						expect: []rowRange{
+						expect: []RowRange{
 							{from: 2, count: 1},
 							{from: 6, count: 1},
 						},
@@ -234,7 +234,7 @@ func TestFilter(t *testing.T) {
 						constraints: []Constraint{
 							Regex("C", mustNewFastRegexMatcher(t, "f.*")),
 						},
-						expect: []rowRange{
+						expect: []RowRange{
 							{from: 0, count: 1},
 							{from: 2, count: 1},
 						},
@@ -243,7 +243,7 @@ func TestFilter(t *testing.T) {
 						constraints: []Constraint{
 							Regex("C", mustNewFastRegexMatcher(t, "b.*")),
 						},
-						expect: []rowRange{
+						expect: []RowRange{
 							{from: 1, count: 1},
 							{from: 3, count: 1},
 						},
@@ -252,7 +252,7 @@ func TestFilter(t *testing.T) {
 						constraints: []Constraint{
 							Regex("C", mustNewFastRegexMatcher(t, "f.*|b.*")),
 						},
-						expect: []rowRange{
+						expect: []RowRange{
 							{from: 0, count: 4},
 						},
 					},
@@ -272,7 +272,7 @@ func TestFilter(t *testing.T) {
 							Equal("A", parquet.ValueOf(1)),
 							Equal("B", parquet.ValueOf(1)),
 						},
-						expect: []rowRange{
+						expect: []RowRange{
 							{from: 0, count: 1},
 							{from: 4, count: 1},
 						},

@@ -19,8 +19,9 @@ import (
 	"sort"
 
 	"github.com/parquet-go/parquet-go"
-	"github.com/prometheus-community/parquet-common/util"
 	"github.com/prometheus/prometheus/model/labels"
+
+	"github.com/prometheus-community/parquet-common/util"
 )
 
 func initialize(s *parquet.Schema, cs ...Constraint) error {
@@ -32,7 +33,7 @@ func initialize(s *parquet.Schema, cs ...Constraint) error {
 	return nil
 }
 
-func filter(rg parquet.RowGroup, cs ...Constraint) ([]rowRange, error) {
+func filter(rg parquet.RowGroup, cs ...Constraint) ([]RowRange, error) {
 	// Constraints for sorting columns are cheaper to evaluate, so we sort them first.
 	sc := rg.SortingColumns()
 
@@ -49,7 +50,7 @@ func filter(rg parquet.RowGroup, cs ...Constraint) ([]rowRange, error) {
 		}
 	}
 	var err error
-	rr := []rowRange{{from: int64(0), count: rg.NumRows()}}
+	rr := []RowRange{{from: int64(0), count: rg.NumRows()}}
 	for i := range cs {
 		isPrimary := len(sc) > 0 && cs[i].path() == sc[0].Path()[0]
 		rr, err = cs[i].filter(rg, isPrimary, rr)
@@ -119,7 +120,7 @@ func Equal(path string, value parquet.Value) Constraint {
 	return &equalConstraint{pth: path, val: value}
 }
 
-func (ec *equalConstraint) filter(rg parquet.RowGroup, primary bool, rr []rowRange) ([]rowRange, error) {
+func (ec *equalConstraint) filter(rg parquet.RowGroup, primary bool, rr []RowRange) ([]RowRange, error) {
 	if len(rr) == 0 {
 		return nil, nil
 	}
@@ -150,7 +151,7 @@ func (ec *equalConstraint) filter(rg parquet.RowGroup, primary bool, rr []rowRan
 	}
 	var (
 		symbols = new(symbolTable)
-		res     = make([]rowRange, 0)
+		res     = make([]RowRange, 0)
 	)
 	for i := 0; i < cidx.NumPages(); i++ {
 		// If page does not intersect from, to; we can immediately discard it
@@ -209,14 +210,14 @@ func (ec *equalConstraint) filter(rg parquet.RowGroup, primary bool, rr []rowRan
 			r = sort.Search(n, func(i int) bool { return ec.comp(ec.val, symbols.Get(i)) < 0 })
 
 			if lv, rv := max(bl, l), min(br, r); rv > lv {
-				res = append(res, rowRange{pfrom + int64(lv), int64(rv - lv)})
+				res = append(res, RowRange{pfrom + int64(lv), int64(rv - lv)})
 			}
 		default:
 			off, count := bl, 0
 			for j := bl; j < br; j++ {
 				if ec.comp(ec.val, symbols.Get(j)) != 0 {
 					if count != 0 {
-						res = append(res, rowRange{pfrom + int64(off), int64(count)})
+						res = append(res, RowRange{pfrom + int64(off), int64(count)})
 					}
 					off, count = j, 0
 				} else {
@@ -227,7 +228,7 @@ func (ec *equalConstraint) filter(rg parquet.RowGroup, primary bool, rr []rowRan
 				}
 			}
 			if count != 0 {
-				res = append(res, rowRange{pfrom + int64(off), int64(count)})
+				res = append(res, RowRange{pfrom + int64(off), int64(count)})
 			}
 		}
 	}
@@ -289,7 +290,7 @@ type regexConstraint struct {
 	r *labels.FastRegexMatcher
 }
 
-func (rc *regexConstraint) filter(rg parquet.RowGroup, primary bool, rr []rowRange) ([]rowRange, error) {
+func (rc *regexConstraint) filter(rg parquet.RowGroup, primary bool, rr []RowRange) ([]RowRange, error) {
 	if len(rr) == 0 {
 		return nil, nil
 	}
@@ -314,7 +315,7 @@ func (rc *regexConstraint) filter(rg parquet.RowGroup, primary bool, rr []rowRan
 	}
 	var (
 		symbols = new(symbolTable)
-		res     = make([]rowRange, 0)
+		res     = make([]RowRange, 0)
 	)
 	for i := 0; i < cidx.NumPages(); i++ {
 		// If page does not intersect from, to; we can immediately discard it
@@ -358,7 +359,7 @@ func (rc *regexConstraint) filter(rg parquet.RowGroup, primary bool, rr []rowRan
 		for j := bl; j < br; j++ {
 			if !rc.matches(symbols.Get(j)) {
 				if count != 0 {
-					res = append(res, rowRange{pfrom + int64(off), int64(count)})
+					res = append(res, RowRange{pfrom + int64(off), int64(count)})
 				}
 				off, count = j, 0
 			} else {
@@ -369,7 +370,7 @@ func (rc *regexConstraint) filter(rg parquet.RowGroup, primary bool, rr []rowRan
 			}
 		}
 		if count != 0 {
-			res = append(res, rowRange{pfrom + int64(off), int64(count)})
+			res = append(res, RowRange{pfrom + int64(off), int64(count)})
 		}
 	}
 	if len(res) == 0 {
@@ -423,7 +424,7 @@ type notConstraint struct {
 	c Constraint
 }
 
-func (nc *notConstraint) filter(rg parquet.RowGroup, primary bool, rr []rowRange) ([]rowRange, error) {
+func (nc *notConstraint) filter(rg parquet.RowGroup, primary bool, rr []RowRange) ([]RowRange, error) {
 	base, err := nc.c.filter(rg, primary, rr)
 	if err != nil {
 		return nil, fmt.Errorf("unable to compute child constraint: %w", err)
@@ -446,7 +447,7 @@ func Null() Constraint {
 	return &nullConstraint{}
 }
 
-func (null *nullConstraint) filter(parquet.RowGroup, bool, []rowRange) ([]rowRange, error) {
+func (null *nullConstraint) filter(parquet.RowGroup, bool, []RowRange) ([]RowRange, error) {
 	return nil, nil
 }
 

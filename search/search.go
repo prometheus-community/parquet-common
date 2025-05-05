@@ -19,7 +19,7 @@ import (
 
 type Constraint interface {
 	// filter returns a set of non-overlapping increasing row indexes that may satisfy the constraint.
-	filter(rg parquet.RowGroup, primary bool, rr []rowRange) ([]rowRange, error)
+	filter(rg parquet.RowGroup, primary bool, rr []RowRange) ([]RowRange, error)
 	// init initializes the constraint with respect to the file schema and projections.
 	init(s *parquet.Schema) error
 	// path is the path for the column that is constrained

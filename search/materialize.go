@@ -73,7 +73,7 @@ func NewMaterializer(s *schema.TSDBSchema, d *schema.PrometheusParquetChunksDeco
 
 // Materialize reconstructs the ChunkSeries that belong to the specified row ranges (rr).
 // It uses the row group index (rgi) and time bounds (mint, maxt) to filter and decode the series.
-func (m *Materializer) Materialize(ctx context.Context, rgi int, mint, maxt int64, rr []rowRange) ([]storage.ChunkSeries, error) {
+func (m *Materializer) Materialize(ctx context.Context, rgi int, mint, maxt int64, rr []RowRange) ([]storage.ChunkSeries, error) {
 	sLbls, err := m.materializeLabels(ctx, rgi, rr)
 	if err != nil {
 		return nil, errors.Wrapf(err, "error materializing labels")
@@ -99,7 +99,7 @@ func (m *Materializer) Materialize(ctx context.Context, rgi int, mint, maxt int6
 	return results, err
 }
 
-func (m *Materializer) materializeLabels(ctx context.Context, rgi int, rr []rowRange) ([]labels.Labels, error) {
+func (m *Materializer) materializeLabels(ctx context.Context, rgi int, rr []RowRange) ([]labels.Labels, error) {
 	labelsRg := m.lf.RowGroups()[rgi]
 	cc := labelsRg.ColumnChunks()[m.colIdx]
 	colsIdxs, err := m.materializeColumn(ctx, labelsRg, cc, rr)
@@ -159,7 +159,7 @@ func (m *Materializer) materializeLabels(ctx context.Context, rgi int, rr []rowR
 	return results, nil
 }
 
-func (m *Materializer) materializeChunks(ctx context.Context, rgi int, mint, maxt int64, rr []rowRange) ([][]chunks.Meta, error) {
+func (m *Materializer) materializeChunks(ctx context.Context, rgi int, mint, maxt int64, rr []RowRange) ([][]chunks.Meta, error) {
 	minDataCol := m.s.DataColumIdx(mint)
 	maxDataCol := m.s.DataColumIdx(maxt)
 	rg := m.cf.RowGroups()[rgi]
@@ -187,7 +187,7 @@ func (m *Materializer) materializeChunks(ctx context.Context, rgi int, mint, max
 	return r, nil
 }
 
-func (m *Materializer) materializeColumn(ctx context.Context, group parquet.RowGroup, cc parquet.ColumnChunk, rr []rowRange) ([]parquet.Value, error) {
+func (m *Materializer) materializeColumn(ctx context.Context, group parquet.RowGroup, cc parquet.ColumnChunk, rr []RowRange) ([]parquet.Value, error) {
 	if len(rr) == 0 {
 		return nil, nil
 	}
@@ -202,10 +202,10 @@ func (m *Materializer) materializeColumn(ctx context.Context, group parquet.RowG
 		return nil, errors.Wrap(err, "could not get column index")
 	}
 
-	pagesToRowsMap := make(map[int][]rowRange, len(rr))
+	pagesToRowsMap := make(map[int][]RowRange, len(rr))
 
 	for i := 0; i < cidx.NumPages(); i++ {
-		pageRowRange := rowRange{
+		pageRowRange := RowRange{
 			from: oidx.FirstRowIndex(i),
 		}
 		pageRowRange.count = group.NumRows()
@@ -221,7 +221,7 @@ func (m *Materializer) materializeColumn(ctx context.Context, group parquet.RowG
 		}
 	}
 
-	r := make(map[rowRange][]parquet.Value, len(rr))
+	r := make(map[RowRange][]parquet.Value, len(rr))
 	for _, v := range rr {
 		r[v] = []parquet.Value{}
 	}
@@ -297,12 +297,12 @@ func (pr *Materializer) getPage(_ context.Context, cc parquet.ColumnChunk) *parq
 
 type pageEntryRead struct {
 	pages []int
-	rows  []rowRange
+	rows  []RowRange
 }
 
 // Merge nearby pages to enable efficient sequential reads.
 // Pages that are not close to each other will be scheduled for concurrent reads.
-func coalescePageRanges(pagedIdx map[int][]rowRange, offset parquet.OffsetIndex) []pageEntryRead {
+func coalescePageRanges(pagedIdx map[int][]RowRange, offset parquet.OffsetIndex) []pageEntryRead {
 	// TODO: Add the max gap size as parameter
 	partitioner := util.NewGapBasedPartitioner(10 * 1024)
 	if len(pagedIdx) == 0 {
