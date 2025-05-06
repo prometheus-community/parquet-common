@@ -29,6 +29,9 @@ func TestQueryable(t *testing.T) {
 	cfg := defaultTestConfig()
 	data := generateTestData(t, st, ctx, cfg)
 
+	ir, err := st.Head().Index()
+	require.NoError(t, err)
+
 	// Convert to Parquet
 	lf, cf := convertToParquet(t, ctx, bkt, data, st.Head())
 
@@ -58,14 +61,37 @@ func TestQueryable(t *testing.T) {
 			require.Equal(t, cfg.metricsPerMetricName, totalFound)
 		}
 	})
+
+	t.Run("LabelNames", func(t *testing.T) {
+		queryable, err := createQueryable(t, lf, cf)
+		require.NoError(t, err)
+		querier, err := queryable.Querier(data.minTime, data.maxTime)
+		require.NoError(t, err)
+		lNames, _, err := querier.LabelNames(context.Background(), nil)
+		require.NoError(t, err)
+		expectedLabelNames, err := ir.LabelNames(context.Background())
+		require.NoError(t, err)
+		require.Equal(t, expectedLabelNames, lNames)
+	})
+
+	t.Run("LabelValues", func(t *testing.T) {
+		queryable, err := createQueryable(t, lf, cf)
+		require.NoError(t, err)
+		querier, err := queryable.Querier(data.minTime, data.maxTime)
+		require.NoError(t, err)
+		lValues, _, err := querier.LabelValues(context.Background(), labels.MetricName, nil)
+		require.NoError(t, err)
+		expectedLabelValues, err := ir.SortedLabelValues(context.Background(), labels.MetricName)
+		require.NoError(t, err)
+		require.Equal(t, expectedLabelValues, lValues)
+	})
 }
 
 func queryWithQueryable(t *testing.T, mint, maxt int64, lf, cf *parquet.File, matchers ...*labels.Matcher) []storage.Series {
 	ctx := context.Background()
-	d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
-	queriable, err := newParquetQueryable(lf, cf, d)
+	queryable, err := createQueryable(t, lf, cf)
 	require.NoError(t, err)
-	querier, err := queriable.Querier(mint, maxt)
+	querier, err := queryable.Querier(mint, maxt)
 	require.NoError(t, err)
 	ss := querier.Select(ctx, true, nil, matchers...)
 
@@ -74,4 +100,11 @@ func queryWithQueryable(t *testing.T, mint, maxt int64, lf, cf *parquet.File, ma
 		found = append(found, ss.At())
 	}
 	return found
+}
+
+func createQueryable(t *testing.T, lf *parquet.File, cf *parquet.File) (storage.Queryable, error) {
+	d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
+	pb, err := NewParquetBlock(lf, cf, d)
+	require.NoError(t, err)
+	return NewParquetQueryable(pb)
 }
