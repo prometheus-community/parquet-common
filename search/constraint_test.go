@@ -284,11 +284,11 @@ func TestFilter(t *testing.T) {
 			sfile := buildFile(t, tt.rows)
 			for _, expectation := range tt.expectations {
 				t.Run("", func(t *testing.T) {
-					if err := initialize(sfile.Schema(), expectation.constraints...); err != nil {
+					if err := Initialize(sfile.Schema(), expectation.constraints...); err != nil {
 						t.Fatal(err)
 					}
 					for _, rg := range sfile.RowGroups() {
-						rr, err := filter(rg, expectation.constraints...)
+						rr, err := Filter(rg, expectation.constraints...)
 						if err != nil {
 							t.Fatal(err)
 						}

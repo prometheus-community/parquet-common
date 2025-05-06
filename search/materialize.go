@@ -96,6 +96,7 @@ func (m *Materializer) Materialize(ctx context.Context, rgi int, mint, maxt int6
 		result.(*concreteChunksSeries).chks = chks[i]
 	}
 
+	sort.Sort(byLabels(results))
 	return results, err
 }
 
@@ -418,3 +419,9 @@ func (c concreteChunksSeries) Labels() labels.Labels {
 func (c concreteChunksSeries) Iterator(_ chunks.Iterator) chunks.Iterator {
 	return storage.NewListChunkSeriesIterator(c.chks...)
 }
+
+type byLabels []storage.ChunkSeries
+
+func (b byLabels) Len() int           { return len(b) }
+func (b byLabels) Swap(i, j int)      { b[i], b[j] = b[j], b[i] }
+func (b byLabels) Less(i, j int) bool { return labels.Compare(b[i].Labels(), b[j].Labels()) < 0 }

@@ -124,3 +124,32 @@ func (h *heapChunkSeries) Pop() any {
 	h.heap = old[0 : n-1]
 	return x
 }
+
+func NewChunksSeriesSet(series []storage.ChunkSeries) storage.ChunkSeriesSet {
+	return &concreteChunkSeries{
+		series: series,
+		curr:   -1,
+	}
+}
+
+type concreteChunkSeries struct {
+	series []storage.ChunkSeries
+	curr   int
+}
+
+func (c *concreteChunkSeries) Next() bool {
+	c.curr++
+	return c.curr < len(c.series)
+}
+
+func (c *concreteChunkSeries) At() storage.ChunkSeries {
+	return c.series[c.curr]
+}
+
+func (c *concreteChunkSeries) Err() error {
+	return nil
+}
+
+func (c *concreteChunkSeries) Warnings() annotations.Annotations {
+	return nil
+}

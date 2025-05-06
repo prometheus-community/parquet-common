@@ -18,13 +18,28 @@ import (
 	"slices"
 	"sort"
 
+	"github.com/prometheus-community/parquet-common/schema"
+
 	"github.com/parquet-go/parquet-go"
 	"github.com/prometheus/prometheus/model/labels"
 
 	"github.com/prometheus-community/parquet-common/util"
 )
 
-func initialize(s *parquet.Schema, cs ...Constraint) error {
+func MatchersToConstraint(matchers ...*labels.Matcher) ([]Constraint, error) {
+	r := make([]Constraint, 0, len(matchers))
+	for _, matcher := range matchers {
+		switch matcher.Type {
+		case labels.MatchEqual:
+			r = append(r, Equal(schema.LabelToColumn(matcher.Name), parquet.ValueOf(matcher.Value)))
+		default:
+			return nil, fmt.Errorf("unsupported matcher type %s", matcher.Type)
+		}
+	}
+	return r, nil
+}
+
+func Initialize(s *parquet.Schema, cs ...Constraint) error {
 	for i := range cs {
 		if err := cs[i].init(s); err != nil {
 			return fmt.Errorf("unable to initialize constraint %d: %w", i, err)
@@ -33,7 +48,7 @@ func initialize(s *parquet.Schema, cs ...Constraint) error {
 	return nil
 }
 
-func filter(rg parquet.RowGroup, cs ...Constraint) ([]RowRange, error) {
+func Filter(rg parquet.RowGroup, cs ...Constraint) ([]RowRange, error) {
 	// Constraints for sorting columns are cheaper to evaluate, so we sort them first.
 	sc := rg.SortingColumns()
 

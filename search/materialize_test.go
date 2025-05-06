@@ -57,6 +57,16 @@ func TestMaterializeE2E(t *testing.T) {
 			require.Equal(t, series.Labels().Get("unique"), "unique_0")
 			require.Contains(t, data.seriesHash, series.Labels().Hash())
 		}
+
+		matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
+		sFound := queryWithQueryable(t, data.minTime, data.maxTime, lf, cf, matchers...)
+		totalFound := 0
+		for _, series := range sFound {
+			require.Equal(t, series.Labels().Get("unique"), "unique_0")
+			require.Contains(t, data.seriesHash, series.Labels().Hash())
+			totalFound++
+		}
+		require.Equal(t, cfg.totalMetricNames, totalFound)
 	})
 
 	t.Run("QueryByMetricName", func(t *testing.T) {
@@ -81,6 +91,16 @@ func TestMaterializeE2E(t *testing.T) {
 				}
 				require.Equal(t, totalSamples, cfg.numberOfSamples)
 			}
+
+			matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, labels.MetricName, name)}
+			sFound := queryWithQueryable(t, data.minTime, data.maxTime, lf, cf, matchers...)
+			totalFound := 0
+			for _, series := range sFound {
+				totalFound++
+				require.Equal(t, series.Labels().Get(labels.MetricName), name)
+				require.Contains(t, data.seriesHash, series.Labels().Hash())
+			}
+			require.Equal(t, cfg.metricsPerMetricName, totalFound)
 		}
 	})
 
@@ -203,7 +223,7 @@ func query(t *testing.T, mint, maxt int64, lf, cf *parquet.File, constraints ...
 
 	found := make([]storage.ChunkSeries, 0, 100)
 	for i, group := range lf.RowGroups() {
-		rr, err := filter(group, constraints...)
+		rr, err := Filter(group, constraints...)
 		total := int64(0)
 		for _, r := range rr {
 			total += r.count
