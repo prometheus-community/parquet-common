@@ -59,7 +59,7 @@ func TestMaterializeE2E(t *testing.T) {
 		}
 
 		matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
-		sFound := queryWithQueryable(t, data.minTime, data.maxTime, lf, cf, matchers...)
+		sFound := queryWithQueryable(t, data.minTime, data.maxTime, lf, cf, nil, matchers...)
 		totalFound := 0
 		for _, series := range sFound {
 			require.Equal(t, series.Labels().Get("unique"), "unique_0")
@@ -93,7 +93,7 @@ func TestMaterializeE2E(t *testing.T) {
 			}
 
 			matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, labels.MetricName, name)}
-			sFound := queryWithQueryable(t, data.minTime, data.maxTime, lf, cf, matchers...)
+			sFound := queryWithQueryable(t, data.minTime, data.maxTime, lf, cf, nil, matchers...)
 			totalFound := 0
 			for _, series := range sFound {
 				totalFound++
@@ -162,7 +162,7 @@ func generateTestData(t *testing.T, st *teststorage.TestStorage, ctx context.Con
 
 			firstRandom := rand.Int() % 10
 			for k := firstRandom; k < firstRandom+cfg.randomLabels; k++ {
-				builder.Add(fmt.Sprintf("randon_name_%v", k), fmt.Sprintf("randon_value_%v", k))
+				builder.Add(fmt.Sprintf("random_name_%v", k), fmt.Sprintf("random_value_%v", k))
 			}
 
 			builder.Sort()
@@ -229,7 +229,7 @@ func query(t *testing.T, mint, maxt int64, lf, cf *parquet.File, constraints ...
 			total += r.count
 		}
 		require.NoError(t, err)
-		series, err := m.Materialize(ctx, i, mint, maxt, rr)
+		series, err := m.Materialize(ctx, i, mint, maxt, false, rr)
 		require.NoError(t, err)
 		require.Len(t, series, int(total))
 		found = append(found, series...)

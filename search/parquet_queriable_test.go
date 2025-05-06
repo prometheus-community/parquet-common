@@ -37,7 +37,7 @@ func TestQueryable(t *testing.T) {
 
 	t.Run("QueryByUniqueLabel", func(t *testing.T) {
 		matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
-		sFound := queryWithQueryable(t, data.minTime, data.maxTime, lf, cf, matchers...)
+		sFound := queryWithQueryable(t, data.minTime, data.maxTime, lf, cf, nil, matchers...)
 		totalFound := 0
 		for _, series := range sFound {
 			require.Equal(t, series.Labels().Get("unique"), "unique_0")
@@ -51,7 +51,7 @@ func TestQueryable(t *testing.T) {
 		for i := 0; i < 50; i++ {
 			name := fmt.Sprintf("metric_%d", rand.Int()%cfg.totalMetricNames)
 			matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, labels.MetricName, name)}
-			sFound := queryWithQueryable(t, data.minTime, data.maxTime, lf, cf, matchers...)
+			sFound := queryWithQueryable(t, data.minTime, data.maxTime, lf, cf, nil, matchers...)
 			totalFound := 0
 			for _, series := range sFound {
 				totalFound++
@@ -62,16 +62,44 @@ func TestQueryable(t *testing.T) {
 		}
 	})
 
+	t.Run("QueryByUniqueLabel and SkipChunks=true", func(t *testing.T) {
+		matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
+		hints := &storage.SelectHints{
+			Func: "series",
+		}
+		sFound := queryWithQueryable(t, data.minTime, data.maxTime, lf, cf, hints, matchers...)
+		totalFound := 0
+		for _, series := range sFound {
+			totalFound++
+			require.Equal(t, series.Labels().Get("unique"), "unique_0")
+			require.Contains(t, data.seriesHash, series.Labels().Hash())
+		}
+		require.Equal(t, cfg.totalMetricNames, totalFound)
+	})
+
 	t.Run("LabelNames", func(t *testing.T) {
 		queryable, err := createQueryable(t, lf, cf)
 		require.NoError(t, err)
 		querier, err := queryable.Querier(data.minTime, data.maxTime)
 		require.NoError(t, err)
-		lNames, _, err := querier.LabelNames(context.Background(), nil)
-		require.NoError(t, err)
-		expectedLabelNames, err := ir.LabelNames(context.Background())
-		require.NoError(t, err)
-		require.Equal(t, expectedLabelNames, lNames)
+
+		t.Run("Without Matchers", func(t *testing.T) {
+			lNames, _, err := querier.LabelNames(context.Background(), nil)
+			require.NoError(t, err)
+			require.NotEmpty(t, lNames)
+			expectedLabelNames, err := ir.LabelNames(context.Background())
+			require.NoError(t, err)
+			require.Equal(t, expectedLabelNames, lNames)
+		})
+
+		t.Run("With Matchers", func(t *testing.T) {
+			lNames, _, err := querier.LabelNames(context.Background(), nil, labels.MustNewMatcher(labels.MatchEqual, "random_name_0", "random_value_0"))
+			require.NoError(t, err)
+			require.NotEmpty(t, lNames)
+			expectedLabelNames, err := ir.LabelNames(context.Background(), labels.MustNewMatcher(labels.MatchEqual, "random_name_0", "random_value_0"))
+			require.NoError(t, err)
+			require.Equal(t, expectedLabelNames, lNames)
+		})
 	})
 
 	t.Run("LabelValues", func(t *testing.T) {
@@ -79,21 +107,31 @@ func TestQueryable(t *testing.T) {
 		require.NoError(t, err)
 		querier, err := queryable.Querier(data.minTime, data.maxTime)
 		require.NoError(t, err)
-		lValues, _, err := querier.LabelValues(context.Background(), labels.MetricName, nil)
-		require.NoError(t, err)
-		expectedLabelValues, err := ir.SortedLabelValues(context.Background(), labels.MetricName)
-		require.NoError(t, err)
-		require.Equal(t, expectedLabelValues, lValues)
+		t.Run("Without Matchers", func(t *testing.T) {
+			lValues, _, err := querier.LabelValues(context.Background(), labels.MetricName, nil)
+			require.NoError(t, err)
+			expectedLabelValues, err := ir.SortedLabelValues(context.Background(), labels.MetricName)
+			require.NoError(t, err)
+			require.Equal(t, expectedLabelValues, lValues)
+		})
+
+		t.Run("With Matchers", func(t *testing.T) {
+			lValues, _, err := querier.LabelValues(context.Background(), labels.MetricName, nil, labels.MustNewMatcher(labels.MatchEqual, "random_name_0", "random_value_0"))
+			require.NoError(t, err)
+			expectedLabelValues, err := ir.SortedLabelValues(context.Background(), labels.MetricName, labels.MustNewMatcher(labels.MatchEqual, "random_name_0", "random_value_0"))
+			require.NoError(t, err)
+			require.Equal(t, expectedLabelValues, lValues)
+		})
 	})
 }
 
-func queryWithQueryable(t *testing.T, mint, maxt int64, lf, cf *parquet.File, matchers ...*labels.Matcher) []storage.Series {
+func queryWithQueryable(t *testing.T, mint, maxt int64, lf, cf *parquet.File, hints *storage.SelectHints, matchers ...*labels.Matcher) []storage.Series {
 	ctx := context.Background()
 	queryable, err := createQueryable(t, lf, cf)
 	require.NoError(t, err)
 	querier, err := queryable.Querier(mint, maxt)
 	require.NoError(t, err)
-	ss := querier.Select(ctx, true, nil, matchers...)
+	ss := querier.Select(ctx, true, hints, matchers...)
 
 	found := make([]storage.Series, 0, 100)
 	for ss.Next() {

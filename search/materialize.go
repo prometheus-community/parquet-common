@@ -73,7 +73,7 @@ func NewMaterializer(s *schema.TSDBSchema, d *schema.PrometheusParquetChunksDeco
 
 // Materialize reconstructs the ChunkSeries that belong to the specified row ranges (rr).
 // It uses the row group index (rgi) and time bounds (mint, maxt) to filter and decode the series.
-func (m *Materializer) Materialize(ctx context.Context, rgi int, mint, maxt int64, rr []RowRange) ([]storage.ChunkSeries, error) {
+func (m *Materializer) Materialize(ctx context.Context, rgi int, mint, maxt int64, skipChunks bool, rr []RowRange) ([]storage.ChunkSeries, error) {
 	sLbls, err := m.materializeAllLabels(ctx, rgi, rr)
 	if err != nil {
 		return nil, errors.Wrapf(err, "error materializing labels")
@@ -87,15 +87,30 @@ func (m *Materializer) Materialize(ctx context.Context, rgi int, mint, maxt int6
 		}
 	}
 
-	chks, err := m.materializeChunks(ctx, rgi, mint, maxt, rr)
-	if err != nil {
-		return nil, errors.Wrap(err, "materializer failed to materialize chunks")
-	}
+	if !skipChunks {
+		chks, err := m.materializeChunks(ctx, rgi, mint, maxt, rr)
+		if err != nil {
+			return nil, errors.Wrap(err, "materializer failed to materialize chunks")
+		}
 
-	for i, result := range results {
-		result.(*concreteChunksSeries).chks = chks[i]
+		for i, result := range results {
+			result.(*concreteChunksSeries).chks = chks[i]
+		}
 	}
 	return results, err
+}
+
+func (m *Materializer) MaterializeAllLabelNames() []string {
+	r := make([]string, 0, len(m.lf.Schema().Columns()))
+	for _, c := range m.lf.Schema().Columns() {
+		lbl, ok := schema.ExtractLabelFromColumn(c[0])
+		if !ok {
+			continue
+		}
+
+		r = append(r, lbl)
+	}
+	return r
 }
 
 func (m *Materializer) MaterializeLabelNames(ctx context.Context, rgi int, rr []RowRange) ([]string, error) {
@@ -149,6 +164,27 @@ func (m *Materializer) MaterializeLabelValues(ctx context.Context, name string, 
 			r = append(r, v.String())
 			vMap[util.YoloString(v.ByteArray())] = struct{}{}
 		}
+	}
+	return r, nil
+}
+
+func (m *Materializer) MaterializeAllLabelValues(ctx context.Context, name string, rgi int) ([]string, error) {
+	labelsRg := m.lf.RowGroups()[rgi]
+	cIdx, ok := m.lf.Schema().Lookup(schema.LabelToColumn(name))
+	if !ok {
+		return []string{}, nil
+	}
+	cc := labelsRg.ColumnChunks()[cIdx.ColumnIndex]
+	pages := m.getPage(ctx, cc)
+	p, err := pages.ReadPage()
+	if err != nil {
+		return []string{}, errors.Wrap(err, "failed to read page")
+	}
+	defer parquet.Release(p)
+
+	r := make([]string, 0, p.Dictionary().Len())
+	for i := 0; i < p.Dictionary().Len(); i++ {
+		r = append(r, p.Dictionary().Index(int32(i)).String())
 	}
 	return r, nil
 }
