@@ -96,6 +96,10 @@ func (m *Materializer) Materialize(ctx context.Context, rgi int, mint, maxt int6
 		for i, result := range results {
 			result.(*concreteChunksSeries).chks = chks[i]
 		}
+
+		results = slices.DeleteFunc(results, func(cs storage.ChunkSeries) bool {
+			return len(cs.(*concreteChunksSeries).chks) == 0
+		})
 	}
 	return results, err
 }

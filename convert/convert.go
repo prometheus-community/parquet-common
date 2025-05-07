@@ -308,7 +308,7 @@ func (rr *TsdbRowReader) ReadRows(buf []parquet.Row) (int, error) {
 		err            error
 	}
 
-	c := make(chan chunkSeriesPromise, rr.concurrency)
+	c := make(chan *chunkSeriesPromise, rr.concurrency)
 
 	go func() {
 		i := 0
@@ -317,7 +317,7 @@ func (rr *TsdbRowReader) ReadRows(buf []parquet.Row) (int, error) {
 			s := rr.seriesSet.At()
 			it := s.Iterator(nil)
 
-			promise := chunkSeriesPromise{
+			promise := &chunkSeriesPromise{
 				s:              s,
 				chunkBytesChan: make(chan [][]byte, 1),
 			}
@@ -345,9 +345,6 @@ func (rr *TsdbRowReader) ReadRows(buf []parquet.Row) (int, error) {
 
 	for promise := range c {
 		j++
-		if promise.err != nil {
-			return i, promise.err
-		}
 
 		rr.rowBuilder.Reset()
 		lblsIdxs = lblsIdxs[:0]
@@ -362,6 +359,11 @@ func (rr *TsdbRowReader) ReadRows(buf []parquet.Row) (int, error) {
 		rr.rowBuilder.Add(colIndex.ColumnIndex, parquet.ValueOf(schema.EncodeIntSlice(lblsIdxs)))
 
 		chkBytes := <-promise.chunkBytesChan
+
+		if promise.err != nil {
+			return i, promise.err
+		}
+
 		// skip series that have no chunks in the requested time
 		if allChunksEmpty(chkBytes) {
 			continue
