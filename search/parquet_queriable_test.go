@@ -38,7 +38,7 @@ func TestPromQLAcceptance(t *testing.T) {
 	}
 
 	engine := promql.NewEngine(opts)
-	t.Cleanup(func() { engine.Close() })
+	t.Cleanup(func() { _ = engine.Close() })
 
 	promqltest.RunBuiltinTestsWithStorage(t, engine, func(tt testutil.T) storage.Storage {
 		return &acceptanceTestStorage{t: t, st: teststorage.New(tt)}
@@ -67,7 +67,7 @@ func (st *acceptanceTestStorage) Querier(from, to int64) (storage.Querier, error
 	if err != nil {
 		st.t.Fatalf("unable to create bucket: %s", err)
 	}
-	defer bkt.Close()
+	defer func() { _ = bkt.Close() }()
 
 	h := st.st.Head()
 	data := testData{minTime: h.MinTime(), maxTime: h.MaxTime()}

@@ -131,6 +131,35 @@ func (e *PrometheusParquetChunksEncoder) Encode(it chunks.Iterator) ([][]byte, e
 					reEncodedChunks[chkIdx][chunkenc.EncFloatHistogram][len(reEncodedChunks[chkIdx][chunkenc.EncFloatHistogram])-1].MaxTime = t
 				}
 			}
+		case chunkenc.EncHistogram:
+			for vt := sampleIt.Next(); vt != chunkenc.ValNone; vt = sampleIt.Next() {
+				if vt != chunkenc.ValHistogram {
+					return nil, fmt.Errorf("found value type %v in histogram chunk", vt)
+				}
+				t, v := sampleIt.AtHistogram(nil)
+
+				chkIdx := e.schema.DataColumIdx(t)
+				newC, recoded, app, err := reEncodedChunksAppenders[chkIdx][chunkenc.EncHistogram].AppendHistogram(nil, t, v, false)
+				if err != nil {
+					return nil, err
+				}
+				reEncodedChunksAppenders[chkIdx][chunkenc.EncHistogram] = app
+				if newC != nil {
+					if !recoded {
+						reEncodedChunks[chkIdx][chunkenc.EncHistogram] = append(reEncodedChunks[chkIdx][chunkenc.EncHistogram], &chunks.Meta{
+							MinTime: math.MaxInt64,
+						})
+					}
+					reEncodedChunks[chkIdx][chunkenc.EncHistogram][len(reEncodedChunks[chkIdx][chunkenc.EncHistogram])-1].Chunk = newC
+				}
+
+				if t < reEncodedChunks[chkIdx][chunkenc.EncHistogram][len(reEncodedChunks[chkIdx][chunkenc.EncHistogram])-1].MinTime {
+					reEncodedChunks[chkIdx][chunkenc.EncHistogram][len(reEncodedChunks[chkIdx][chunkenc.EncHistogram])-1].MinTime = t
+				}
+				if t > reEncodedChunks[chkIdx][chunkenc.EncHistogram][len(reEncodedChunks[chkIdx][chunkenc.EncHistogram])-1].MaxTime {
+					reEncodedChunks[chkIdx][chunkenc.EncHistogram][len(reEncodedChunks[chkIdx][chunkenc.EncHistogram])-1].MaxTime = t
+				}
+			}
 		default:
 			return nil, fmt.Errorf("unknown encoding %v", chk.Chunk.Encoding())
 		}
@@ -208,7 +237,7 @@ func (e *PrometheusParquetChunksDecoder) Decode(data []byte, mint, maxt int64) (
 		if int64(minTime) > maxt {
 			continue
 		}
-		
+
 		if int64(maxTime) >= mint {
 			result = append(result, chunks.Meta{
 				MinTime: int64(minTime),
