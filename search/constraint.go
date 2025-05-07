@@ -32,6 +32,20 @@ func MatchersToConstraint(matchers ...*labels.Matcher) ([]Constraint, error) {
 		switch matcher.Type {
 		case labels.MatchEqual:
 			r = append(r, Equal(schema.LabelToColumn(matcher.Name), parquet.ValueOf(matcher.Value)))
+		case labels.MatchNotEqual:
+			r = append(r, Not(Equal(schema.LabelToColumn(matcher.Name), parquet.ValueOf(matcher.Value))))
+		case labels.MatchRegexp:
+			res, err := labels.NewFastRegexMatcher(matcher.Value)
+			if err != nil {
+				return nil, err
+			}
+			r = append(r, Regex(schema.LabelToColumn(matcher.Name), res))
+		case labels.MatchNotRegexp:
+			res, err := labels.NewFastRegexMatcher(matcher.Value)
+			if err != nil {
+				return nil, err
+			}
+			r = append(r, Not(Regex(schema.LabelToColumn(matcher.Name), res)))
 		default:
 			return nil, fmt.Errorf("unsupported matcher type %s", matcher.Type)
 		}
