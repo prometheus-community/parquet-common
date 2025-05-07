@@ -138,7 +138,8 @@ func (s *symbolTable) Reset(pg parquet.Page) {
 }
 
 type equalConstraint struct {
-	pth string
+	pth   string
+	empty bool
 
 	val parquet.Value
 
@@ -150,6 +151,13 @@ func Equal(path string, value parquet.Value) Constraint {
 }
 
 func (ec *equalConstraint) filter(rg parquet.RowGroup, primary bool, rr []RowRange) ([]RowRange, error) {
+	if ec.empty {
+		if ec.val.String() == "" {
+			return rr, nil
+		}
+		return []RowRange{}, nil
+	}
+
 	if len(rr) == 0 {
 		return nil, nil
 	}
@@ -270,7 +278,8 @@ func (ec *equalConstraint) filter(rg parquet.RowGroup, primary bool, rr []RowRan
 func (ec *equalConstraint) init(s *parquet.Schema) error {
 	c, ok := s.Lookup(ec.path())
 	if !ok {
-		return fmt.Errorf("schema: must contain path: %s", ec.path())
+		ec.empty = true
+		return nil
 	}
 	if c.Node.Type().Kind() != ec.val.Kind() {
 		return fmt.Errorf("schema: cannot search value of kind %s in column of kind %s", ec.val.Kind(), c.Node.Type().Kind())
@@ -315,11 +324,18 @@ func Regex(path string, r *labels.FastRegexMatcher) Constraint {
 type regexConstraint struct {
 	pth   string
 	cache map[parquet.Value]bool
+	empty bool
 
 	r *labels.FastRegexMatcher
 }
 
 func (rc *regexConstraint) filter(rg parquet.RowGroup, primary bool, rr []RowRange) ([]RowRange, error) {
+	if rc.empty {
+		if rc.matches(parquet.ValueOf("")) {
+			return rr, nil
+		}
+		return []RowRange{}, nil
+	}
 	if len(rr) == 0 {
 		return nil, nil
 	}
@@ -411,7 +427,8 @@ func (rc *regexConstraint) filter(rg parquet.RowGroup, primary bool, rr []RowRan
 func (rc *regexConstraint) init(s *parquet.Schema) error {
 	c, ok := s.Lookup(rc.path())
 	if !ok {
-		return fmt.Errorf("schema: must contain path: %s", rc.path())
+		rc.empty = true
+		return nil
 	}
 	if stringKind := parquet.String().Type().Kind(); c.Node.Type().Kind() != stringKind {
 		return fmt.Errorf("schema: cannot search value of kind %s in column of kind %s", stringKind, c.Node.Type().Kind())
