@@ -15,20 +15,103 @@ package search
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"testing"
+	"time"
 
 	"github.com/parquet-go/parquet-go"
 	"github.com/prometheus/prometheus/model/labels"
+	"github.com/prometheus/prometheus/promql"
+	"github.com/prometheus/prometheus/promql/promqltest"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/prometheus/util/teststorage"
+	"github.com/prometheus/prometheus/util/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/objstore/providers/filesystem"
 
 	"github.com/prometheus-community/parquet-common/schema"
 )
+
+func TestPromQLAcceptance(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping, because 'short' flag was set")
+	}
+
+	opts := promql.EngineOpts{
+		Timeout:                  1 * time.Hour,
+		MaxSamples:               1e10,
+		EnableNegativeOffset:     true,
+		EnableAtModifier:         true,
+		NoStepSubqueryIntervalFn: func(_ int64) int64 { return 30 * time.Second.Milliseconds() },
+		LookbackDelta:            5 * time.Minute,
+		EnableDelayedNameRemoval: true,
+	}
+
+	engine := promql.NewEngine(opts)
+	t.Cleanup(func() { _ = engine.Close() })
+
+	promqltest.RunBuiltinTestsWithStorage(&parallelTest{T: t}, engine, func(tt testutil.T) storage.Storage {
+		return &acceptanceTestStorage{t: t, st: teststorage.New(tt)}
+	})
+}
+
+type parallelTest struct {
+	*testing.T
+}
+
+func (s *parallelTest) Run(name string, t func(*testing.T)) bool {
+	return s.T.Run(name+"-concurrent", func(tt *testing.T) {
+		tt.Parallel()
+		s.T.Run(name, t)
+	})
+
+}
+
+type acceptanceTestStorage struct {
+	t  *testing.T
+	st *teststorage.TestStorage
+}
+
+func (st *acceptanceTestStorage) Appender(ctx context.Context) storage.Appender {
+	return st.st.Appender(ctx)
+}
+
+func (st *acceptanceTestStorage) ChunkQuerier(int64, int64) (storage.ChunkQuerier, error) {
+	return nil, errors.New("unimplemented")
+}
+
+func (st *acceptanceTestStorage) Querier(from, to int64) (storage.Querier, error) {
+	if st.st.Head().NumSeries() == 0 {
+		// parquet-go panics when writing an empty parquet file
+		return st.st.Querier(from, to)
+	}
+	bkt, err := filesystem.NewBucket(st.t.TempDir())
+	if err != nil {
+		st.t.Fatalf("unable to create bucket: %s", err)
+	}
+	st.t.Cleanup(func() { _ = bkt.Close() })
+
+	h := st.st.Head()
+	data := testData{minTime: h.MinTime(), maxTime: h.MaxTime()}
+	lf, cf := convertToParquet(st.t, context.Background(), bkt, data, h)
+
+	q, err := createQueryable(st.t, lf, cf)
+	if err != nil {
+		st.t.Fatalf("unable to create queryable: %s", err)
+	}
+	return q.Querier(from, to)
+}
+
+func (st *acceptanceTestStorage) Close() error {
+	return st.st.Close()
+}
+
+func (st *acceptanceTestStorage) StartTime() (int64, error) {
+	return st.st.StartTime()
+}
 
 func TestQueryable(t *testing.T) {
 	st := teststorage.New(t)
@@ -153,7 +236,7 @@ func queryWithQueryable(t *testing.T, mint, maxt int64, lf, cf *parquet.File, hi
 	return found
 }
 
-func createQueryable(t *testing.T, lf *parquet.File, cf *parquet.File) (storage.Queryable, error) {
+func createQueryable(t testing.TB, lf *parquet.File, cf *parquet.File) (storage.Queryable, error) {
 	d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
 	pb, err := NewParquetBlock(lf, cf, d)
 	require.NoError(t, err)
