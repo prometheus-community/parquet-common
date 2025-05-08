@@ -279,6 +279,46 @@ func TestFilter(t *testing.T) {
 					},
 				},
 			},
+			{
+				rows: []s{
+					{A: 1, B: 1},
+					{A: 1, B: 2},
+				},
+				expectations: []expectation{
+					{
+						constraints: []Constraint{
+							Equal("A", parquet.ValueOf(1)),
+							Equal("None", parquet.ValueOf("?")),
+						},
+						expect: []RowRange{},
+					},
+					{
+						constraints: []Constraint{
+							Equal("A", parquet.ValueOf(1)),
+							Equal("None", parquet.ValueOf("")),
+						},
+						expect: []RowRange{
+							{from: 0, count: 2},
+						},
+					},
+					{
+						constraints: []Constraint{
+							Equal("A", parquet.ValueOf(1)),
+							Regex("None", mustNewFastRegexMatcher(t, "f.*|b.*")),
+						},
+						expect: []RowRange{},
+					},
+					{
+						constraints: []Constraint{
+							Equal("A", parquet.ValueOf(1)),
+							Regex("None", mustNewFastRegexMatcher(t, "f.*|b.*|")),
+						},
+						expect: []RowRange{
+							{from: 0, count: 2},
+						},
+					},
+				},
+			},
 		} {
 
 			sfile := buildFile(t, tt.rows)

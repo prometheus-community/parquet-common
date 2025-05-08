@@ -14,6 +14,7 @@
 package search
 
 import (
+	"bytes"
 	"fmt"
 	"slices"
 	"sort"
@@ -157,7 +158,12 @@ func (ec *equalConstraint) filter(rg parquet.RowGroup, primary bool, rr []RowRan
 
 	col, ok := rg.Schema().Lookup(ec.path())
 	if !ok {
-		return nil, nil
+		// If match empty, return rr (filter nothing)
+		// otherwise return empty
+		if ec.matches(parquet.ValueOf("")) {
+			return rr, nil
+		}
+		return []RowRange{}, nil
 	}
 	cc := rg.ColumnChunks()[col.ColumnIndex]
 
@@ -270,7 +276,7 @@ func (ec *equalConstraint) filter(rg parquet.RowGroup, primary bool, rr []RowRan
 func (ec *equalConstraint) init(s *parquet.Schema) error {
 	c, ok := s.Lookup(ec.path())
 	if !ok {
-		return fmt.Errorf("schema: must contain path: %s", ec.path())
+		return nil
 	}
 	if c.Node.Type().Kind() != ec.val.Kind() {
 		return fmt.Errorf("schema: cannot search value of kind %s in column of kind %s", ec.val.Kind(), c.Node.Type().Kind())
@@ -281,6 +287,10 @@ func (ec *equalConstraint) init(s *parquet.Schema) error {
 
 func (ec *equalConstraint) path() string {
 	return ec.pth
+}
+
+func (ec *equalConstraint) matches(v parquet.Value) bool {
+	return bytes.Equal(v.ByteArray(), ec.val.ByteArray())
 }
 
 func (ec *equalConstraint) skipByBloomfilter(cc parquet.ColumnChunk) (bool, error) {
@@ -327,7 +337,12 @@ func (rc *regexConstraint) filter(rg parquet.RowGroup, primary bool, rr []RowRan
 
 	col, ok := rg.Schema().Lookup(rc.path())
 	if !ok {
-		return nil, nil
+		// If match empty, return rr (filter nothing)
+		// otherwise return empty
+		if rc.matches(parquet.ValueOf("")) {
+			return rr, nil
+		}
+		return []RowRange{}, nil
 	}
 	cc := rg.ColumnChunks()[col.ColumnIndex]
 
@@ -411,7 +426,7 @@ func (rc *regexConstraint) filter(rg parquet.RowGroup, primary bool, rr []RowRan
 func (rc *regexConstraint) init(s *parquet.Schema) error {
 	c, ok := s.Lookup(rc.path())
 	if !ok {
-		return fmt.Errorf("schema: must contain path: %s", rc.path())
+		return nil
 	}
 	if stringKind := parquet.String().Type().Kind(); c.Node.Type().Kind() != stringKind {
 		return fmt.Errorf("schema: cannot search value of kind %s in column of kind %s", stringKind, c.Node.Type().Kind())
