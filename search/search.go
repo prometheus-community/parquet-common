@@ -24,4 +24,5 @@ type Constraint interface {
 	init(s *parquet.Schema) error
 	// path is the path for the column that is constrained
 	path() string
+	String() string
 }

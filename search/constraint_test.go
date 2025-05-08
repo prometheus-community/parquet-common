@@ -15,16 +15,20 @@ package search
 
 import (
 	"bytes"
+	"fmt"
 	"slices"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/parquet-go/parquet-go"
 	"github.com/prometheus/prometheus/model/labels"
+	"github.com/stretchr/testify/require"
 )
 
 func buildFile[T any](t testing.TB, rows []T) *parquet.File {
 	buf := bytes.NewBuffer(nil)
-	w := parquet.NewGenericWriter[T](buf)
+	w := parquet.NewGenericWriter[T](buf, parquet.PageBufferSize(10))
 	for _, row := range rows {
 		if _, err := w.Write([]T{row}); err != nil {
 			t.Fatal(err)
@@ -41,12 +45,86 @@ func buildFile[T any](t testing.TB, rows []T) *parquet.File {
 	return file
 }
 
-func mustNewFastRegexMatcher(t *testing.T, s string) *labels.FastRegexMatcher {
+func mustNewFastRegexMatcher(t testing.TB, s string) *labels.FastRegexMatcher {
 	res, err := labels.NewFastRegexMatcher(s)
 	if err != nil {
 		t.Fatalf("unable to build fast regex matcher: %s", err)
 	}
 	return res
+}
+
+func BenchmarkConstraints(b *testing.B) {
+	type s struct {
+		A      string `parquet:",optional,dict"`
+		B      string `parquet:",optional,dict"`
+		Random string `parquet:",optional,dict"`
+	}
+
+	var rows []s
+
+	for a := 0; a < 500; a++ {
+		for b := 0; b < 500; b++ {
+			rows = append(rows, s{
+				A:      strings.Repeat(strconv.FormatInt(int64(a), 10), 20)[:20],
+				B:      strings.Repeat(strconv.FormatInt(int64(b), 10), 20)[:20],
+				Random: strings.Repeat(strconv.FormatInt(int64(100*a+b), 10), 20)[:20],
+			})
+		}
+	}
+
+	sfile := buildFile(b, rows)
+
+	tests := []struct {
+		c []Constraint
+	}{
+		{
+			c: []Constraint{
+				Equal("A", parquet.ValueOf(rows[0].A)),
+				Equal("B", parquet.ValueOf(rows[0].B)),
+				Equal("Random", parquet.ValueOf(rows[0].Random)),
+			},
+		},
+		{
+			c: []Constraint{
+				Equal("A", parquet.ValueOf(rows[len(rows)-1].A)),
+				Equal("B", parquet.ValueOf(rows[len(rows)-1].B)),
+				Equal("Random", parquet.ValueOf(rows[len(rows)-1].Random)),
+			},
+		},
+		{
+			c: []Constraint{
+				Equal("A", parquet.ValueOf(rows[0].A)),
+				Equal("B", parquet.ValueOf(rows[0].B)),
+				Regex("Random", mustNewFastRegexMatcher(b, rows[0].Random)),
+			},
+		},
+		{
+			c: []Constraint{
+				Equal("A", parquet.ValueOf(rows[len(rows)-1].A)),
+				Equal("B", parquet.ValueOf(rows[len(rows)-1].B)),
+				Regex("Random", mustNewFastRegexMatcher(b, rows[len(rows)-1].Random)),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		b.Run(fmt.Sprintf("%s", tt.c), func(b *testing.B) {
+			b.ResetTimer()
+			b.ReportAllocs()
+			for n := 0; n < b.N; n++ {
+				if err := Initialize(sfile.Schema(), tt.c...); err != nil {
+					b.Fatal(err)
+				}
+				for _, rg := range sfile.RowGroups() {
+					rr, err := Filter(rg, tt.c...)
+					if err != nil {
+						b.Fatal(err)
+					}
+					require.NotNil(b, rr)
+				}
+			}
+		})
+	}
 }
 
 func TestFilter(t *testing.T) {

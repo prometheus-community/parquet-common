@@ -19,11 +19,10 @@ import (
 	"slices"
 	"sort"
 
-	"github.com/prometheus-community/parquet-common/schema"
-
 	"github.com/parquet-go/parquet-go"
 	"github.com/prometheus/prometheus/model/labels"
 
+	"github.com/prometheus-community/parquet-common/schema"
 	"github.com/prometheus-community/parquet-common/util"
 )
 
@@ -146,6 +145,10 @@ type equalConstraint struct {
 	comp func(l, r parquet.Value) int
 }
 
+func (ec *equalConstraint) String() string {
+	return fmt.Sprintf("equal(%q,%q)", ec.pth, ec.val)
+}
+
 func Equal(path string, value parquet.Value) Constraint {
 	return &equalConstraint{pth: path, val: value}
 }
@@ -229,9 +232,6 @@ func (ec *equalConstraint) filter(rg parquet.RowGroup, primary bool, rr []RowRan
 			return nil, fmt.Errorf("unable to read page: %w", err)
 		}
 
-		if skip := ec.skipByDictionary(pg); skip {
-			continue
-		}
 		symbols.Reset(pg)
 
 		// The page has the value, we need to find the matching row ranges
@@ -305,19 +305,6 @@ func (ec *equalConstraint) skipByBloomfilter(cc parquet.ColumnChunk) (bool, erro
 	return !ok, nil
 }
 
-func (ec *equalConstraint) skipByDictionary(pg parquet.Page) bool {
-	d := pg.Dictionary()
-	if d == nil {
-		return false
-	}
-	for i := 0; i != d.Len(); i++ {
-		if ec.comp(ec.val, d.Index(int32(i))) == 0 {
-			return false
-		}
-	}
-	return true
-}
-
 func Regex(path string, r *labels.FastRegexMatcher) Constraint {
 	return &regexConstraint{pth: path, cache: make(map[parquet.Value]bool), r: r}
 }
@@ -327,6 +314,10 @@ type regexConstraint struct {
 	cache map[parquet.Value]bool
 
 	r *labels.FastRegexMatcher
+}
+
+func (rc *regexConstraint) String() string {
+	return fmt.Sprintf("regex(%v,%v)", rc.pth, rc.r.GetRegexString())
 }
 
 func (rc *regexConstraint) filter(rg parquet.RowGroup, primary bool, rr []RowRange) ([]RowRange, error) {
@@ -390,9 +381,6 @@ func (rc *regexConstraint) filter(rg parquet.RowGroup, primary bool, rr []RowRan
 			return nil, fmt.Errorf("unable to read page: %w", err)
 		}
 
-		if skip := rc.skipByDictionary(pg); skip {
-			continue
-		}
 		symbols.Reset(pg)
 
 		// The page has the value, we need to find the matching row ranges
@@ -431,6 +419,7 @@ func (rc *regexConstraint) init(s *parquet.Schema) error {
 	if stringKind := parquet.String().Type().Kind(); c.Node.Type().Kind() != stringKind {
 		return fmt.Errorf("schema: cannot search value of kind %s in column of kind %s", stringKind, c.Node.Type().Kind())
 	}
+	rc.cache = make(map[parquet.Value]bool)
 	return nil
 }
 
@@ -447,25 +436,16 @@ func (rc *regexConstraint) matches(v parquet.Value) bool {
 	return accept
 }
 
-func (rc *regexConstraint) skipByDictionary(pg parquet.Page) bool {
-	d := pg.Dictionary()
-	if d == nil {
-		return false
-	}
-	for i := 0; i != d.Len(); i++ {
-		if rc.matches(d.Index(int32(i))) {
-			return false
-		}
-	}
-	return true
-}
-
 func Not(c Constraint) Constraint {
 	return &notConstraint{c: c}
 }
 
 type notConstraint struct {
 	c Constraint
+}
+
+func (nc *notConstraint) String() string {
+	return fmt.Sprintf("not(%v)", nc.c.String())
 }
 
 func (nc *notConstraint) filter(rg parquet.RowGroup, primary bool, rr []RowRange) ([]RowRange, error) {
@@ -486,6 +466,10 @@ func (nc *notConstraint) path() string {
 }
 
 type nullConstraint struct{}
+
+func (null *nullConstraint) String() string {
+	return "null"
+}
 
 func Null() Constraint {
 	return &nullConstraint{}
