@@ -67,7 +67,6 @@ func (s *parallelTest) Run(name string, t func(*testing.T)) bool {
 		tt.Parallel()
 		s.T.Run(name, t)
 	})
-
 }
 
 type acceptanceTestStorage struct {

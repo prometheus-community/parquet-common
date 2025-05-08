@@ -17,7 +17,21 @@ jobs:
           go-version-file: .go-version
           cache: true
       - name: Test
-        run: make test
+        run: make test-short
+
+  all-tests-with-coverage:
+    name: all-tests-with-coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: .go-version
+          cache: true
+      - name: Test
+        run: make all-tests-with-coverage
       - name: Archive code coverage results
         uses: actions/upload-artifact@v4
         with:
