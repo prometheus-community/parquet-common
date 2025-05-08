@@ -80,6 +80,15 @@ func (s *symbolTable) Get(i int) parquet.Value {
 	}
 }
 
+func (s *symbolTable) GetRef(i int) int32 {
+	switch s.syms[i] {
+	case -1:
+		return -1
+	default:
+		return s.syms[i]
+	}
+}
+
 func (s *symbolTable) GetIndex(i int) int32 {
 	return s.syms[i]
 }
@@ -193,11 +202,22 @@ func (ec *equalConstraint) filter(rg parquet.RowGroup, primary bool, rr []RowRan
 		if err != nil {
 			return nil, fmt.Errorf("unable to read page: %w", err)
 		}
-
-		if skip := ec.skipByDictionary(pg); skip {
+		skip, ref := ec.skipByDictionary(pg)
+		if skip {
 			continue
 		}
 		symbols.Reset(pg)
+		var compare func(int) int
+		if ref == -1 {
+			compare = func(j int) int {
+				return ec.comp(ec.val, symbols.Get(j))
+			}
+		} else {
+			compare = func(j int) int {
+				ref2 := symbols.GetRef(j)
+				return int(ref - ref2)
+			}
+		}
 
 		// The page has the value, we need to find the matching row ranges
 		n := int(pg.NumRows())
@@ -206,8 +226,8 @@ func (ec *equalConstraint) filter(rg parquet.RowGroup, primary bool, rr []RowRan
 		var l, r int
 		switch {
 		case cidx.IsAscending() && primary:
-			l = sort.Search(n, func(i int) bool { return ec.comp(ec.val, symbols.Get(i)) <= 0 })
-			r = sort.Search(n, func(i int) bool { return ec.comp(ec.val, symbols.Get(i)) < 0 })
+			l = sort.Search(n, func(i int) bool { return compare(i) <= 0 })
+			r = sort.Search(n, func(i int) bool { return compare(i) < 0 })
 
 			if lv, rv := max(bl, l), min(br, r); rv > lv {
 				res = append(res, RowRange{pfrom + int64(lv), int64(rv - lv)})
@@ -215,7 +235,7 @@ func (ec *equalConstraint) filter(rg parquet.RowGroup, primary bool, rr []RowRan
 		default:
 			off, count := bl, 0
 			for j := bl; j < br; j++ {
-				if ec.comp(ec.val, symbols.Get(j)) != 0 {
+				if compare(j) != 0 {
 					if count != 0 {
 						res = append(res, RowRange{pfrom + int64(off), int64(count)})
 					}
@@ -266,17 +286,17 @@ func (ec *equalConstraint) skipByBloomfilter(cc parquet.ColumnChunk) (bool, erro
 	return !ok, nil
 }
 
-func (ec *equalConstraint) skipByDictionary(pg parquet.Page) bool {
+func (ec *equalConstraint) skipByDictionary(pg parquet.Page) (bool, int32) {
 	d := pg.Dictionary()
 	if d == nil {
-		return false
+		return false, -1
 	}
-	for i := 0; i != d.Len(); i++ {
+	for i := int32(0); i != int32(d.Len()); i++ {
 		if ec.comp(ec.val, d.Index(int32(i))) == 0 {
-			return false
+			return false, i
 		}
 	}
-	return true
+	return true, 0
 }
 
 func Regex(path string, r *labels.FastRegexMatcher) Constraint {
