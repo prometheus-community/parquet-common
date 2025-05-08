@@ -118,6 +118,10 @@ func TestMaterializeE2E(t *testing.T) {
 		found = query(t, data.minTime, data.minTime+(2*colDuration).Milliseconds()-1, lf, cf, c1, c2)
 		require.Len(t, found, 1)
 		require.Len(t, found[0].(*concreteChunksSeries).chks, 2)
+
+		// Query outside the range
+		found = query(t, data.minTime+(9*colDuration).Milliseconds(), data.minTime+(10*colDuration).Milliseconds()-1, lf, cf, c1, c2)
+		require.Len(t, found, 0)
 	})
 }
 
@@ -231,7 +235,6 @@ func query(t *testing.T, mint, maxt int64, lf, cf *parquet.File, constraints ...
 		require.NoError(t, err)
 		series, err := m.Materialize(ctx, i, mint, maxt, false, rr)
 		require.NoError(t, err)
-		require.Len(t, series, int(total))
 		found = append(found, series...)
 	}
 	return found

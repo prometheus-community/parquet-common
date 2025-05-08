@@ -96,6 +96,11 @@ func (m *Materializer) Materialize(ctx context.Context, rgi int, mint, maxt int6
 		for i, result := range results {
 			result.(*concreteChunksSeries).chks = chks[i]
 		}
+
+		// If we are not skipping chunks and there is no chunks for the time range queried, lets remove the series
+		results = slices.DeleteFunc(results, func(cs storage.ChunkSeries) bool {
+			return len(cs.(*concreteChunksSeries).chks) == 0
+		})
 	}
 	return results, err
 }
@@ -259,7 +264,7 @@ func (m *Materializer) materializeChunks(ctx context.Context, rgi int, mint, max
 	}
 	r := make([][]chunks.Meta, totalRows)
 
-	for i := minDataCol; i <= maxDataCol; i++ {
+	for i := minDataCol; i <= min(maxDataCol, len(m.dataColToIndex)-1); i++ {
 		values, err := m.materializeColumn(ctx, rg, rg.ColumnChunks()[m.dataColToIndex[i]], rr)
 		if err != nil {
 			return r, err
