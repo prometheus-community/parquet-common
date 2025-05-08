@@ -165,9 +165,10 @@ func (m *Materializer) MaterializeLabelValues(ctx context.Context, name string, 
 	r := make([]string, 0, len(values))
 	vMap := make(map[string]struct{}, 10)
 	for _, v := range values {
-		if _, ok := vMap[util.YoloString(v.ByteArray())]; !ok {
-			r = append(r, v.String())
-			vMap[util.YoloString(v.ByteArray())] = struct{}{}
+		strValue := util.YoloString(v.ByteArray())
+		if _, ok := vMap[strValue]; !ok {
+			r = append(r, strValue)
+			vMap[strValue] = struct{}{}
 		}
 	}
 	return r, nil
@@ -246,7 +247,7 @@ func (m *Materializer) materializeAllLabels(ctx context.Context, rgi int, rr []R
 			}
 			results[i] = append(results[i], labels.Label{
 				Name:  labelName,
-				Value: value.String(),
+				Value: util.YoloString(value.ByteArray()),
 			})
 		}
 	}
