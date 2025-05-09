@@ -17,12 +17,12 @@ import (
 	"context"
 	"sort"
 
-	"github.com/parquet-go/parquet-go"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/util/annotations"
 
 	"github.com/prometheus-community/parquet-common/convert"
+	"github.com/prometheus-community/parquet-common/file"
 	"github.com/prometheus-community/parquet-common/schema"
 	"github.com/prometheus-community/parquet-common/util"
 )
@@ -119,11 +119,11 @@ func (p parquetQuerier) Select(ctx context.Context, sorted bool, sp *storage.Sel
 }
 
 type ParquetBlock struct {
-	lf, cf *parquet.File
+	lf, cf *file.ParquetFile
 	m      *Materializer
 }
 
-func NewParquetBlock(lf, cf *parquet.File, d *schema.PrometheusParquetChunksDecoder) (*ParquetBlock, error) {
+func NewParquetBlock(lf, cf *file.ParquetFile, d *schema.PrometheusParquetChunksDecoder) (*ParquetBlock, error) {
 	s, err := schema.FromLabelsFile(lf)
 	if err != nil {
 		return nil, err
@@ -145,14 +145,14 @@ func (b ParquetBlock) Query(ctx context.Context, sorted bool, mint, maxt int64, 
 	if err != nil {
 		return nil, err
 	}
-	err = Initialize(b.lf.Schema(), cs...)
+	err = Initialize(b.lf, cs...)
 	if err != nil {
 		return nil, err
 	}
 
 	results := make([]storage.ChunkSeries, 0, 1024)
 	for i, group := range b.lf.RowGroups() {
-		rr, err := Filter(group, cs...)
+		rr, err := Filter(ctx, group, cs...)
 		if err != nil {
 			return nil, err
 		}
@@ -177,14 +177,14 @@ func (b ParquetBlock) LabelNames(ctx context.Context, matchers []*labels.Matcher
 	if err != nil {
 		return nil, err
 	}
-	err = Initialize(b.lf.Schema(), cs...)
+	err = Initialize(b.lf, cs...)
 	if err != nil {
 		return nil, err
 	}
 
 	results := make([][]string, len(b.lf.RowGroups()))
 	for i, group := range b.lf.RowGroups() {
-		rr, err := Filter(group, cs...)
+		rr, err := Filter(ctx, group, cs...)
 		if err != nil {
 			return nil, err
 		}
@@ -206,14 +206,14 @@ func (b ParquetBlock) LabelValues(ctx context.Context, name string, matchers []*
 	if err != nil {
 		return nil, err
 	}
-	err = Initialize(b.lf.Schema(), cs...)
+	err = Initialize(b.lf, cs...)
 	if err != nil {
 		return nil, err
 	}
 
 	results := make([][]string, len(b.lf.RowGroups()))
 	for i, group := range b.lf.RowGroups() {
-		rr, err := Filter(group, cs...)
+		rr, err := Filter(ctx, group, cs...)
 		if err != nil {
 			return nil, err
 		}

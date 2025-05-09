@@ -29,6 +29,7 @@ import (
 	"github.com/thanos-io/objstore/providers/filesystem"
 
 	"github.com/prometheus-community/parquet-common/convert"
+	"github.com/prometheus-community/parquet-common/file"
 	"github.com/prometheus-community/parquet-common/schema"
 	"github.com/prometheus-community/parquet-common/util"
 )
@@ -123,6 +124,19 @@ func TestMaterializeE2E(t *testing.T) {
 		found = query(t, data.minTime+(9*colDuration).Milliseconds(), data.minTime+(10*colDuration).Milliseconds()-1, lf, cf, c1, c2)
 		require.Len(t, found, 0)
 	})
+
+	t.Run("ContextCancelled", func(t *testing.T) {
+		s, err := schema.FromLabelsFile(lf)
+		require.NoError(t, err)
+		d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
+		m, err := NewMaterializer(s, d, lf, cf)
+		require.NoError(t, err)
+		rr := []RowRange{{from: int64(0), count: lf.RowGroups()[0].NumRows()}}
+		ctx, cancel := context.WithCancel(ctx)
+		cancel()
+		_, err = m.Materialize(ctx, 0, data.minTime, data.maxTime, false, rr)
+		require.ErrorContains(t, err, "context canceled")
+	})
 }
 
 type testConfig struct {
@@ -189,7 +203,7 @@ func generateTestData(t *testing.T, st *teststorage.TestStorage, ctx context.Con
 	}
 }
 
-func convertToParquet(t *testing.T, ctx context.Context, bkt *filesystem.Bucket, data testData, h convert.Convertible) (*parquet.File, *parquet.File) {
+func convertToParquet(t *testing.T, ctx context.Context, bkt *filesystem.Bucket, data testData, h convert.Convertible) (*file.ParquetFile, *file.ParquetFile) {
 	colDuration := time.Hour
 	shards, err := convert.ConvertTSDBBlock(
 		ctx,
@@ -213,10 +227,10 @@ func convertToParquet(t *testing.T, ctx context.Context, bkt *filesystem.Bucket,
 	return lf, cf
 }
 
-func query(t *testing.T, mint, maxt int64, lf, cf *parquet.File, constraints ...Constraint) []storage.ChunkSeries {
+func query(t *testing.T, mint, maxt int64, lf, cf *file.ParquetFile, constraints ...Constraint) []storage.ChunkSeries {
 	ctx := context.Background()
 	for _, c := range constraints {
-		require.NoError(t, c.init(lf.Schema()))
+		require.NoError(t, c.init(lf))
 	}
 
 	s, err := schema.FromLabelsFile(lf)
@@ -227,7 +241,7 @@ func query(t *testing.T, mint, maxt int64, lf, cf *parquet.File, constraints ...
 
 	found := make([]storage.ChunkSeries, 0, 100)
 	for i, group := range lf.RowGroups() {
-		rr, err := Filter(group, constraints...)
+		rr, err := Filter(context.Background(), group, constraints...)
 		total := int64(0)
 		for _, r := range rr {
 			total += r.count

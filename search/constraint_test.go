@@ -15,6 +15,7 @@ package search
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"slices"
 	"strconv"
@@ -24,9 +25,12 @@ import (
 	"github.com/parquet-go/parquet-go"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/require"
+	"github.com/thanos-io/objstore/providers/filesystem"
+
+	"github.com/prometheus-community/parquet-common/file"
 )
 
-func buildFile[T any](t testing.TB, rows []T) *parquet.File {
+func buildFile[T any](t testing.TB, rows []T) *file.ParquetFile {
 	buf := bytes.NewBuffer(nil)
 	w := parquet.NewGenericWriter[T](buf, parquet.PageBufferSize(10))
 	for _, row := range rows {
@@ -37,12 +41,16 @@ func buildFile[T any](t testing.TB, rows []T) *parquet.File {
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
+	bkt, err := filesystem.NewBucket(t.TempDir())
+	require.NoError(t, err)
 	reader := bytes.NewReader(buf.Bytes())
-	file, err := parquet.OpenFile(reader, reader.Size())
+	require.NoError(t, bkt.Upload(context.Background(), "pipe", reader))
+
+	f, err := file.OpenParquetFile(context.Background(), bkt, "pipe", parquet.ReadBufferSize(1))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return file
+	return f
 }
 
 func mustNewFastRegexMatcher(t testing.TB, s string) *labels.FastRegexMatcher {
@@ -112,11 +120,11 @@ func BenchmarkConstraints(b *testing.B) {
 			b.ResetTimer()
 			b.ReportAllocs()
 			for n := 0; n < b.N; n++ {
-				if err := Initialize(sfile.Schema(), tt.c...); err != nil {
+				if err := Initialize(sfile, tt.c...); err != nil {
 					b.Fatal(err)
 				}
 				for _, rg := range sfile.RowGroups() {
-					rr, err := Filter(rg, tt.c...)
+					rr, err := Filter(context.Background(), rg, tt.c...)
 					if err != nil {
 						b.Fatal(err)
 					}
@@ -124,6 +132,39 @@ func BenchmarkConstraints(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+func TestContextCancelled(t *testing.T) {
+	type s struct {
+		A string `parquet:",optional,dict"`
+	}
+
+	var rows []s
+
+	for a := 0; a < 50000; a++ {
+		rows = append(rows, s{
+			A: strings.Repeat(strconv.FormatInt(int64(a), 10), 20)[:20],
+		})
+	}
+
+	sfile := buildFile(t, rows)
+
+	for _, c := range []Constraint{
+		Equal("A", parquet.ValueOf(rows[len(rows)-1].A)),
+		Regex("A", mustNewFastRegexMatcher(t, rows[len(rows)-1].A)),
+		Not(Equal("A", parquet.ValueOf(rows[len(rows)-1].A))),
+	} {
+		if err := Initialize(sfile, c); err != nil {
+			t.Fatal(err)
+		}
+
+		for _, rg := range sfile.RowGroups() {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			_, err := Filter(ctx, rg, c)
+			require.ErrorContains(t, err, "context canceled")
+		}
 	}
 }
 
@@ -402,11 +443,11 @@ func TestFilter(t *testing.T) {
 			sfile := buildFile(t, tt.rows)
 			for _, expectation := range tt.expectations {
 				t.Run("", func(t *testing.T) {
-					if err := Initialize(sfile.Schema(), expectation.constraints...); err != nil {
+					if err := Initialize(sfile, expectation.constraints...); err != nil {
 						t.Fatal(err)
 					}
 					for _, rg := range sfile.RowGroups() {
-						rr, err := Filter(rg, expectation.constraints...)
+						rr, err := Filter(context.Background(), rg, expectation.constraints...)
 						if err != nil {
 							t.Fatal(err)
 						}
