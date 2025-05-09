@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package util
+package file
 
 import (
 	"context"
@@ -20,16 +20,29 @@ import (
 	"github.com/thanos-io/objstore"
 )
 
+type ReadAtWithContext interface {
+	io.ReaderAt
+	WithContext(ctx context.Context) io.ReaderAt
+}
+
 type bReadAt struct {
 	path string
 	obj  objstore.Bucket
 	ctx  context.Context
 }
 
-func NewBucketReadAt(ctx context.Context, path string, obj objstore.Bucket) io.ReaderAt {
+func NewBucketReadAt(ctx context.Context, path string, obj objstore.Bucket) ReadAtWithContext {
 	return &bReadAt{
 		path: path,
 		obj:  obj,
+		ctx:  ctx,
+	}
+}
+
+func (b *bReadAt) WithContext(ctx context.Context) io.ReaderAt {
+	return &bReadAt{
+		path: b.path,
+		obj:  b.obj,
 		ctx:  ctx,
 	}
 }

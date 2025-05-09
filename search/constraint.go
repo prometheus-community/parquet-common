@@ -15,6 +15,7 @@ package search
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"slices"
 	"sort"
@@ -22,6 +23,7 @@ import (
 	"github.com/parquet-go/parquet-go"
 	"github.com/prometheus/prometheus/model/labels"
 
+	"github.com/prometheus-community/parquet-common/file"
 	"github.com/prometheus-community/parquet-common/schema"
 	"github.com/prometheus-community/parquet-common/util"
 )
@@ -30,9 +32,9 @@ type Constraint interface {
 	fmt.Stringer
 
 	// filter returns a set of non-overlapping increasing row indexes that may satisfy the constraint.
-	filter(rg parquet.RowGroup, primary bool, rr []RowRange) ([]RowRange, error)
+	filter(ctx context.Context, rg parquet.RowGroup, primary bool, rr []RowRange) ([]RowRange, error)
 	// init initializes the constraint with respect to the file schema and projections.
-	init(s *parquet.Schema) error
+	init(f *file.ParquetFile) error
 	// path is the path for the column that is constrained
 	path() string
 }
@@ -88,16 +90,16 @@ func MatchersToConstraint(matchers ...*labels.Matcher) ([]Constraint, error) {
 	return r, nil
 }
 
-func Initialize(s *parquet.Schema, cs ...Constraint) error {
+func Initialize(f *file.ParquetFile, cs ...Constraint) error {
 	for i := range cs {
-		if err := cs[i].init(s); err != nil {
+		if err := cs[i].init(f); err != nil {
 			return fmt.Errorf("unable to initialize constraint %d: %w", i, err)
 		}
 	}
 	return nil
 }
 
-func Filter(rg parquet.RowGroup, cs ...Constraint) ([]RowRange, error) {
+func Filter(ctx context.Context, rg parquet.RowGroup, cs ...Constraint) ([]RowRange, error) {
 	// Constraints for sorting columns are cheaper to evaluate, so we sort them first.
 	sc := rg.SortingColumns()
 
@@ -117,7 +119,7 @@ func Filter(rg parquet.RowGroup, cs ...Constraint) ([]RowRange, error) {
 	rr := []RowRange{{from: int64(0), count: rg.NumRows()}}
 	for i := range cs {
 		isPrimary := len(sc) > 0 && cs[i].path() == sc[0].Path()[0]
-		rr, err = cs[i].filter(rg, isPrimary, rr)
+		rr, err = cs[i].filter(ctx, rg, isPrimary, rr)
 		if err != nil {
 			return nil, fmt.Errorf("unable to filter with constraint %d: %w", i, err)
 		}
@@ -176,6 +178,7 @@ type equalConstraint struct {
 	pth string
 
 	val parquet.Value
+	f   *file.ParquetFile
 
 	comp func(l, r parquet.Value) int
 }
@@ -188,7 +191,7 @@ func Equal(path string, value parquet.Value) Constraint {
 	return &equalConstraint{pth: path, val: value}
 }
 
-func (ec *equalConstraint) filter(rg parquet.RowGroup, primary bool, rr []RowRange) ([]RowRange, error) {
+func (ec *equalConstraint) filter(ctx context.Context, rg parquet.RowGroup, primary bool, rr []RowRange) ([]RowRange, error) {
 	if len(rr) == 0 {
 		return nil, nil
 	}
@@ -211,7 +214,7 @@ func (ec *equalConstraint) filter(rg parquet.RowGroup, primary bool, rr []RowRan
 		return nil, nil
 	}
 
-	pgs := cc.Pages()
+	pgs := ec.f.GetPage(ctx, cc)
 	defer func() { _ = pgs.Close() }()
 
 	oidx, err := cc.OffsetIndex()
@@ -308,8 +311,9 @@ func (ec *equalConstraint) filter(rg parquet.RowGroup, primary bool, rr []RowRan
 	return intersectRowRanges(simplify(res), rr), nil
 }
 
-func (ec *equalConstraint) init(s *parquet.Schema) error {
-	c, ok := s.Lookup(ec.path())
+func (ec *equalConstraint) init(f *file.ParquetFile) error {
+	c, ok := f.Schema().Lookup(ec.path())
+	ec.f = f
 	if !ok {
 		return nil
 	}
@@ -347,15 +351,15 @@ func Regex(path string, r *labels.FastRegexMatcher) Constraint {
 type regexConstraint struct {
 	pth   string
 	cache map[parquet.Value]bool
-
-	r *labels.FastRegexMatcher
+	f     *file.ParquetFile
+	r     *labels.FastRegexMatcher
 }
 
 func (rc *regexConstraint) String() string {
 	return fmt.Sprintf("regex(%v,%v)", rc.pth, rc.r.GetRegexString())
 }
 
-func (rc *regexConstraint) filter(rg parquet.RowGroup, primary bool, rr []RowRange) ([]RowRange, error) {
+func (rc *regexConstraint) filter(ctx context.Context, rg parquet.RowGroup, primary bool, rr []RowRange) ([]RowRange, error) {
 	if len(rr) == 0 {
 		return nil, nil
 	}
@@ -372,7 +376,7 @@ func (rc *regexConstraint) filter(rg parquet.RowGroup, primary bool, rr []RowRan
 	}
 	cc := rg.ColumnChunks()[col.ColumnIndex]
 
-	pgs := cc.Pages()
+	pgs := rc.f.GetPage(ctx, cc)
 	defer func() { _ = pgs.Close() }()
 
 	oidx, err := cc.OffsetIndex()
@@ -446,8 +450,9 @@ func (rc *regexConstraint) filter(rg parquet.RowGroup, primary bool, rr []RowRan
 	return intersectRowRanges(simplify(res), rr), nil
 }
 
-func (rc *regexConstraint) init(s *parquet.Schema) error {
-	c, ok := s.Lookup(rc.path())
+func (rc *regexConstraint) init(f *file.ParquetFile) error {
+	c, ok := f.Schema().Lookup(rc.path())
+	rc.f = f
 	if !ok {
 		return nil
 	}
@@ -483,8 +488,8 @@ func (nc *notConstraint) String() string {
 	return fmt.Sprintf("not(%v)", nc.c.String())
 }
 
-func (nc *notConstraint) filter(rg parquet.RowGroup, primary bool, rr []RowRange) ([]RowRange, error) {
-	base, err := nc.c.filter(rg, primary, rr)
+func (nc *notConstraint) filter(ctx context.Context, rg parquet.RowGroup, primary bool, rr []RowRange) ([]RowRange, error) {
+	base, err := nc.c.filter(ctx, rg, primary, rr)
 	if err != nil {
 		return nil, fmt.Errorf("unable to compute child constraint: %w", err)
 	}
@@ -492,8 +497,8 @@ func (nc *notConstraint) filter(rg parquet.RowGroup, primary bool, rr []RowRange
 	return complementRowRanges(base, rr), nil
 }
 
-func (nc *notConstraint) init(s *parquet.Schema) error {
-	return nc.c.init(s)
+func (nc *notConstraint) init(f *file.ParquetFile) error {
+	return nc.c.init(f)
 }
 
 func (nc *notConstraint) path() string {
@@ -512,7 +517,7 @@ func Null(path string) Constraint {
 	return &nullConstraint{pth: path}
 }
 
-func (null *nullConstraint) filter(rg parquet.RowGroup, primary bool, rr []RowRange) ([]RowRange, error) {
+func (null *nullConstraint) filter(ctx context.Context, rg parquet.RowGroup, _ bool, rr []RowRange) ([]RowRange, error) {
 	if len(rr) == 0 {
 		return nil, nil
 	}
@@ -596,7 +601,7 @@ func (null *nullConstraint) filter(rg parquet.RowGroup, primary bool, rr []RowRa
 	return intersectRowRanges(simplify(res), rr), nil
 }
 
-func (null *nullConstraint) init(_ *parquet.Schema) error {
+func (null *nullConstraint) init(*file.ParquetFile) error {
 	return nil
 }
 

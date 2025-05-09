@@ -19,6 +19,8 @@ import (
 
 	"github.com/efficientgo/core/errors"
 	"github.com/parquet-go/parquet-go"
+
+	"github.com/prometheus-community/parquet-common/file"
 )
 
 type Builder struct {
@@ -45,7 +47,7 @@ func NewBuilder(mint, maxt, colDuration int64) *Builder {
 	return b
 }
 
-func FromLabelsFile(lf *parquet.File) (*TSDBSchema, error) {
+func FromLabelsFile(lf *file.ParquetFile) (*TSDBSchema, error) {
 	md := MetadataToMap(lf.Metadata().KeyValueMetadata)
 	mint, err := strconv.ParseInt(md[MinTMd], 0, 64)
 	if err != nil {

@@ -21,7 +21,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/parquet-go/parquet-go"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/promql/promqltest"
@@ -32,6 +31,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/objstore/providers/filesystem"
 
+	"github.com/prometheus-community/parquet-common/file"
 	"github.com/prometheus-community/parquet-common/schema"
 )
 
@@ -270,7 +270,7 @@ eval instant at 60s http_requests_total{route=~".+"}
 	})
 }
 
-func queryWithQueryable(t *testing.T, mint, maxt int64, lf, cf *parquet.File, hints *storage.SelectHints, matchers ...*labels.Matcher) []storage.Series {
+func queryWithQueryable(t *testing.T, mint, maxt int64, lf, cf *file.ParquetFile, hints *storage.SelectHints, matchers ...*labels.Matcher) []storage.Series {
 	ctx := context.Background()
 	queryable, err := createQueryable(t, lf, cf)
 	require.NoError(t, err)
@@ -285,7 +285,7 @@ func queryWithQueryable(t *testing.T, mint, maxt int64, lf, cf *parquet.File, hi
 	return found
 }
 
-func createQueryable(t testing.TB, lf *parquet.File, cf *parquet.File) (storage.Queryable, error) {
+func createQueryable(t testing.TB, lf *file.ParquetFile, cf *file.ParquetFile) (storage.Queryable, error) {
 	d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
 	pb, err := NewParquetBlock(lf, cf, d)
 	require.NoError(t, err)
