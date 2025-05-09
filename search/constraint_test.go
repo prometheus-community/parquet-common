@@ -23,10 +23,11 @@ import (
 	"testing"
 
 	"github.com/parquet-go/parquet-go"
-	"github.com/prometheus-community/parquet-common/file"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/objstore/providers/filesystem"
+
+	"github.com/prometheus-community/parquet-common/file"
 )
 
 func buildFile[T any](t testing.TB, rows []T) *file.ParquetFile {
@@ -45,7 +46,7 @@ func buildFile[T any](t testing.TB, rows []T) *file.ParquetFile {
 	reader := bytes.NewReader(buf.Bytes())
 	require.NoError(t, bkt.Upload(context.Background(), "pipe", reader))
 
-	f, err := file.OpenParquetFile(context.Background(), bkt, "pipe")
+	f, err := file.OpenParquetFile(context.Background(), bkt, "pipe", parquet.ReadBufferSize(1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,6 +132,39 @@ func BenchmarkConstraints(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+func TestContextCancelled(t *testing.T) {
+	type s struct {
+		A string `parquet:",optional,dict"`
+	}
+
+	var rows []s
+
+	for a := 0; a < 50000; a++ {
+		rows = append(rows, s{
+			A: strings.Repeat(strconv.FormatInt(int64(a), 10), 20)[:20],
+		})
+	}
+
+	sfile := buildFile(t, rows)
+
+	for _, c := range []Constraint{
+		Equal("A", parquet.ValueOf(rows[len(rows)-1].A)),
+		Regex("A", mustNewFastRegexMatcher(t, rows[len(rows)-1].A)),
+		Not(Equal("A", parquet.ValueOf(rows[len(rows)-1].A))),
+	} {
+		if err := Initialize(sfile, c); err != nil {
+			t.Fatal(err)
+		}
+
+		for _, rg := range sfile.RowGroups() {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			_, err := Filter(ctx, rg, c)
+			require.ErrorContains(t, err, "context canceled")
+		}
 	}
 }
 
