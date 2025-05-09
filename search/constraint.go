@@ -26,6 +26,17 @@ import (
 	"github.com/prometheus-community/parquet-common/util"
 )
 
+type Constraint interface {
+	fmt.Stringer
+
+	// filter returns a set of non-overlapping increasing row indexes that may satisfy the constraint.
+	filter(rg parquet.RowGroup, primary bool, rr []RowRange) ([]RowRange, error)
+	// init initializes the constraint with respect to the file schema and projections.
+	init(s *parquet.Schema) error
+	// path is the path for the column that is constrained
+	path() string
+}
+
 func MatchersToConstraint(matchers ...*labels.Matcher) ([]Constraint, error) {
 	r := make([]Constraint, 0, len(matchers))
 	for _, matcher := range matchers {
