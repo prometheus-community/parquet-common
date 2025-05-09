@@ -124,6 +124,19 @@ func TestMaterializeE2E(t *testing.T) {
 		found = query(t, data.minTime+(9*colDuration).Milliseconds(), data.minTime+(10*colDuration).Milliseconds()-1, lf, cf, c1, c2)
 		require.Len(t, found, 0)
 	})
+
+	t.Run("ContextCancelled", func(t *testing.T) {
+		s, err := schema.FromLabelsFile(lf)
+		require.NoError(t, err)
+		d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
+		m, err := NewMaterializer(s, d, lf, cf)
+		require.NoError(t, err)
+		rr := []RowRange{{from: int64(0), count: lf.RowGroups()[0].NumRows()}}
+		ctx, cancel := context.WithCancel(ctx)
+		cancel()
+		_, err = m.Materialize(ctx, 0, data.minTime, data.maxTime, false, rr)
+		require.ErrorContains(t, err, "context canceled")
+	})
 }
 
 type testConfig struct {
