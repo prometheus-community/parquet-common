@@ -126,16 +126,19 @@ func (m *Materializer) MaterializeLabelNames(ctx context.Context, rgi int, rr []
 		return nil, errors.Wrap(err, "materializer failed to materialize columns")
 	}
 
+	seen := make(map[string]struct{})
 	colsMap := make(map[string]struct{}, 10)
-
 	for _, colsIdx := range colsIdxs {
-		idxs, err := schema.DecodeUintSlice(colsIdx.ByteArray())
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to decode column index")
-		}
-		for _, idx := range idxs {
-			if _, ok := colsMap[m.lf.Schema().Columns()[idx][0]]; !ok {
-				colsMap[m.lf.Schema().Columns()[idx][0]] = struct{}{}
+		key := util.YoloString(colsIdx.ByteArray())
+		if _, ok := seen[key]; !ok {
+			idxs, err := schema.DecodeUintSlice(colsIdx.ByteArray())
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to decode column index")
+			}
+			for _, idx := range idxs {
+				if _, ok := colsMap[m.lf.Schema().Columns()[idx][0]]; !ok {
+					colsMap[m.lf.Schema().Columns()[idx][0]] = struct{}{}
+				}
 			}
 		}
 	}
