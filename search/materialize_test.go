@@ -31,7 +31,6 @@ import (
 	"github.com/prometheus-community/parquet-common/convert"
 	"github.com/prometheus-community/parquet-common/schema"
 	"github.com/prometheus-community/parquet-common/storage"
-	"github.com/prometheus-community/parquet-common/util"
 )
 
 func TestMaterializeE2E(t *testing.T) {
@@ -47,11 +46,11 @@ func TestMaterializeE2E(t *testing.T) {
 	data := generateTestData(t, st, ctx, cfg)
 
 	// Convert to Parquet
-	lf, cf := convertToParquet(t, ctx, bkt, data, st.Head())
+	block := convertToParquet(t, ctx, bkt, data, st.Head())
 
 	t.Run("QueryByUniqueLabel", func(t *testing.T) {
 		eq := Equal(schema.LabelToColumn("unique"), parquet.ValueOf("unique_0"))
-		found := query(t, data.minTime, data.maxTime, lf, cf, eq)
+		found := query(t, data.minTime, data.maxTime, block, eq)
 		require.Len(t, found, cfg.totalMetricNames)
 
 		for _, series := range found {
@@ -60,7 +59,7 @@ func TestMaterializeE2E(t *testing.T) {
 		}
 
 		matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
-		sFound := queryWithQueryable(t, data.minTime, data.maxTime, lf, cf, nil, matchers...)
+		sFound := queryWithQueryable(t, data.minTime, data.maxTime, block, nil, matchers...)
 		totalFound := 0
 		for _, series := range sFound {
 			require.Equal(t, series.Labels().Get("unique"), "unique_0")
@@ -75,7 +74,7 @@ func TestMaterializeE2E(t *testing.T) {
 			name := fmt.Sprintf("metric_%d", rand.Int()%cfg.totalMetricNames)
 			eq := Equal(schema.LabelToColumn(labels.MetricName), parquet.ValueOf(name))
 
-			found := query(t, data.minTime, data.maxTime, lf, cf, eq)
+			found := query(t, data.minTime, data.maxTime, block, eq)
 			require.Len(t, found, cfg.metricsPerMetricName, fmt.Sprintf("metric_%d", i))
 
 			for _, series := range found {
@@ -94,7 +93,7 @@ func TestMaterializeE2E(t *testing.T) {
 			}
 
 			matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, labels.MetricName, name)}
-			sFound := queryWithQueryable(t, data.minTime, data.maxTime, lf, cf, nil, matchers...)
+			sFound := queryWithQueryable(t, data.minTime, data.maxTime, block, nil, matchers...)
 			totalFound := 0
 			for _, series := range sFound {
 				totalFound++
@@ -111,27 +110,27 @@ func TestMaterializeE2E(t *testing.T) {
 		c2 := Equal(schema.LabelToColumn("unique"), parquet.ValueOf("unique_0"))
 
 		// Test first column only
-		found := query(t, data.minTime, data.minTime+colDuration.Milliseconds()-1, lf, cf, c1, c2)
+		found := query(t, data.minTime, data.minTime+colDuration.Milliseconds()-1, block, c1, c2)
 		require.Len(t, found, 1)
 		require.Len(t, found[0].(*concreteChunksSeries).chks, 1)
 
 		// Test first two columns
-		found = query(t, data.minTime, data.minTime+(2*colDuration).Milliseconds()-1, lf, cf, c1, c2)
+		found = query(t, data.minTime, data.minTime+(2*colDuration).Milliseconds()-1, block, c1, c2)
 		require.Len(t, found, 1)
 		require.Len(t, found[0].(*concreteChunksSeries).chks, 2)
 
 		// Query outside the range
-		found = query(t, data.minTime+(9*colDuration).Milliseconds(), data.minTime+(10*colDuration).Milliseconds()-1, lf, cf, c1, c2)
+		found = query(t, data.minTime+(9*colDuration).Milliseconds(), data.minTime+(10*colDuration).Milliseconds()-1, block, c1, c2)
 		require.Len(t, found, 0)
 	})
 
 	t.Run("ContextCancelled", func(t *testing.T) {
-		s, err := schema.FromLabelsFile(lf)
+		s, err := block.TSDBSchema()
 		require.NoError(t, err)
 		d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
-		m, err := NewMaterializer(s, d, lf, cf)
+		m, err := NewMaterializer(s, d, block)
 		require.NoError(t, err)
-		rr := []RowRange{{from: int64(0), count: lf.RowGroups()[0].NumRows()}}
+		rr := []RowRange{{from: int64(0), count: block.LabelsFile().RowGroups()[0].NumRows()}}
 		ctx, cancel := context.WithCancel(ctx)
 		cancel()
 		_, err = m.Materialize(ctx, 0, data.minTime, data.maxTime, false, rr)
@@ -203,7 +202,7 @@ func generateTestData(t *testing.T, st *teststorage.TestStorage, ctx context.Con
 	}
 }
 
-func convertToParquet(t *testing.T, ctx context.Context, bkt *filesystem.Bucket, data testData, h convert.Convertible) (*storage.ParquetFile, *storage.ParquetFile) {
+func convertToParquet(t *testing.T, ctx context.Context, bkt *filesystem.Bucket, data testData, h convert.Convertible) *storage.ParquetBlock {
 	colDuration := time.Hour
 	shards, err := convert.ConvertTSDBBlock(
 		ctx,
@@ -219,26 +218,26 @@ func convertToParquet(t *testing.T, ctx context.Context, bkt *filesystem.Bucket,
 	require.NoError(t, err)
 	require.Equal(t, 1, shards)
 
-	lf, cf, err := util.OpenParquetFiles(ctx, bkt, "block", 0)
+	block, err := storage.OpenParquetBlock(ctx, bkt, "block", 0)
 	require.NoError(t, err)
 
-	return lf, cf
+	return block
 }
 
-func query(t *testing.T, mint, maxt int64, lf, cf *storage.ParquetFile, constraints ...Constraint) []prom_storage.ChunkSeries {
+func query(t *testing.T, mint, maxt int64, block *storage.ParquetBlock, constraints ...Constraint) []prom_storage.ChunkSeries {
 	ctx := context.Background()
 	for _, c := range constraints {
-		require.NoError(t, c.init(lf))
+		require.NoError(t, c.init(block.LabelsFile()))
 	}
 
-	s, err := schema.FromLabelsFile(lf)
+	s, err := block.TSDBSchema()
 	require.NoError(t, err)
 	d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
-	m, err := NewMaterializer(s, d, lf, cf)
+	m, err := NewMaterializer(s, d, block)
 	require.NoError(t, err)
 
 	found := make([]prom_storage.ChunkSeries, 0, 100)
-	for i, group := range lf.RowGroups() {
+	for i, group := range block.LabelsFile().RowGroups() {
 		rr, err := Filter(context.Background(), group, constraints...)
 		total := int64(0)
 		for _, r := range rr {

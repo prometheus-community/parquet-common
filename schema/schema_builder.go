@@ -17,9 +17,8 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/prometheus-community/parquet-common/storage"
-
 	"github.com/efficientgo/core/errors"
+
 	"github.com/parquet-go/parquet-go"
 )
 
@@ -47,7 +46,7 @@ func NewBuilder(mint, maxt, colDuration int64) *Builder {
 	return b
 }
 
-func FromLabelsFile(lf *storage.ParquetFile) (*TSDBSchema, error) {
+func FromLabelsFile(lf *parquet.File) (*TSDBSchema, error) {
 	md := MetadataToMap(lf.Metadata().KeyValueMetadata)
 	mint, err := strconv.ParseInt(md[MinTMd], 0, 64)
 	if err != nil {

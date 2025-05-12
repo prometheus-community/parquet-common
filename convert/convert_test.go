@@ -33,7 +33,6 @@ import (
 
 	"github.com/prometheus-community/parquet-common/schema"
 	"github.com/prometheus-community/parquet-common/storage"
-	"github.com/prometheus-community/parquet-common/util"
 )
 
 func Test_Convert_TSDB(t *testing.T) {
@@ -103,23 +102,23 @@ func Test_Convert_TSDB(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, 1, shards)
 
-			lf, cf, err := util.OpenParquetFiles(ctx, bkt, DefaultConvertOpts.name, 0)
+			block, err := storage.OpenParquetBlock(ctx, bkt, DefaultConvertOpts.name, 0)
 			require.NoError(t, err)
-			require.Equal(t, len(lf.RowGroups()), len(cf.RowGroups()))
-			series, chunks, err := readSeries(t, lf, cf)
+			require.Equal(t, len(block.LabelsFile().RowGroups()), len(block.ChunksFile().RowGroups()))
+			series, chunks, err := readSeries(t, block)
 			require.NoError(t, err)
 			require.Equal(t, st.DB.Head().NumSeries(), uint64(len(series)))
 			require.Equal(t, st.DB.Head().NumSeries(), uint64(len(chunks)))
 
 			// Make sure the chunk page bounds are empty
-			for _, ci := range cf.ColumnIndexes() {
+			for _, ci := range block.ChunksFile().ColumnIndexes() {
 				for _, value := range append(ci.MinValues, ci.MaxValues...) {
 					require.Empty(t, value)
 				}
 			}
 
 			// Make sure labels pages bounds are populated
-			for _, ci := range lf.ColumnIndexes() {
+			for _, ci := range block.LabelsFile().ColumnIndexes() {
 				for _, value := range append(ci.MinValues, ci.MaxValues...) {
 					require.NotEmpty(t, value)
 				}
@@ -174,21 +173,21 @@ func Test_CreateParquetWithReducedTimestampSamples(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, shards)
 
-	lf, cf, err := util.OpenParquetFiles(ctx, bkt, DefaultConvertOpts.name, 0)
+	block, err := storage.OpenParquetBlock(ctx, bkt, DefaultConvertOpts.name, 0)
 	require.NoError(t, err)
 
 	// Check metadatas
-	for _, file := range []*storage.ParquetFile{lf, cf} {
+	for _, file := range []*storage.ParquetFile{block.LabelsFile(), block.ChunksFile()} {
 		require.Equal(t, schema.MetadataToMap(file.Metadata().KeyValueMetadata)[schema.MinTMd], strconv.FormatInt(mint, 10))
 		require.Equal(t, schema.MetadataToMap(file.Metadata().KeyValueMetadata)[schema.MaxTMd], strconv.FormatInt(maxt, 10))
 		require.Equal(t, schema.MetadataToMap(file.Metadata().KeyValueMetadata)[schema.DataColSizeMd], strconv.FormatInt(datColDuration.Milliseconds(), 10))
 	}
 
 	// 2 labels + col indexes
-	require.Len(t, lf.Schema().Columns(), 3)
+	require.Len(t, block.LabelsFile().Schema().Columns(), 3)
 	// 6 data cols with 10 min duration
-	require.Len(t, cf.Schema().Columns(), 6)
-	series, chunks, err := readSeries(t, lf, cf)
+	require.Len(t, block.ChunksFile().Schema().Columns(), 6)
+	series, chunks, err := readSeries(t, block)
 
 	require.NoError(t, err)
 	require.Len(t, series, 1)
@@ -261,10 +260,10 @@ func Test_BlockHasOnlySomeSeriesInConvertTime(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, shards)
 
-	lf, cf, err := util.OpenParquetFiles(ctx, bkt, DefaultConvertOpts.name, 0)
+	block, err := storage.OpenParquetBlock(ctx, bkt, DefaultConvertOpts.name, 0)
 	require.NoError(t, err)
 
-	series, _, err := readSeries(t, lf, cf)
+	series, _, err := readSeries(t, block)
 	require.NoError(t, err)
 	require.Len(t, series, 241)
 }
@@ -336,10 +335,10 @@ func Test_SortedLabels(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, shards)
 
-	lf, cf, err := util.OpenParquetFiles(ctx, bkt, DefaultConvertOpts.name, 0)
+	block, err := storage.OpenParquetBlock(ctx, bkt, DefaultConvertOpts.name, 0)
 	require.NoError(t, err)
 
-	series, chunks, err := readSeries(t, lf, cf)
+	series, chunks, err := readSeries(t, block)
 	require.NoError(t, err)
 	require.Equal(t, len(series), totalSeries, "series count mismatch")
 
@@ -366,9 +365,9 @@ func Test_SortedLabels(t *testing.T) {
 	}
 }
 
-func readSeries(t *testing.T, labelsFile, chunksFile *storage.ParquetFile) ([]labels.Labels, [][]chunks.Meta, error) {
-	lr := parquet.NewGenericReader[any](labelsFile.File)
-	cr := parquet.NewGenericReader[any](chunksFile.File)
+func readSeries(t *testing.T, block *storage.ParquetBlock) ([]labels.Labels, [][]chunks.Meta, error) {
+	lr := parquet.NewGenericReader[any](block.LabelsFile().File)
+	cr := parquet.NewGenericReader[any](block.ChunksFile().File)
 
 	labelsBuff := make([]parquet.Row, 100)
 	chunksBuff := make([]parquet.Row, 100)

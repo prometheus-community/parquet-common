@@ -34,10 +34,9 @@ import (
 )
 
 type Materializer struct {
-	lf *storage.ParquetFile
-	cf *storage.ParquetFile
-	s  *schema.TSDBSchema
-	d  *schema.PrometheusParquetChunksDecoder
+	b *storage.ParquetBlock
+	s *schema.TSDBSchema
+	d *schema.PrometheusParquetChunksDecoder
 
 	colIdx      int
 	concurrency int
@@ -45,15 +44,15 @@ type Materializer struct {
 	dataColToIndex []int
 }
 
-func NewMaterializer(s *schema.TSDBSchema, d *schema.PrometheusParquetChunksDecoder, lf, cf *storage.ParquetFile) (*Materializer, error) {
-	colIdx, ok := lf.Schema().Lookup(schema.ColIndexes)
+func NewMaterializer(s *schema.TSDBSchema, d *schema.PrometheusParquetChunksDecoder, block *storage.ParquetBlock) (*Materializer, error) {
+	colIdx, ok := block.LabelsFile().Schema().Lookup(schema.ColIndexes)
 	if !ok {
 		return nil, errors.New(fmt.Sprintf("schema index %s not found", schema.ColIndexes))
 	}
 
-	dataColToIndex := make([]int, len(cf.Schema().Columns()))
+	dataColToIndex := make([]int, len(block.ChunksFile().Schema().Columns()))
 	for i := 0; i < len(s.DataColsIndexes); i++ {
-		c, ok := cf.Schema().Lookup(schema.DataColumn(i))
+		c, ok := block.ChunksFile().Schema().Lookup(schema.DataColumn(i))
 		if !ok {
 			return nil, errors.New(fmt.Sprintf("schema column %s not found", schema.DataColumn(i)))
 		}
@@ -64,8 +63,7 @@ func NewMaterializer(s *schema.TSDBSchema, d *schema.PrometheusParquetChunksDeco
 	return &Materializer{
 		s:              s,
 		d:              d,
-		lf:             lf,
-		cf:             cf,
+		b:              block,
 		colIdx:         colIdx.ColumnIndex,
 		concurrency:    runtime.GOMAXPROCS(0),
 		dataColToIndex: dataColToIndex,
@@ -107,8 +105,8 @@ func (m *Materializer) Materialize(ctx context.Context, rgi int, mint, maxt int6
 }
 
 func (m *Materializer) MaterializeAllLabelNames() []string {
-	r := make([]string, 0, len(m.lf.Schema().Columns()))
-	for _, c := range m.lf.Schema().Columns() {
+	r := make([]string, 0, len(m.b.LabelsFile().Schema().Columns()))
+	for _, c := range m.b.LabelsFile().Schema().Columns() {
 		lbl, ok := schema.ExtractLabelFromColumn(c[0])
 		if !ok {
 			continue
@@ -120,9 +118,9 @@ func (m *Materializer) MaterializeAllLabelNames() []string {
 }
 
 func (m *Materializer) MaterializeLabelNames(ctx context.Context, rgi int, rr []RowRange) ([]string, error) {
-	labelsRg := m.lf.RowGroups()[rgi]
+	labelsRg := m.b.LabelsFile().RowGroups()[rgi]
 	cc := labelsRg.ColumnChunks()[m.colIdx]
-	colsIdxs, err := m.materializeColumn(ctx, m.lf, labelsRg, cc, rr)
+	colsIdxs, err := m.materializeColumn(ctx, m.b.LabelsFile(), labelsRg, cc, rr)
 	if err != nil {
 		return nil, errors.Wrap(err, "materializer failed to materialize columns")
 	}
@@ -137,8 +135,8 @@ func (m *Materializer) MaterializeLabelNames(ctx context.Context, rgi int, rr []
 				return nil, errors.Wrap(err, "failed to decode column index")
 			}
 			for _, idx := range idxs {
-				if _, ok := colsMap[m.lf.Schema().Columns()[idx][0]]; !ok {
-					colsMap[m.lf.Schema().Columns()[idx][0]] = struct{}{}
+				if _, ok := colsMap[m.b.LabelsFile().Schema().Columns()[idx][0]]; !ok {
+					colsMap[m.b.LabelsFile().Schema().Columns()[idx][0]] = struct{}{}
 				}
 			}
 		}
@@ -155,13 +153,13 @@ func (m *Materializer) MaterializeLabelNames(ctx context.Context, rgi int, rr []
 }
 
 func (m *Materializer) MaterializeLabelValues(ctx context.Context, name string, rgi int, rr []RowRange) ([]string, error) {
-	labelsRg := m.lf.RowGroups()[rgi]
-	cIdx, ok := m.lf.Schema().Lookup(schema.LabelToColumn(name))
+	labelsRg := m.b.LabelsFile().RowGroups()[rgi]
+	cIdx, ok := m.b.LabelsFile().Schema().Lookup(schema.LabelToColumn(name))
 	if !ok {
 		return []string{}, nil
 	}
 	cc := labelsRg.ColumnChunks()[cIdx.ColumnIndex]
-	values, err := m.materializeColumn(ctx, m.lf, labelsRg, cc, rr)
+	values, err := m.materializeColumn(ctx, m.b.LabelsFile(), labelsRg, cc, rr)
 	if err != nil {
 		return nil, errors.Wrap(err, "materializer failed to materialize columns")
 	}
@@ -179,13 +177,13 @@ func (m *Materializer) MaterializeLabelValues(ctx context.Context, name string, 
 }
 
 func (m *Materializer) MaterializeAllLabelValues(ctx context.Context, name string, rgi int) ([]string, error) {
-	labelsRg := m.lf.RowGroups()[rgi]
-	cIdx, ok := m.lf.Schema().Lookup(schema.LabelToColumn(name))
+	labelsRg := m.b.LabelsFile().RowGroups()[rgi]
+	cIdx, ok := m.b.LabelsFile().Schema().Lookup(schema.LabelToColumn(name))
 	if !ok {
 		return []string{}, nil
 	}
 	cc := labelsRg.ColumnChunks()[cIdx.ColumnIndex]
-	pages := m.lf.GetPage(ctx, cc)
+	pages := m.b.LabelsFile().GetPage(ctx, cc)
 	p, err := pages.ReadPage()
 	if err != nil {
 		return []string{}, errors.Wrap(err, "failed to read page")
@@ -200,9 +198,9 @@ func (m *Materializer) MaterializeAllLabelValues(ctx context.Context, name strin
 }
 
 func (m *Materializer) materializeAllLabels(ctx context.Context, rgi int, rr []RowRange) ([]labels.Labels, error) {
-	labelsRg := m.lf.RowGroups()[rgi]
+	labelsRg := m.b.LabelsFile().RowGroups()[rgi]
 	cc := labelsRg.ColumnChunks()[m.colIdx]
-	colsIdxs, err := m.materializeColumn(ctx, m.lf, labelsRg, cc, rr)
+	colsIdxs, err := m.materializeColumn(ctx, m.b.LabelsFile(), labelsRg, cc, rr)
 	if err != nil {
 		return nil, errors.Wrap(err, "materializer failed to materialize columns")
 	}
@@ -227,7 +225,7 @@ func (m *Materializer) materializeAllLabels(ctx context.Context, rgi int, rr []R
 	for cIdx, v := range colsMap {
 		errGroup.Go(func() error {
 			cc := labelsRg.ColumnChunks()[cIdx]
-			values, err := m.materializeColumn(ctx, m.lf, labelsRg, cc, rr)
+			values, err := m.materializeColumn(ctx, m.b.LabelsFile(), labelsRg, cc, rr)
 			if err != nil {
 				return errors.Wrap(err, "failed to materialize labels values")
 			}
@@ -241,7 +239,7 @@ func (m *Materializer) materializeAllLabels(ctx context.Context, rgi int, rr []R
 	}
 
 	for cIdx, values := range colsMap {
-		labelName, ok := schema.ExtractLabelFromColumn(m.lf.Schema().Columns()[cIdx][0])
+		labelName, ok := schema.ExtractLabelFromColumn(m.b.LabelsFile().Schema().Columns()[cIdx][0])
 		if !ok {
 			return nil, fmt.Errorf("column %d not found in schema", cIdx)
 		}
@@ -262,7 +260,7 @@ func (m *Materializer) materializeAllLabels(ctx context.Context, rgi int, rr []R
 func (m *Materializer) materializeChunks(ctx context.Context, rgi int, mint, maxt int64, rr []RowRange) ([][]chunks.Meta, error) {
 	minDataCol := m.s.DataColumIdx(mint)
 	maxDataCol := m.s.DataColumIdx(maxt)
-	rg := m.cf.RowGroups()[rgi]
+	rg := m.b.ChunksFile().RowGroups()[rgi]
 	totalRows := int64(0)
 	for _, r := range rr {
 		totalRows += r.count
@@ -270,7 +268,7 @@ func (m *Materializer) materializeChunks(ctx context.Context, rgi int, mint, max
 	r := make([][]chunks.Meta, totalRows)
 
 	for i := minDataCol; i <= min(maxDataCol, len(m.dataColToIndex)-1); i++ {
-		values, err := m.materializeColumn(ctx, m.cf, rg, rg.ColumnChunks()[m.dataColToIndex[i]], rr)
+		values, err := m.materializeColumn(ctx, m.b.ChunksFile(), rg, rg.ColumnChunks()[m.dataColToIndex[i]], rr)
 		if err != nil {
 			return r, err
 		}
