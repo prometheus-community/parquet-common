@@ -16,8 +16,6 @@ package file
 import (
 	"context"
 
-	"github.com/thanos-io/objstore"
-
 	"github.com/parquet-go/parquet-go"
 )
 
@@ -32,18 +30,13 @@ func (f *ParquetFile) GetPage(ctx context.Context, cc parquet.ColumnChunk) *parq
 	return pages
 }
 
-func OpenParquetFile(ctx context.Context, bkt objstore.Bucket, filename string, options ...parquet.FileOption) (*ParquetFile, error) {
-	labelsAttr, err := bkt.Attributes(ctx, filename)
-	if err != nil {
-		return nil, err
-	}
-	reader := NewBucketReadAt(ctx, filename, bkt)
-	file, err := parquet.OpenFile(reader, labelsAttr.Size, options...)
+func OpenParquetFile(r ReadAtWithContext, size int64, options ...parquet.FileOption) (*ParquetFile, error) {
+	file, err := parquet.OpenFile(r, size, options...)
 	if err != nil {
 		return nil, err
 	}
 	return &ParquetFile{
 		File:              file,
-		ReadAtWithContext: reader,
+		ReadAtWithContext: r,
 	}, nil
 }

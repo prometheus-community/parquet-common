@@ -219,9 +219,7 @@ func convertToParquet(t *testing.T, ctx context.Context, bkt *filesystem.Bucket,
 	require.NoError(t, err)
 	require.Equal(t, 1, shards)
 
-	labelsFileName := schema.LabelsPfileNameForShard("block", 0)
-	chunksFileName := schema.ChunksPfileNameForShard("block", 0)
-	lf, cf, err := util.OpenParquetFiles(ctx, bkt, labelsFileName, chunksFileName)
+	lf, cf, err := util.OpenParquetFiles(ctx, bkt, "block", 0)
 	require.NoError(t, err)
 
 	return lf, cf

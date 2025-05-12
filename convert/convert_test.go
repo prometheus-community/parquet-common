@@ -103,9 +103,7 @@ func Test_Convert_TSDB(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, 1, shards)
 
-			labelsFileName := schema.LabelsPfileNameForShard(DefaultConvertOpts.name, 0)
-			chunksFileName := schema.ChunksPfileNameForShard(DefaultConvertOpts.name, 0)
-			lf, cf, err := util.OpenParquetFiles(ctx, bkt, labelsFileName, chunksFileName)
+			lf, cf, err := util.OpenParquetFiles(ctx, bkt, DefaultConvertOpts.name, 0)
 			require.NoError(t, err)
 			require.Equal(t, len(lf.RowGroups()), len(cf.RowGroups()))
 			series, chunks, err := readSeries(t, lf, cf)
@@ -265,9 +263,7 @@ func Test_BlockHasOnlySomeSeriesInConvertTime(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, shards)
 
-	labelsFileName := schema.LabelsPfileNameForShard(DefaultConvertOpts.name, 0)
-	chunksFileName := schema.ChunksPfileNameForShard(DefaultConvertOpts.name, 0)
-	lf, cf, err := util.OpenParquetFiles(ctx, bkt, labelsFileName, chunksFileName)
+	lf, cf, err := util.OpenParquetFiles(ctx, bkt, DefaultConvertOpts.name, 0)
 	require.NoError(t, err)
 
 	series, _, err := readSeries(t, lf, cf)

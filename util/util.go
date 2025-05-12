@@ -15,6 +15,7 @@ package util
 
 import (
 	"context"
+	"github.com/prometheus-community/parquet-common/schema"
 	"unsafe"
 
 	"github.com/parquet-go/parquet-go"
@@ -37,13 +38,23 @@ func CloneRows(rows []parquet.Row) []parquet.Row {
 
 // OpenParquetFiles opens the provided labels and chunks Parquet files from the object store,
 // using the options param.
-func OpenParquetFiles(ctx context.Context, bkt objstore.Bucket, labelsFileName, chunksFileName string, options ...parquet.FileOption) (*file.ParquetFile, *file.ParquetFile, error) {
-	labelsFile, err := file.OpenParquetFile(ctx, bkt, labelsFileName, options...)
+func OpenParquetFiles(ctx context.Context, bkt objstore.Bucket, name string, shard int, options ...parquet.FileOption) (*file.ParquetFile, *file.ParquetFile, error) {
+	labelsFileName := schema.LabelsPfileNameForShard(name, shard)
+	chunksFileName := schema.ChunksPfileNameForShard(name, shard)
+	labelsAttr, err := bkt.Attributes(ctx, labelsFileName)
+	if err != nil {
+		return nil, nil, err
+	}
+	labelsFile, err := file.OpenParquetFile(file.NewBucketReadAt(ctx, labelsFileName, bkt), labelsAttr.Size, options...)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	chunksFile, err := file.OpenParquetFile(ctx, bkt, chunksFileName, options...)
+	chunksFileAttr, err := bkt.Attributes(ctx, chunksFileName)
+	if err != nil {
+		return nil, nil, err
+	}
+	chunksFile, err := file.OpenParquetFile(file.NewBucketReadAt(ctx, chunksFileName, bkt), chunksFileAttr.Size, options...)
 	if err != nil {
 		return nil, nil, err
 	}
