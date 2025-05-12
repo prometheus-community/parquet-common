@@ -536,7 +536,7 @@ func (null *nullConstraint) filter(rg parquet.RowGroup, primary bool, rr []RowRa
 	if err != nil {
 		return nil, fmt.Errorf("unable to read column index: %w", err)
 	}
-	var res = make([]RowRange, 0)
+	res := make([]RowRange, 0)
 	for i := 0; i < cidx.NumPages(); i++ {
 		// If page does not intersect from, to; we can immediately discard it
 		pfrom := oidx.FirstRowIndex(i)
