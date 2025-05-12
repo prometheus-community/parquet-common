@@ -42,16 +42,40 @@ func MatchersToConstraint(matchers ...*labels.Matcher) ([]Constraint, error) {
 	for _, matcher := range matchers {
 		switch matcher.Type {
 		case labels.MatchEqual:
+			if matcher.Value == "" {
+				r = append(r, Null(schema.LabelToColumn(matcher.Name)))
+				continue
+			}
 			r = append(r, Equal(schema.LabelToColumn(matcher.Name), parquet.ValueOf(matcher.Value)))
 		case labels.MatchNotEqual:
+			if matcher.Value == "" {
+				r = append(r, Not(Null(schema.LabelToColumn(matcher.Name))))
+				continue
+			}
 			r = append(r, Not(Equal(schema.LabelToColumn(matcher.Name), parquet.ValueOf(matcher.Value))))
 		case labels.MatchRegexp:
+			if matcher.Value == "" {
+				r = append(r, Null(schema.LabelToColumn(matcher.Name)))
+				continue
+			}
+			if matcher.Value == ".+" {
+				r = append(r, Not(Null(schema.LabelToColumn(matcher.Name))))
+				continue
+			}
 			res, err := labels.NewFastRegexMatcher(matcher.Value)
 			if err != nil {
 				return nil, err
 			}
 			r = append(r, Regex(schema.LabelToColumn(matcher.Name), res))
 		case labels.MatchNotRegexp:
+			if matcher.Value == "" {
+				r = append(r, Not(Null(schema.LabelToColumn(matcher.Name))))
+				continue
+			}
+			if matcher.Value == ".+" {
+				r = append(r, Null(schema.LabelToColumn(matcher.Name)))
+				continue
+			}
 			res, err := labels.NewFastRegexMatcher(matcher.Value)
 			if err != nil {
 				return nil, err
@@ -476,18 +500,102 @@ func (nc *notConstraint) path() string {
 	return nc.c.path()
 }
 
-type nullConstraint struct{}
+type nullConstraint struct {
+	pth string
+}
 
 func (null *nullConstraint) String() string {
-	return "null"
+	return fmt.Sprintf("null(%q)", null.pth)
 }
 
-func Null() Constraint {
-	return &nullConstraint{}
+func Null(path string) Constraint {
+	return &nullConstraint{pth: path}
 }
 
-func (null *nullConstraint) filter(parquet.RowGroup, bool, []RowRange) ([]RowRange, error) {
-	return nil, nil
+func (null *nullConstraint) filter(rg parquet.RowGroup, primary bool, rr []RowRange) ([]RowRange, error) {
+	if len(rr) == 0 {
+		return nil, nil
+	}
+	from, to := rr[0].from, rr[len(rr)-1].from+rr[len(rr)-1].count
+
+	col, ok := rg.Schema().Lookup(null.path())
+	if !ok {
+		// filter nothing
+		return rr, nil
+	}
+	cc := rg.ColumnChunks()[col.ColumnIndex]
+
+	pgs := cc.Pages()
+	defer func() { _ = pgs.Close() }()
+
+	oidx, err := cc.OffsetIndex()
+	if err != nil {
+		return nil, fmt.Errorf("unable to read offset index: %w", err)
+	}
+	cidx, err := cc.ColumnIndex()
+	if err != nil {
+		return nil, fmt.Errorf("unable to read column index: %w", err)
+	}
+	var (
+		res = make([]RowRange, 0)
+	)
+	for i := 0; i < cidx.NumPages(); i++ {
+		// If page does not intersect from, to; we can immediately discard it
+		pfrom := oidx.FirstRowIndex(i)
+		pcount := rg.NumRows() - pfrom
+		if i < oidx.NumPages()-1 {
+			pcount = oidx.FirstRowIndex(i+1) - pfrom
+		}
+		pto := pfrom + pcount
+		if pfrom > to {
+			break
+		}
+		if pto < from {
+			continue
+		}
+
+		if cidx.NullPage(i) {
+			res = append(res, RowRange{from: pfrom, count: pcount})
+			continue
+		}
+
+		if cidx.NullCount(i) == 0 {
+			continue
+		}
+
+		// We cannot discard the page through statistics but we might need to read it to see if it has the value
+		if err := pgs.SeekToRow(pfrom); err != nil {
+			return nil, fmt.Errorf("unable to seek to row: %w", err)
+		}
+		pg, err := pgs.ReadPage()
+		if err != nil {
+			return nil, fmt.Errorf("unable to read page: %w", err)
+		}
+		// The page has null value, we need to find the matching row ranges
+		bl := int(max(pfrom, from) - pfrom)
+		off, count := bl, 0
+		for j, def := range pg.DefinitionLevels() {
+			if def != 1 {
+				if count == 0 {
+					off = j
+				}
+				count++
+			} else {
+				if count != 0 {
+					res = append(res, RowRange{pfrom + int64(off), int64(count)})
+				}
+				off, count = j, 0
+			}
+		}
+
+		if count != 0 {
+			res = append(res, RowRange{pfrom + int64(off), int64(count)})
+		}
+	}
+	if len(res) == 0 {
+		return nil, nil
+	}
+	return intersectRowRanges(simplify(res), rr), nil
 }
 
 func (null *nullConstraint) init(_ *parquet.Schema) error {
@@ -495,5 +603,5 @@ func (null *nullConstraint) init(_ *parquet.Schema) error {
 }
 
 func (null *nullConstraint) path() string {
-	return ""
+	return null.pth
 }

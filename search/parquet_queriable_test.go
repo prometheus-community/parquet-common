@@ -220,6 +220,56 @@ func TestQueryable(t *testing.T) {
 	})
 }
 
+func TestQueryableWithEmptyMatcher(t *testing.T) {
+	opts := promql.EngineOpts{
+		Timeout:                  1 * time.Hour,
+		MaxSamples:               1e10,
+		EnableNegativeOffset:     true,
+		EnableAtModifier:         true,
+		NoStepSubqueryIntervalFn: func(_ int64) int64 { return 30 * time.Second.Milliseconds() },
+		LookbackDelta:            5 * time.Minute,
+		EnableDelayedNameRemoval: true,
+	}
+
+	engine := promql.NewEngine(opts)
+	t.Cleanup(func() { _ = engine.Close() })
+
+	load := `load 30s
+			    http_requests_total{pod="nginx-1", route="/"} 0+1x5
+			    http_requests_total{pod="nginx-2"} 0+2x5
+			    http_requests_total{pod="nginx-3", route="/"} 0+3x5
+			    http_requests_total{pod="nginx-4"} 0+4x5
+
+eval instant at 60s http_requests_total{route=""}
+	{__name__="http_requests_total", pod="nginx-2"} 4
+	{__name__="http_requests_total", pod="nginx-4"} 8
+
+eval instant at 60s http_requests_total{route=~""}
+	{__name__="http_requests_total", pod="nginx-2"} 4
+	{__name__="http_requests_total", pod="nginx-4"} 8
+
+eval instant at 60s http_requests_total{route!~".+"}
+	{__name__="http_requests_total", pod="nginx-2"} 4
+	{__name__="http_requests_total", pod="nginx-4"} 8
+
+eval instant at 60s http_requests_total{route!=""}
+	{__name__="http_requests_total", pod="nginx-1", route="/"} 2
+	{__name__="http_requests_total", pod="nginx-3", route="/"} 6
+
+eval instant at 60s http_requests_total{route!~""}
+	{__name__="http_requests_total", pod="nginx-1", route="/"} 2
+	{__name__="http_requests_total", pod="nginx-3", route="/"} 6
+
+eval instant at 60s http_requests_total{route=~".+"}
+	{__name__="http_requests_total", pod="nginx-1", route="/"} 2
+	{__name__="http_requests_total", pod="nginx-3", route="/"} 6
+`
+
+	promqltest.RunTestWithStorage(t, load, engine, func(tt testutil.T) storage.Storage {
+		return &acceptanceTestStorage{t: t, st: teststorage.New(tt)}
+	})
+}
+
 func queryWithQueryable(t *testing.T, mint, maxt int64, lf, cf *parquet.File, hints *storage.SelectHints, matchers ...*labels.Matcher) []storage.Series {
 	ctx := context.Background()
 	queryable, err := createQueryable(t, lf, cf)

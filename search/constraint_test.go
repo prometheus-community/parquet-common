@@ -397,6 +397,36 @@ func TestFilter(t *testing.T) {
 					},
 				},
 			},
+			{
+				rows: []s{
+					{A: 1, C: "a"},
+					{A: 2, C: "b"},
+					{A: 2},
+					{A: 3, C: "b"},
+					{A: 4},
+					{A: 5},
+				},
+				expectations: []expectation{
+					{
+						constraints: []Constraint{
+							Null("C"),
+						},
+						expect: []RowRange{
+							{from: 2, count: 1},
+							{from: 4, count: 2},
+						},
+					},
+					{
+						constraints: []Constraint{
+							Equal("A", parquet.ValueOf(2)),
+							Null("C"),
+						},
+						expect: []RowRange{
+							{from: 2, count: 1},
+						},
+					},
+				},
+			},
 		} {
 
 			sfile := buildFile(t, tt.rows)
