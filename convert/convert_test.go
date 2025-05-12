@@ -31,8 +31,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/objstore/providers/filesystem"
 
-	"github.com/prometheus-community/parquet-common/file"
 	"github.com/prometheus-community/parquet-common/schema"
+	"github.com/prometheus-community/parquet-common/storage"
 	"github.com/prometheus-community/parquet-common/util"
 )
 
@@ -174,13 +174,11 @@ func Test_CreateParquetWithReducedTimestampSamples(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, shards)
 
-	labelsFileName := schema.LabelsPfileNameForShard(DefaultConvertOpts.name, 0)
-	chunksFileName := schema.ChunksPfileNameForShard(DefaultConvertOpts.name, 0)
-	lf, cf, err := util.OpenParquetFiles(ctx, bkt, labelsFileName, chunksFileName)
+	lf, cf, err := util.OpenParquetFiles(ctx, bkt, DefaultConvertOpts.name, 0)
 	require.NoError(t, err)
 
 	// Check metadatas
-	for _, file := range []*file.ParquetFile{lf, cf} {
+	for _, file := range []*storage.ParquetFile{lf, cf} {
 		require.Equal(t, schema.MetadataToMap(file.Metadata().KeyValueMetadata)[schema.MinTMd], strconv.FormatInt(mint, 10))
 		require.Equal(t, schema.MetadataToMap(file.Metadata().KeyValueMetadata)[schema.MaxTMd], strconv.FormatInt(maxt, 10))
 		require.Equal(t, schema.MetadataToMap(file.Metadata().KeyValueMetadata)[schema.DataColSizeMd], strconv.FormatInt(datColDuration.Milliseconds(), 10))
@@ -338,9 +336,7 @@ func Test_SortedLabels(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, shards)
 
-	labelsFileName := schema.LabelsPfileNameForShard(DefaultConvertOpts.name, 0)
-	chunksFileName := schema.ChunksPfileNameForShard(DefaultConvertOpts.name, 0)
-	lf, cf, err := util.OpenParquetFiles(ctx, bkt, labelsFileName, chunksFileName)
+	lf, cf, err := util.OpenParquetFiles(ctx, bkt, DefaultConvertOpts.name, 0)
 	require.NoError(t, err)
 
 	series, chunks, err := readSeries(t, lf, cf)
@@ -370,7 +366,7 @@ func Test_SortedLabels(t *testing.T) {
 	}
 }
 
-func readSeries(t *testing.T, labelsFile, chunksFile *file.ParquetFile) ([]labels.Labels, [][]chunks.Meta, error) {
+func readSeries(t *testing.T, labelsFile, chunksFile *storage.ParquetFile) ([]labels.Labels, [][]chunks.Meta, error) {
 	lr := parquet.NewGenericReader[any](labelsFile.File)
 	cr := parquet.NewGenericReader[any](chunksFile.File)
 

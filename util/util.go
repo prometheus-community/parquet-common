@@ -15,13 +15,14 @@ package util
 
 import (
 	"context"
-	"github.com/prometheus-community/parquet-common/schema"
 	"unsafe"
+
+	"github.com/prometheus-community/parquet-common/schema"
 
 	"github.com/parquet-go/parquet-go"
 	"github.com/thanos-io/objstore"
 
-	"github.com/prometheus-community/parquet-common/file"
+	"github.com/prometheus-community/parquet-common/storage"
 )
 
 func YoloString(buf []byte) string {
@@ -38,14 +39,14 @@ func CloneRows(rows []parquet.Row) []parquet.Row {
 
 // OpenParquetFiles opens the provided labels and chunks Parquet files from the object store,
 // using the options param.
-func OpenParquetFiles(ctx context.Context, bkt objstore.Bucket, name string, shard int, options ...parquet.FileOption) (*file.ParquetFile, *file.ParquetFile, error) {
+func OpenParquetFiles(ctx context.Context, bkt objstore.Bucket, name string, shard int, options ...parquet.FileOption) (*storage.ParquetFile, *storage.ParquetFile, error) {
 	labelsFileName := schema.LabelsPfileNameForShard(name, shard)
 	chunksFileName := schema.ChunksPfileNameForShard(name, shard)
 	labelsAttr, err := bkt.Attributes(ctx, labelsFileName)
 	if err != nil {
 		return nil, nil, err
 	}
-	labelsFile, err := file.OpenParquetFile(file.NewBucketReadAt(ctx, labelsFileName, bkt), labelsAttr.Size, options...)
+	labelsFile, err := storage.OpenParquetFile(storage.NewBucketReadAt(ctx, labelsFileName, bkt), labelsAttr.Size, options...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -54,7 +55,7 @@ func OpenParquetFiles(ctx context.Context, bkt objstore.Bucket, name string, sha
 	if err != nil {
 		return nil, nil, err
 	}
-	chunksFile, err := file.OpenParquetFile(file.NewBucketReadAt(ctx, chunksFileName, bkt), chunksFileAttr.Size, options...)
+	chunksFile, err := storage.OpenParquetFile(storage.NewBucketReadAt(ctx, chunksFileName, bkt), chunksFileAttr.Size, options...)
 	if err != nil {
 		return nil, nil, err
 	}

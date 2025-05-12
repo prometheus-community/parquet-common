@@ -27,10 +27,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/objstore/providers/filesystem"
 
-	"github.com/prometheus-community/parquet-common/file"
+	"github.com/prometheus-community/parquet-common/storage"
 )
 
-func buildFile[T any](t testing.TB, rows []T) *file.ParquetFile {
+func buildFile[T any](t testing.TB, rows []T) *storage.ParquetFile {
 	buf := bytes.NewBuffer(nil)
 	w := parquet.NewGenericWriter[T](buf, parquet.PageBufferSize(10))
 	for _, row := range rows {
@@ -46,7 +46,7 @@ func buildFile[T any](t testing.TB, rows []T) *file.ParquetFile {
 	reader := bytes.NewReader(buf.Bytes())
 	require.NoError(t, bkt.Upload(context.Background(), "pipe", reader))
 
-	f, err := file.OpenParquetFile(file.NewBucketReadAt(context.Background(), "pipe", bkt), int64(len(buf.Bytes())), parquet.ReadBufferSize(1))
+	f, err := storage.OpenParquetFile(storage.NewBucketReadAt(context.Background(), "pipe", bkt), int64(len(buf.Bytes())), parquet.ReadBufferSize(1))
 	if err != nil {
 		t.Fatal(err)
 	}

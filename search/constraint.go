@@ -23,8 +23,8 @@ import (
 	"github.com/parquet-go/parquet-go"
 	"github.com/prometheus/prometheus/model/labels"
 
-	"github.com/prometheus-community/parquet-common/file"
 	"github.com/prometheus-community/parquet-common/schema"
+	"github.com/prometheus-community/parquet-common/storage"
 	"github.com/prometheus-community/parquet-common/util"
 )
 
@@ -34,7 +34,7 @@ type Constraint interface {
 	// filter returns a set of non-overlapping increasing row indexes that may satisfy the constraint.
 	filter(ctx context.Context, rg parquet.RowGroup, primary bool, rr []RowRange) ([]RowRange, error)
 	// init initializes the constraint with respect to the file schema and projections.
-	init(f *file.ParquetFile) error
+	init(f *storage.ParquetFile) error
 	// path is the path for the column that is constrained
 	path() string
 }
@@ -90,7 +90,7 @@ func MatchersToConstraint(matchers ...*labels.Matcher) ([]Constraint, error) {
 	return r, nil
 }
 
-func Initialize(f *file.ParquetFile, cs ...Constraint) error {
+func Initialize(f *storage.ParquetFile, cs ...Constraint) error {
 	for i := range cs {
 		if err := cs[i].init(f); err != nil {
 			return fmt.Errorf("unable to initialize constraint %d: %w", i, err)
@@ -178,7 +178,7 @@ type equalConstraint struct {
 	pth string
 
 	val parquet.Value
-	f   *file.ParquetFile
+	f   *storage.ParquetFile
 
 	comp func(l, r parquet.Value) int
 }
@@ -311,7 +311,7 @@ func (ec *equalConstraint) filter(ctx context.Context, rg parquet.RowGroup, prim
 	return intersectRowRanges(simplify(res), rr), nil
 }
 
-func (ec *equalConstraint) init(f *file.ParquetFile) error {
+func (ec *equalConstraint) init(f *storage.ParquetFile) error {
 	c, ok := f.Schema().Lookup(ec.path())
 	ec.f = f
 	if !ok {
@@ -351,7 +351,7 @@ func Regex(path string, r *labels.FastRegexMatcher) Constraint {
 type regexConstraint struct {
 	pth   string
 	cache map[parquet.Value]bool
-	f     *file.ParquetFile
+	f     *storage.ParquetFile
 	r     *labels.FastRegexMatcher
 }
 
@@ -450,7 +450,7 @@ func (rc *regexConstraint) filter(ctx context.Context, rg parquet.RowGroup, prim
 	return intersectRowRanges(simplify(res), rr), nil
 }
 
-func (rc *regexConstraint) init(f *file.ParquetFile) error {
+func (rc *regexConstraint) init(f *storage.ParquetFile) error {
 	c, ok := f.Schema().Lookup(rc.path())
 	rc.f = f
 	if !ok {
@@ -497,7 +497,7 @@ func (nc *notConstraint) filter(ctx context.Context, rg parquet.RowGroup, primar
 	return complementRowRanges(base, rr), nil
 }
 
-func (nc *notConstraint) init(f *file.ParquetFile) error {
+func (nc *notConstraint) init(f *storage.ParquetFile) error {
 	return nc.c.init(f)
 }
 
@@ -601,7 +601,7 @@ func (null *nullConstraint) filter(ctx context.Context, rg parquet.RowGroup, _ b
 	return intersectRowRanges(simplify(res), rr), nil
 }
 
-func (null *nullConstraint) init(*file.ParquetFile) error {
+func (null *nullConstraint) init(*storage.ParquetFile) error {
 	return nil
 }
 

@@ -24,15 +24,15 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/promql/promqltest"
-	"github.com/prometheus/prometheus/storage"
+	prom_storage "github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/prometheus/util/teststorage"
 	"github.com/prometheus/prometheus/util/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/objstore/providers/filesystem"
 
-	"github.com/prometheus-community/parquet-common/file"
 	"github.com/prometheus-community/parquet-common/schema"
+	"github.com/prometheus-community/parquet-common/storage"
 )
 
 func TestPromQLAcceptance(t *testing.T) {
@@ -53,7 +53,7 @@ func TestPromQLAcceptance(t *testing.T) {
 	engine := promql.NewEngine(opts)
 	t.Cleanup(func() { _ = engine.Close() })
 
-	promqltest.RunBuiltinTestsWithStorage(&parallelTest{T: t}, engine, func(tt testutil.T) storage.Storage {
+	promqltest.RunBuiltinTestsWithStorage(&parallelTest{T: t}, engine, func(tt testutil.T) prom_storage.Storage {
 		return &acceptanceTestStorage{t: t, st: teststorage.New(tt)}
 	})
 }
@@ -74,15 +74,15 @@ type acceptanceTestStorage struct {
 	st *teststorage.TestStorage
 }
 
-func (st *acceptanceTestStorage) Appender(ctx context.Context) storage.Appender {
+func (st *acceptanceTestStorage) Appender(ctx context.Context) prom_storage.Appender {
 	return st.st.Appender(ctx)
 }
 
-func (st *acceptanceTestStorage) ChunkQuerier(int64, int64) (storage.ChunkQuerier, error) {
+func (st *acceptanceTestStorage) ChunkQuerier(int64, int64) (prom_storage.ChunkQuerier, error) {
 	return nil, errors.New("unimplemented")
 }
 
-func (st *acceptanceTestStorage) Querier(from, to int64) (storage.Querier, error) {
+func (st *acceptanceTestStorage) Querier(from, to int64) (prom_storage.Querier, error) {
 	if st.st.Head().NumSeries() == 0 {
 		// parquet-go panics when writing an empty parquet file
 		return st.st.Querier(from, to)
@@ -159,7 +159,7 @@ func TestQueryable(t *testing.T) {
 
 	t.Run("QueryByUniqueLabel and SkipChunks=true", func(t *testing.T) {
 		matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
-		hints := &storage.SelectHints{
+		hints := &prom_storage.SelectHints{
 			Func: "series",
 		}
 		sFound := queryWithQueryable(t, data.minTime, data.maxTime, lf, cf, hints, matchers...)
@@ -265,12 +265,12 @@ eval instant at 60s http_requests_total{route=~".+"}
 	{__name__="http_requests_total", pod="nginx-3", route="/"} 6
 `
 
-	promqltest.RunTestWithStorage(t, load, engine, func(tt testutil.T) storage.Storage {
+	promqltest.RunTestWithStorage(t, load, engine, func(tt testutil.T) prom_storage.Storage {
 		return &acceptanceTestStorage{t: t, st: teststorage.New(tt)}
 	})
 }
 
-func queryWithQueryable(t *testing.T, mint, maxt int64, lf, cf *file.ParquetFile, hints *storage.SelectHints, matchers ...*labels.Matcher) []storage.Series {
+func queryWithQueryable(t *testing.T, mint, maxt int64, lf, cf *storage.ParquetFile, hints *prom_storage.SelectHints, matchers ...*labels.Matcher) []prom_storage.Series {
 	ctx := context.Background()
 	queryable, err := createQueryable(t, lf, cf)
 	require.NoError(t, err)
@@ -278,14 +278,14 @@ func queryWithQueryable(t *testing.T, mint, maxt int64, lf, cf *file.ParquetFile
 	require.NoError(t, err)
 	ss := querier.Select(ctx, true, hints, matchers...)
 
-	found := make([]storage.Series, 0, 100)
+	found := make([]prom_storage.Series, 0, 100)
 	for ss.Next() {
 		found = append(found, ss.At())
 	}
 	return found
 }
 
-func createQueryable(t testing.TB, lf *file.ParquetFile, cf *file.ParquetFile) (storage.Queryable, error) {
+func createQueryable(t testing.TB, lf *storage.ParquetFile, cf *storage.ParquetFile) (prom_storage.Queryable, error) {
 	d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
 	pb, err := NewParquetBlock(lf, cf, d)
 	require.NoError(t, err)

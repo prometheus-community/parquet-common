@@ -22,15 +22,15 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 	"github.com/prometheus/prometheus/model/labels"
-	"github.com/prometheus/prometheus/storage"
+	prom_storage "github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/prometheus/util/teststorage"
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/objstore/providers/filesystem"
 
 	"github.com/prometheus-community/parquet-common/convert"
-	"github.com/prometheus-community/parquet-common/file"
 	"github.com/prometheus-community/parquet-common/schema"
+	"github.com/prometheus-community/parquet-common/storage"
 	"github.com/prometheus-community/parquet-common/util"
 )
 
@@ -203,7 +203,7 @@ func generateTestData(t *testing.T, st *teststorage.TestStorage, ctx context.Con
 	}
 }
 
-func convertToParquet(t *testing.T, ctx context.Context, bkt *filesystem.Bucket, data testData, h convert.Convertible) (*file.ParquetFile, *file.ParquetFile) {
+func convertToParquet(t *testing.T, ctx context.Context, bkt *filesystem.Bucket, data testData, h convert.Convertible) (*storage.ParquetFile, *storage.ParquetFile) {
 	colDuration := time.Hour
 	shards, err := convert.ConvertTSDBBlock(
 		ctx,
@@ -225,7 +225,7 @@ func convertToParquet(t *testing.T, ctx context.Context, bkt *filesystem.Bucket,
 	return lf, cf
 }
 
-func query(t *testing.T, mint, maxt int64, lf, cf *file.ParquetFile, constraints ...Constraint) []storage.ChunkSeries {
+func query(t *testing.T, mint, maxt int64, lf, cf *storage.ParquetFile, constraints ...Constraint) []prom_storage.ChunkSeries {
 	ctx := context.Background()
 	for _, c := range constraints {
 		require.NoError(t, c.init(lf))
@@ -237,7 +237,7 @@ func query(t *testing.T, mint, maxt int64, lf, cf *file.ParquetFile, constraints
 	m, err := NewMaterializer(s, d, lf, cf)
 	require.NoError(t, err)
 
-	found := make([]storage.ChunkSeries, 0, 100)
+	found := make([]prom_storage.ChunkSeries, 0, 100)
 	for i, group := range lf.RowGroups() {
 		rr, err := Filter(context.Background(), group, constraints...)
 		total := int64(0)

@@ -18,12 +18,12 @@ import (
 	"sort"
 
 	"github.com/prometheus/prometheus/model/labels"
-	"github.com/prometheus/prometheus/storage"
+	prom_storage "github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/util/annotations"
 
 	"github.com/prometheus-community/parquet-common/convert"
-	"github.com/prometheus-community/parquet-common/file"
 	"github.com/prometheus-community/parquet-common/schema"
+	"github.com/prometheus-community/parquet-common/storage"
 	"github.com/prometheus-community/parquet-common/util"
 )
 
@@ -31,13 +31,13 @@ type parquetQueryable struct {
 	blocks []*ParquetBlock
 }
 
-func NewParquetQueryable(blocks ...*ParquetBlock) (storage.Queryable, error) {
+func NewParquetQueryable(blocks ...*ParquetBlock) (prom_storage.Queryable, error) {
 	return &parquetQueryable{
 		blocks: blocks,
 	}, nil
 }
 
-func (p parquetQueryable) Querier(mint, maxt int64) (storage.Querier, error) {
+func (p parquetQueryable) Querier(mint, maxt int64) (prom_storage.Querier, error) {
 	return &parquetQuerier{
 		mint:   mint,
 		maxt:   maxt,
@@ -51,7 +51,7 @@ type parquetQuerier struct {
 	blocks []*ParquetBlock
 }
 
-func (p parquetQuerier) LabelValues(ctx context.Context, name string, hints *storage.LabelHints, matchers ...*labels.Matcher) ([]string, annotations.Annotations, error) {
+func (p parquetQuerier) LabelValues(ctx context.Context, name string, hints *prom_storage.LabelHints, matchers ...*labels.Matcher) ([]string, annotations.Annotations, error) {
 	limit := int64(0)
 
 	if hints != nil {
@@ -72,7 +72,7 @@ func (p parquetQuerier) LabelValues(ctx context.Context, name string, hints *sto
 	return util.MergeUnsortedSlices(int(limit), resNameValues...), nil, nil
 }
 
-func (p parquetQuerier) LabelNames(ctx context.Context, hints *storage.LabelHints, matchers ...*labels.Matcher) ([]string, annotations.Annotations, error) {
+func (p parquetQuerier) LabelNames(ctx context.Context, hints *prom_storage.LabelHints, matchers ...*labels.Matcher) ([]string, annotations.Annotations, error) {
 	limit := int64(0)
 
 	if hints != nil {
@@ -97,8 +97,8 @@ func (p parquetQuerier) Close() error {
 	return nil
 }
 
-func (p parquetQuerier) Select(ctx context.Context, sorted bool, sp *storage.SelectHints, matchers ...*labels.Matcher) storage.SeriesSet {
-	seriesSet := make([]storage.ChunkSeriesSet, len(p.blocks))
+func (p parquetQuerier) Select(ctx context.Context, sorted bool, sp *prom_storage.SelectHints, matchers ...*labels.Matcher) prom_storage.SeriesSet {
+	seriesSet := make([]prom_storage.ChunkSeriesSet, len(p.blocks))
 
 	minT, maxT := p.mint, p.maxt
 	if sp != nil {
@@ -109,21 +109,21 @@ func (p parquetQuerier) Select(ctx context.Context, sorted bool, sp *storage.Sel
 	for i, block := range p.blocks {
 		ss, err := block.Query(ctx, sorted, minT, maxT, skipChunks, matchers)
 		if err != nil {
-			return storage.ErrSeriesSet(err)
+			return prom_storage.ErrSeriesSet(err)
 		}
 		seriesSet[i] = ss
 	}
-	ss := convert.NewMergeChunkSeriesSet(seriesSet, labels.Compare, storage.NewConcatenatingChunkSeriesMerger())
+	ss := convert.NewMergeChunkSeriesSet(seriesSet, labels.Compare, prom_storage.NewConcatenatingChunkSeriesMerger())
 
 	return convert.NewSeriesSetFromChunkSeriesSet(ss, skipChunks)
 }
 
 type ParquetBlock struct {
-	lf, cf *file.ParquetFile
+	lf, cf *storage.ParquetFile
 	m      *Materializer
 }
 
-func NewParquetBlock(lf, cf *file.ParquetFile, d *schema.PrometheusParquetChunksDecoder) (*ParquetBlock, error) {
+func NewParquetBlock(lf, cf *storage.ParquetFile, d *schema.PrometheusParquetChunksDecoder) (*ParquetBlock, error) {
 	s, err := schema.FromLabelsFile(lf)
 	if err != nil {
 		return nil, err
@@ -140,7 +140,7 @@ func NewParquetBlock(lf, cf *file.ParquetFile, d *schema.PrometheusParquetChunks
 	}, nil
 }
 
-func (b ParquetBlock) Query(ctx context.Context, sorted bool, mint, maxt int64, skipChunks bool, matchers []*labels.Matcher) (storage.ChunkSeriesSet, error) {
+func (b ParquetBlock) Query(ctx context.Context, sorted bool, mint, maxt int64, skipChunks bool, matchers []*labels.Matcher) (prom_storage.ChunkSeriesSet, error) {
 	cs, err := MatchersToConstraint(matchers...)
 	if err != nil {
 		return nil, err
@@ -150,7 +150,7 @@ func (b ParquetBlock) Query(ctx context.Context, sorted bool, mint, maxt int64, 
 		return nil, err
 	}
 
-	results := make([]storage.ChunkSeries, 0, 1024)
+	results := make([]prom_storage.ChunkSeries, 0, 1024)
 	for i, group := range b.lf.RowGroups() {
 		rr, err := Filter(ctx, group, cs...)
 		if err != nil {
@@ -240,7 +240,7 @@ func (b ParquetBlock) allLabelValues(ctx context.Context, name string) ([][]stri
 	return results, nil
 }
 
-type byLabels []storage.ChunkSeries
+type byLabels []prom_storage.ChunkSeries
 
 func (b byLabels) Len() int           { return len(b) }
 func (b byLabels) Swap(i, j int)      { b[i], b[j] = b[j], b[i] }

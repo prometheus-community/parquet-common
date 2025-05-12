@@ -24,18 +24,18 @@ import (
 	"github.com/efficientgo/core/errors"
 	"github.com/parquet-go/parquet-go"
 	"github.com/prometheus/prometheus/model/labels"
-	"github.com/prometheus/prometheus/storage"
+	prom_storage "github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/chunks"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/prometheus-community/parquet-common/file"
 	"github.com/prometheus-community/parquet-common/schema"
+	"github.com/prometheus-community/parquet-common/storage"
 	"github.com/prometheus-community/parquet-common/util"
 )
 
 type Materializer struct {
-	lf *file.ParquetFile
-	cf *file.ParquetFile
+	lf *storage.ParquetFile
+	cf *storage.ParquetFile
 	s  *schema.TSDBSchema
 	d  *schema.PrometheusParquetChunksDecoder
 
@@ -45,7 +45,7 @@ type Materializer struct {
 	dataColToIndex []int
 }
 
-func NewMaterializer(s *schema.TSDBSchema, d *schema.PrometheusParquetChunksDecoder, lf, cf *file.ParquetFile) (*Materializer, error) {
+func NewMaterializer(s *schema.TSDBSchema, d *schema.PrometheusParquetChunksDecoder, lf, cf *storage.ParquetFile) (*Materializer, error) {
 	colIdx, ok := lf.Schema().Lookup(schema.ColIndexes)
 	if !ok {
 		return nil, errors.New(fmt.Sprintf("schema index %s not found", schema.ColIndexes))
@@ -74,13 +74,13 @@ func NewMaterializer(s *schema.TSDBSchema, d *schema.PrometheusParquetChunksDeco
 
 // Materialize reconstructs the ChunkSeries that belong to the specified row ranges (rr).
 // It uses the row group index (rgi) and time bounds (mint, maxt) to filter and decode the series.
-func (m *Materializer) Materialize(ctx context.Context, rgi int, mint, maxt int64, skipChunks bool, rr []RowRange) ([]storage.ChunkSeries, error) {
+func (m *Materializer) Materialize(ctx context.Context, rgi int, mint, maxt int64, skipChunks bool, rr []RowRange) ([]prom_storage.ChunkSeries, error) {
 	sLbls, err := m.materializeAllLabels(ctx, rgi, rr)
 	if err != nil {
 		return nil, errors.Wrapf(err, "error materializing labels")
 	}
 
-	results := make([]storage.ChunkSeries, len(sLbls))
+	results := make([]prom_storage.ChunkSeries, len(sLbls))
 	for i, s := range sLbls {
 		sort.Sort(s)
 		results[i] = &concreteChunksSeries{
@@ -99,7 +99,7 @@ func (m *Materializer) Materialize(ctx context.Context, rgi int, mint, maxt int6
 		}
 
 		// If we are not skipping chunks and there is no chunks for the time range queried, lets remove the series
-		results = slices.DeleteFunc(results, func(cs storage.ChunkSeries) bool {
+		results = slices.DeleteFunc(results, func(cs prom_storage.ChunkSeries) bool {
 			return len(cs.(*concreteChunksSeries).chks) == 0
 		})
 	}
@@ -287,7 +287,7 @@ func (m *Materializer) materializeChunks(ctx context.Context, rgi int, mint, max
 	return r, nil
 }
 
-func (m *Materializer) materializeColumn(ctx context.Context, file *file.ParquetFile, group parquet.RowGroup, cc parquet.ColumnChunk, rr []RowRange) ([]parquet.Value, error) {
+func (m *Materializer) materializeColumn(ctx context.Context, file *storage.ParquetFile, group parquet.RowGroup, cc parquet.ColumnChunk, rr []RowRange) ([]parquet.Value, error) {
 	if len(rr) == 0 {
 		return nil, nil
 	}
@@ -497,7 +497,7 @@ func (vi *valuesIterator) At() parquet.Value {
 	return vi.buffer[vi.currentBufferIndex].Clone()
 }
 
-var _ storage.ChunkSeries = &concreteChunksSeries{}
+var _ prom_storage.ChunkSeries = &concreteChunksSeries{}
 
 type concreteChunksSeries struct {
 	lbls labels.Labels
@@ -509,5 +509,5 @@ func (c concreteChunksSeries) Labels() labels.Labels {
 }
 
 func (c concreteChunksSeries) Iterator(_ chunks.Iterator) chunks.Iterator {
-	return storage.NewListChunkSeriesIterator(c.chks...)
+	return prom_storage.NewListChunkSeriesIterator(c.chks...)
 }
