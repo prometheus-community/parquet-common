@@ -102,23 +102,23 @@ func Test_Convert_TSDB(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, 1, shards)
 
-			block, err := storage.OpenParquetBlock(ctx, bkt, DefaultConvertOpts.name, 0)
+			shard, err := storage.OpenParquetShard(ctx, bkt, DefaultConvertOpts.name, 0)
 			require.NoError(t, err)
-			require.Equal(t, len(block.LabelsFile().RowGroups()), len(block.ChunksFile().RowGroups()))
-			series, chunks, err := readSeries(t, block)
+			require.Equal(t, len(shard.LabelsFile().RowGroups()), len(shard.ChunksFile().RowGroups()))
+			series, chunks, err := readSeries(t, shard)
 			require.NoError(t, err)
 			require.Equal(t, st.DB.Head().NumSeries(), uint64(len(series)))
 			require.Equal(t, st.DB.Head().NumSeries(), uint64(len(chunks)))
 
 			// Make sure the chunk page bounds are empty
-			for _, ci := range block.ChunksFile().ColumnIndexes() {
+			for _, ci := range shard.ChunksFile().ColumnIndexes() {
 				for _, value := range append(ci.MinValues, ci.MaxValues...) {
 					require.Empty(t, value)
 				}
 			}
 
 			// Make sure labels pages bounds are populated
-			for _, ci := range block.LabelsFile().ColumnIndexes() {
+			for _, ci := range shard.LabelsFile().ColumnIndexes() {
 				for _, value := range append(ci.MinValues, ci.MaxValues...) {
 					require.NotEmpty(t, value)
 				}
@@ -173,21 +173,21 @@ func Test_CreateParquetWithReducedTimestampSamples(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, shards)
 
-	block, err := storage.OpenParquetBlock(ctx, bkt, DefaultConvertOpts.name, 0)
+	shard, err := storage.OpenParquetShard(ctx, bkt, DefaultConvertOpts.name, 0)
 	require.NoError(t, err)
 
 	// Check metadatas
-	for _, file := range []*storage.ParquetFile{block.LabelsFile(), block.ChunksFile()} {
+	for _, file := range []*storage.ParquetFile{shard.LabelsFile(), shard.ChunksFile()} {
 		require.Equal(t, schema.MetadataToMap(file.Metadata().KeyValueMetadata)[schema.MinTMd], strconv.FormatInt(mint, 10))
 		require.Equal(t, schema.MetadataToMap(file.Metadata().KeyValueMetadata)[schema.MaxTMd], strconv.FormatInt(maxt, 10))
 		require.Equal(t, schema.MetadataToMap(file.Metadata().KeyValueMetadata)[schema.DataColSizeMd], strconv.FormatInt(datColDuration.Milliseconds(), 10))
 	}
 
 	// 2 labels + col indexes
-	require.Len(t, block.LabelsFile().Schema().Columns(), 3)
+	require.Len(t, shard.LabelsFile().Schema().Columns(), 3)
 	// 6 data cols with 10 min duration
-	require.Len(t, block.ChunksFile().Schema().Columns(), 6)
-	series, chunks, err := readSeries(t, block)
+	require.Len(t, shard.ChunksFile().Schema().Columns(), 6)
+	series, chunks, err := readSeries(t, shard)
 
 	require.NoError(t, err)
 	require.Len(t, series, 1)
@@ -260,10 +260,10 @@ func Test_BlockHasOnlySomeSeriesInConvertTime(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, shards)
 
-	block, err := storage.OpenParquetBlock(ctx, bkt, DefaultConvertOpts.name, 0)
+	shard, err := storage.OpenParquetShard(ctx, bkt, DefaultConvertOpts.name, 0)
 	require.NoError(t, err)
 
-	series, _, err := readSeries(t, block)
+	series, _, err := readSeries(t, shard)
 	require.NoError(t, err)
 	require.Len(t, series, 241)
 }
@@ -335,10 +335,10 @@ func Test_SortedLabels(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, shards)
 
-	block, err := storage.OpenParquetBlock(ctx, bkt, DefaultConvertOpts.name, 0)
+	shard, err := storage.OpenParquetShard(ctx, bkt, DefaultConvertOpts.name, 0)
 	require.NoError(t, err)
 
-	series, chunks, err := readSeries(t, block)
+	series, chunks, err := readSeries(t, shard)
 	require.NoError(t, err)
 	require.Equal(t, len(series), totalSeries, "series count mismatch")
 
@@ -365,9 +365,9 @@ func Test_SortedLabels(t *testing.T) {
 	}
 }
 
-func readSeries(t *testing.T, block *storage.ParquetBlock) ([]labels.Labels, [][]chunks.Meta, error) {
-	lr := parquet.NewGenericReader[any](block.LabelsFile().File)
-	cr := parquet.NewGenericReader[any](block.ChunksFile().File)
+func readSeries(t *testing.T, shard *storage.ParquetShard) ([]labels.Labels, [][]chunks.Meta, error) {
+	lr := parquet.NewGenericReader[any](shard.LabelsFile().File)
+	cr := parquet.NewGenericReader[any](shard.ChunksFile().File)
 
 	labelsBuff := make([]parquet.Row, 100)
 	chunksBuff := make([]parquet.Row, 100)

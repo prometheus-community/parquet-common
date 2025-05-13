@@ -214,7 +214,7 @@ func (ec *equalConstraint) filter(ctx context.Context, rg parquet.RowGroup, prim
 		return nil, nil
 	}
 
-	pgs := ec.f.GetPage(ctx, cc)
+	pgs := ec.f.GetPages(ctx, cc)
 	defer func() { _ = pgs.Close() }()
 
 	oidx, err := cc.OffsetIndex()
@@ -376,7 +376,7 @@ func (rc *regexConstraint) filter(ctx context.Context, rg parquet.RowGroup, prim
 	}
 	cc := rg.ColumnChunks()[col.ColumnIndex]
 
-	pgs := rc.f.GetPage(ctx, cc)
+	pgs := rc.f.GetPages(ctx, cc)
 	defer func() { _ = pgs.Close() }()
 
 	oidx, err := cc.OffsetIndex()

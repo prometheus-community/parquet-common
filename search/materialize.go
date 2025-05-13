@@ -34,7 +34,7 @@ import (
 )
 
 type Materializer struct {
-	b *storage.ParquetBlock
+	b *storage.ParquetShard
 	s *schema.TSDBSchema
 	d *schema.PrometheusParquetChunksDecoder
 
@@ -44,7 +44,7 @@ type Materializer struct {
 	dataColToIndex []int
 }
 
-func NewMaterializer(s *schema.TSDBSchema, d *schema.PrometheusParquetChunksDecoder, block *storage.ParquetBlock) (*Materializer, error) {
+func NewMaterializer(s *schema.TSDBSchema, d *schema.PrometheusParquetChunksDecoder, block *storage.ParquetShard) (*Materializer, error) {
 	colIdx, ok := block.LabelsFile().Schema().Lookup(schema.ColIndexes)
 	if !ok {
 		return nil, errors.New(fmt.Sprintf("schema index %s not found", schema.ColIndexes))
@@ -183,7 +183,7 @@ func (m *Materializer) MaterializeAllLabelValues(ctx context.Context, name strin
 		return []string{}, nil
 	}
 	cc := labelsRg.ColumnChunks()[cIdx.ColumnIndex]
-	pages := m.b.LabelsFile().GetPage(ctx, cc)
+	pages := m.b.LabelsFile().GetPages(ctx, cc)
 	p, err := pages.ReadPage()
 	if err != nil {
 		return []string{}, errors.Wrap(err, "failed to read page")
@@ -329,7 +329,7 @@ func (m *Materializer) materializeColumn(ctx context.Context, file *storage.Parq
 
 	for _, p := range coalescePageRanges(pagesToRowsMap, oidx) {
 		errGroup.Go(func() error {
-			pgs := file.GetPage(ctx, cc)
+			pgs := file.GetPages(ctx, cc)
 			defer func() { _ = pgs.Close() }()
 			err := pgs.SeekToRow(p.rows[0].from)
 			if err != nil {

@@ -31,7 +31,7 @@ type parquetQueryable struct {
 	blocks []*queryableBlock
 }
 
-func NewParquetQueryable(d *schema.PrometheusParquetChunksDecoder, blocks ...*storage.ParquetBlock) (prom_storage.Queryable, error) {
+func NewParquetQueryable(d *schema.PrometheusParquetChunksDecoder, blocks ...*storage.ParquetShard) (prom_storage.Queryable, error) {
 	qBlocks := make([]*queryableBlock, len(blocks))
 	for i, b := range blocks {
 		qb, err := newQueryableBlock(b, d)
@@ -127,11 +127,11 @@ func (p parquetQuerier) Select(ctx context.Context, sorted bool, sp *prom_storag
 }
 
 type queryableBlock struct {
-	block *storage.ParquetBlock
+	block *storage.ParquetShard
 	m     *Materializer
 }
 
-func newQueryableBlock(block *storage.ParquetBlock, d *schema.PrometheusParquetChunksDecoder) (*queryableBlock, error) {
+func newQueryableBlock(block *storage.ParquetShard, d *schema.PrometheusParquetChunksDecoder) (*queryableBlock, error) {
 	s, err := block.TSDBSchema()
 	if err != nil {
 		return nil, err

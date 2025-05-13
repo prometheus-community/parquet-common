@@ -270,9 +270,9 @@ eval instant at 60s http_requests_total{route=~".+"}
 	})
 }
 
-func queryWithQueryable(t *testing.T, mint, maxt int64, block *storage.ParquetBlock, hints *prom_storage.SelectHints, matchers ...*labels.Matcher) []prom_storage.Series {
+func queryWithQueryable(t *testing.T, mint, maxt int64, shard *storage.ParquetShard, hints *prom_storage.SelectHints, matchers ...*labels.Matcher) []prom_storage.Series {
 	ctx := context.Background()
-	queryable, err := createQueryable(block)
+	queryable, err := createQueryable(shard)
 	require.NoError(t, err)
 	querier, err := queryable.Querier(mint, maxt)
 	require.NoError(t, err)
@@ -285,7 +285,7 @@ func queryWithQueryable(t *testing.T, mint, maxt int64, block *storage.ParquetBl
 	return found
 }
 
-func createQueryable(block *storage.ParquetBlock) (prom_storage.Queryable, error) {
+func createQueryable(shard *storage.ParquetShard) (prom_storage.Queryable, error) {
 	d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
-	return NewParquetQueryable(d, block)
+	return NewParquetQueryable(d, shard)
 }
