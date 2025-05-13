@@ -27,12 +27,14 @@ import (
 	"github.com/prometheus-community/parquet-common/util"
 )
 
+type BlocksFinderFunction func(ctx context.Context, mint, maxt int64) ([]*storage.ParquetShard, error)
+
 type parquetQueryable struct {
-	blocksFinder func(mint, maxt int64) []*storage.ParquetShard
+	blocksFinder BlocksFinderFunction
 	d            *schema.PrometheusParquetChunksDecoder
 }
 
-func NewParquetQueryable(d *schema.PrometheusParquetChunksDecoder, blocksFinder func(mint, maxt int64) []*storage.ParquetShard) (prom_storage.Queryable, error) {
+func NewParquetQueryable(d *schema.PrometheusParquetChunksDecoder, blocksFinder BlocksFinderFunction) (prom_storage.Queryable, error) {
 	return &parquetQueryable{
 		blocksFinder: blocksFinder,
 		d:            d,
@@ -40,30 +42,26 @@ func NewParquetQueryable(d *schema.PrometheusParquetChunksDecoder, blocksFinder 
 }
 
 func (p parquetQueryable) Querier(mint, maxt int64) (prom_storage.Querier, error) {
-	blocks := p.blocksFinder(mint, maxt)
-	qBlocks := make([]*queryableBlock, len(blocks))
-	for i, b := range blocks {
-		qb, err := newQueryableBlock(b, p.d)
-		if err != nil {
-			return nil, err
-		}
-		qBlocks[i] = qb
-	}
-
 	return &parquetQuerier{
-		mint:   mint,
-		maxt:   maxt,
-		blocks: qBlocks,
+		mint:         mint,
+		maxt:         maxt,
+		blocksFinder: p.blocksFinder,
+		d:            p.d,
 	}, nil
 }
 
 type parquetQuerier struct {
-	mint, maxt int64
-
-	blocks []*queryableBlock
+	mint, maxt   int64
+	blocksFinder BlocksFinderFunction
+	d            *schema.PrometheusParquetChunksDecoder
 }
 
 func (p parquetQuerier) LabelValues(ctx context.Context, name string, hints *prom_storage.LabelHints, matchers ...*labels.Matcher) ([]string, annotations.Annotations, error) {
+	qBlocks, err := p.queryableBlocks(ctx, p.mint, p.maxt)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	limit := int64(0)
 
 	if hints != nil {
@@ -72,7 +70,7 @@ func (p parquetQuerier) LabelValues(ctx context.Context, name string, hints *pro
 
 	resNameValues := [][]string{}
 
-	for _, b := range p.blocks {
+	for _, b := range qBlocks {
 		r, err := b.LabelValues(ctx, name, matchers)
 		if err != nil {
 			return nil, nil, err
@@ -85,6 +83,11 @@ func (p parquetQuerier) LabelValues(ctx context.Context, name string, hints *pro
 }
 
 func (p parquetQuerier) LabelNames(ctx context.Context, hints *prom_storage.LabelHints, matchers ...*labels.Matcher) ([]string, annotations.Annotations, error) {
+	qBlocks, err := p.queryableBlocks(ctx, p.mint, p.maxt)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	limit := int64(0)
 
 	if hints != nil {
@@ -93,7 +96,7 @@ func (p parquetQuerier) LabelNames(ctx context.Context, hints *prom_storage.Labe
 
 	resNameSets := [][]string{}
 
-	for _, b := range p.blocks {
+	for _, b := range qBlocks {
 		r, err := b.LabelNames(ctx, matchers)
 		if err != nil {
 			return nil, nil, err
@@ -110,7 +113,11 @@ func (p parquetQuerier) Close() error {
 }
 
 func (p parquetQuerier) Select(ctx context.Context, sorted bool, sp *prom_storage.SelectHints, matchers ...*labels.Matcher) prom_storage.SeriesSet {
-	seriesSet := make([]prom_storage.ChunkSeriesSet, len(p.blocks))
+	qBlocks, err := p.queryableBlocks(ctx, p.mint, p.maxt)
+	if err != nil {
+		return prom_storage.ErrSeriesSet(err)
+	}
+	seriesSet := make([]prom_storage.ChunkSeriesSet, len(qBlocks))
 
 	minT, maxT := p.mint, p.maxt
 	if sp != nil {
@@ -118,7 +125,7 @@ func (p parquetQuerier) Select(ctx context.Context, sorted bool, sp *prom_storag
 	}
 	skipChunks := sp != nil && sp.Func == "series"
 
-	for i, block := range p.blocks {
+	for i, block := range qBlocks {
 		ss, err := block.Query(ctx, sorted, minT, maxT, skipChunks, matchers)
 		if err != nil {
 			return prom_storage.ErrSeriesSet(err)
@@ -128,6 +135,22 @@ func (p parquetQuerier) Select(ctx context.Context, sorted bool, sp *prom_storag
 	ss := convert.NewMergeChunkSeriesSet(seriesSet, labels.Compare, prom_storage.NewConcatenatingChunkSeriesMerger())
 
 	return convert.NewSeriesSetFromChunkSeriesSet(ss, skipChunks)
+}
+
+func (p parquetQuerier) queryableBlocks(ctx context.Context, mint, maxt int64) ([]*queryableBlock, error) {
+	blocks, err := p.blocksFinder(ctx, mint, maxt)
+	if err != nil {
+		return nil, err
+	}
+	qBlocks := make([]*queryableBlock, len(blocks))
+	for i, b := range blocks {
+		qb, err := newQueryableBlock(b, p.d)
+		if err != nil {
+			return nil, err
+		}
+		qBlocks[i] = qb
+	}
+	return qBlocks, nil
 }
 
 type queryableBlock struct {

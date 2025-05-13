@@ -287,7 +287,7 @@ func queryWithQueryable(t *testing.T, mint, maxt int64, shard *storage.ParquetSh
 
 func createQueryable(shard *storage.ParquetShard) (prom_storage.Queryable, error) {
 	d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
-	return NewParquetQueryable(d, func(mint, maxt int64) []*storage.ParquetShard {
-		return []*storage.ParquetShard{shard}
+	return NewParquetQueryable(d, func(ctx context.Context, mint, maxt int64) ([]*storage.ParquetShard, error) {
+		return []*storage.ParquetShard{shard}, nil
 	})
 }
