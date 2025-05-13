@@ -128,11 +128,11 @@ func TestQueryable(t *testing.T) {
 	require.NoError(t, err)
 
 	// Convert to Parquet
-	block := convertToParquet(t, ctx, bkt, data, st.Head())
+	shard := convertToParquet(t, ctx, bkt, data, st.Head())
 
 	t.Run("QueryByUniqueLabel", func(t *testing.T) {
 		matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
-		sFound := queryWithQueryable(t, data.minTime, data.maxTime, block, nil, matchers...)
+		sFound := queryWithQueryable(t, data.minTime, data.maxTime, shard, nil, matchers...)
 		totalFound := 0
 		for _, series := range sFound {
 			require.Equal(t, series.Labels().Get("unique"), "unique_0")
@@ -146,7 +146,7 @@ func TestQueryable(t *testing.T) {
 		for i := 0; i < 50; i++ {
 			name := fmt.Sprintf("metric_%d", rand.Int()%cfg.totalMetricNames)
 			matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, labels.MetricName, name)}
-			sFound := queryWithQueryable(t, data.minTime, data.maxTime, block, nil, matchers...)
+			sFound := queryWithQueryable(t, data.minTime, data.maxTime, shard, nil, matchers...)
 			totalFound := 0
 			for _, series := range sFound {
 				totalFound++
@@ -162,7 +162,7 @@ func TestQueryable(t *testing.T) {
 		hints := &prom_storage.SelectHints{
 			Func: "series",
 		}
-		sFound := queryWithQueryable(t, data.minTime, data.maxTime, block, hints, matchers...)
+		sFound := queryWithQueryable(t, data.minTime, data.maxTime, shard, hints, matchers...)
 		totalFound := 0
 		for _, series := range sFound {
 			totalFound++
@@ -173,7 +173,7 @@ func TestQueryable(t *testing.T) {
 	})
 
 	t.Run("LabelNames", func(t *testing.T) {
-		queryable, err := createQueryable(block)
+		queryable, err := createQueryable(shard)
 		require.NoError(t, err)
 		querier, err := queryable.Querier(data.minTime, data.maxTime)
 		require.NoError(t, err)
@@ -198,7 +198,7 @@ func TestQueryable(t *testing.T) {
 	})
 
 	t.Run("LabelValues", func(t *testing.T) {
-		queryable, err := createQueryable(block)
+		queryable, err := createQueryable(shard)
 		require.NoError(t, err)
 		querier, err := queryable.Querier(data.minTime, data.maxTime)
 		require.NoError(t, err)
@@ -287,5 +287,7 @@ func queryWithQueryable(t *testing.T, mint, maxt int64, shard *storage.ParquetSh
 
 func createQueryable(shard *storage.ParquetShard) (prom_storage.Queryable, error) {
 	d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
-	return NewParquetQueryable(d, shard)
+	return NewParquetQueryable(d, func(mint, maxt int64) []*storage.ParquetShard {
+		return []*storage.ParquetShard{shard}
+	})
 }

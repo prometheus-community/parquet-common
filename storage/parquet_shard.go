@@ -15,6 +15,7 @@ package storage
 
 import (
 	"context"
+	"sync"
 
 	"github.com/parquet-go/parquet-go"
 	"github.com/thanos-io/objstore"
@@ -46,6 +47,8 @@ func OpenFile(r ReadAtWithContext, size int64, options ...parquet.FileOption) (*
 
 type ParquetShard struct {
 	labelsFile, chunksFile *ParquetFile
+	schema                 *schema.TSDBSchema
+	o                      sync.Once
 }
 
 // OpenParquetShard opens the sharded parquet block,
@@ -85,5 +88,9 @@ func (b *ParquetShard) ChunksFile() *ParquetFile {
 }
 
 func (b *ParquetShard) TSDBSchema() (*schema.TSDBSchema, error) {
-	return schema.FromLabelsFile(b.labelsFile.File)
+	var err error
+	b.o.Do(func() {
+		b.schema, err = schema.FromLabelsFile(b.labelsFile.File)
+	})
+	return b.schema, err
 }

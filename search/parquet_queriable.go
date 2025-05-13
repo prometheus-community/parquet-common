@@ -28,28 +28,32 @@ import (
 )
 
 type parquetQueryable struct {
-	blocks []*queryableBlock
+	blocksFinder func(mint, maxt int64) []*storage.ParquetShard
+	d            *schema.PrometheusParquetChunksDecoder
 }
 
-func NewParquetQueryable(d *schema.PrometheusParquetChunksDecoder, blocks ...*storage.ParquetShard) (prom_storage.Queryable, error) {
+func NewParquetQueryable(d *schema.PrometheusParquetChunksDecoder, blocksFinder func(mint, maxt int64) []*storage.ParquetShard) (prom_storage.Queryable, error) {
+	return &parquetQueryable{
+		blocksFinder: blocksFinder,
+		d:            d,
+	}, nil
+}
+
+func (p parquetQueryable) Querier(mint, maxt int64) (prom_storage.Querier, error) {
+	blocks := p.blocksFinder(mint, maxt)
 	qBlocks := make([]*queryableBlock, len(blocks))
 	for i, b := range blocks {
-		qb, err := newQueryableBlock(b, d)
+		qb, err := newQueryableBlock(b, p.d)
 		if err != nil {
 			return nil, err
 		}
 		qBlocks[i] = qb
 	}
-	return &parquetQueryable{
-		blocks: qBlocks,
-	}, nil
-}
 
-func (p parquetQueryable) Querier(mint, maxt int64) (prom_storage.Querier, error) {
 	return &parquetQuerier{
 		mint:   mint,
 		maxt:   maxt,
-		blocks: p.blocks,
+		blocks: qBlocks,
 	}, nil
 }
 
