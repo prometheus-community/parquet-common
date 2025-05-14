@@ -34,9 +34,9 @@ type parquetQueryable struct {
 	d            *schema.PrometheusParquetChunksDecoder
 }
 
-func NewParquetQueryable(d *schema.PrometheusParquetChunksDecoder, blocksFinder ShardsFinderFunction) (prom_storage.Queryable, error) {
+func NewParquetQueryable(d *schema.PrometheusParquetChunksDecoder, shardFinder ShardsFinderFunction) (prom_storage.Queryable, error) {
 	return &parquetQueryable{
-		shardsFinder: blocksFinder,
+		shardsFinder: shardFinder,
 		d:            d,
 	}, nil
 }
