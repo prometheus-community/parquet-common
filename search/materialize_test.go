@@ -128,11 +128,22 @@ func TestMaterializeE2E(t *testing.T) {
 		s, err := shard.TSDBSchema()
 		require.NoError(t, err)
 		d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
-		m, err := NewMaterializer(s, d, shard)
+		m, err := NewMaterializer(s, d, shard, 10, 10*1024)
 		require.NoError(t, err)
 		rr := []RowRange{{from: int64(0), count: shard.LabelsFile().RowGroups()[0].NumRows()}}
 		ctx, cancel := context.WithCancel(ctx)
 		cancel()
+		_, err = m.Materialize(ctx, 0, data.minTime, data.maxTime, false, rr)
+		require.ErrorContains(t, err, "context canceled")
+	})
+
+	t.Run("Should not race when multiples download multiples page in parallel", func(t *testing.T) {
+		s, err := shard.TSDBSchema()
+		require.NoError(t, err)
+		d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
+		m, err := NewMaterializer(s, d, shard, 10, -1)
+		require.NoError(t, err)
+		rr := []RowRange{{from: int64(0), count: shard.LabelsFile().RowGroups()[0].NumRows()}}
 		_, err = m.Materialize(ctx, 0, data.minTime, data.maxTime, false, rr)
 		require.ErrorContains(t, err, "context canceled")
 	})
@@ -233,7 +244,7 @@ func query(t *testing.T, mint, maxt int64, shard *storage.ParquetShard, constrai
 	s, err := shard.TSDBSchema()
 	require.NoError(t, err)
 	d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
-	m, err := NewMaterializer(s, d, shard)
+	m, err := NewMaterializer(s, d, shard, 10, 10*1024)
 	require.NoError(t, err)
 
 	found := make([]prom_storage.ChunkSeries, 0, 100)
