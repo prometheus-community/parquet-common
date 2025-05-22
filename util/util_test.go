@@ -21,14 +21,14 @@ import (
 func TestGapBasedPartitioner(t *testing.T) {
 	tests := []struct {
 		name        string
-		maxGapSize  uint64
-		inputRanges [][2]uint64
+		maxGapSize  int
+		inputRanges [][2]int
 		expected    []Part
 	}{
 		{
 			name:       "no gaps",
 			maxGapSize: 5,
-			inputRanges: [][2]uint64{
+			inputRanges: [][2]int{
 				{0, 10}, {10, 20}, {20, 30},
 			},
 			expected: []Part{
@@ -38,7 +38,7 @@ func TestGapBasedPartitioner(t *testing.T) {
 		{
 			name:       "small gaps",
 			maxGapSize: 5,
-			inputRanges: [][2]uint64{
+			inputRanges: [][2]int{
 				{0, 10}, {12, 22}, {27, 35},
 			},
 			expected: []Part{
@@ -48,7 +48,7 @@ func TestGapBasedPartitioner(t *testing.T) {
 		{
 			name:       "large gap splits range",
 			maxGapSize: 3,
-			inputRanges: [][2]uint64{
+			inputRanges: [][2]int{
 				{0, 10}, {20, 30}, {31, 40},
 			},
 			expected: []Part{
@@ -59,7 +59,7 @@ func TestGapBasedPartitioner(t *testing.T) {
 		{
 			name:       "overlapping ranges",
 			maxGapSize: 1,
-			inputRanges: [][2]uint64{
+			inputRanges: [][2]int{
 				{0, 10}, {5, 15}, {14, 20},
 			},
 			expected: []Part{
@@ -69,7 +69,7 @@ func TestGapBasedPartitioner(t *testing.T) {
 		{
 			name:       "single input",
 			maxGapSize: 100,
-			inputRanges: [][2]uint64{
+			inputRanges: [][2]int{
 				{10, 50},
 			},
 			expected: []Part{
@@ -81,7 +81,7 @@ func TestGapBasedPartitioner(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := NewGapBasedPartitioner(tt.maxGapSize)
-			result := p.Partition(len(tt.inputRanges), func(i int) (uint64, uint64) {
+			result := p.Partition(len(tt.inputRanges), func(i int) (int, int) {
 				return tt.inputRanges[i][0], tt.inputRanges[i][1]
 			})
 
