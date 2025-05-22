@@ -326,7 +326,7 @@ func (m *Materializer) materializeColumn(ctx context.Context, file *storage.Parq
 
 	r := make(map[RowRange][]parquet.Value, len(rr))
 	for _, v := range rr {
-		r[v] = []parquet.Value{}
+		r[v] = make([]parquet.Value, v.count)
 	}
 
 	errGroup := &errgroup.Group{}
@@ -347,6 +347,7 @@ func (m *Materializer) materializeColumn(ctx context.Context, file *storage.Parq
 			next := currentRr.from
 			remaining := currentRr.count
 			currentRow := currentRr.from
+			ridx := 0
 
 			remainingRr = remainingRr[1:]
 			for len(remainingRr) > 0 || remaining > 0 {
@@ -357,12 +358,14 @@ func (m *Materializer) materializeColumn(ctx context.Context, file *storage.Parq
 				vi.Reset(page)
 				for vi.Next() {
 					if currentRow == next {
-						r[currentRr] = append(r[currentRr], vi.At())
+						r[currentRr][ridx] = vi.At()
+						ridx++
 						remaining--
 						if remaining > 0 {
 							next = next + 1
 						} else if len(remainingRr) > 0 {
 							currentRr = remainingRr[0]
+							ridx = 0
 							next = currentRr.from
 							remaining = currentRr.count
 							remainingRr = remainingRr[1:]

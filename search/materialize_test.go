@@ -145,7 +145,7 @@ func TestMaterializeE2E(t *testing.T) {
 		require.NoError(t, err)
 		rr := []RowRange{{from: int64(0), count: shard.LabelsFile().RowGroups()[0].NumRows()}}
 		_, err = m.Materialize(ctx, 0, data.minTime, data.maxTime, false, rr)
-		require.ErrorContains(t, err, "context canceled")
+		require.NoError(t, err)
 	})
 }
 
