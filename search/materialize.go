@@ -20,6 +20,7 @@ import (
 	"runtime"
 	"slices"
 	"sort"
+	"sync"
 
 	"github.com/efficientgo/core/errors"
 	"github.com/parquet-go/parquet-go"
@@ -324,6 +325,7 @@ func (m *Materializer) materializeColumn(ctx context.Context, file *storage.Parq
 		r[v] = []parquet.Value{}
 	}
 
+	var mu sync.Mutex
 	errGroup := &errgroup.Group{}
 	errGroup.SetLimit(m.concurrency)
 
@@ -352,7 +354,9 @@ func (m *Materializer) materializeColumn(ctx context.Context, file *storage.Parq
 				vi.Reset(page)
 				for vi.Next() {
 					if currentRow == next {
+						mu.Lock()
 						r[currentRr] = append(r[currentRr], vi.At())
+						mu.Unlock()
 						remaining--
 						if remaining > 0 {
 							next = next + 1
