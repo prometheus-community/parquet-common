@@ -49,7 +49,8 @@ func NewMaterializer(s *schema.TSDBSchema,
 	d *schema.PrometheusParquetChunksDecoder,
 	block *storage.ParquetShard,
 	concurrency int,
-	maxGapPartitioning int) (*Materializer, error) {
+	maxGapPartitioning int,
+) (*Materializer, error) {
 	colIdx, ok := block.LabelsFile().Schema().Lookup(schema.ColIndexes)
 	if !ok {
 		return nil, errors.New(fmt.Sprintf("schema index %s not found", schema.ColIndexes))
