@@ -19,6 +19,7 @@ import (
 	"io"
 	"slices"
 	"sort"
+	"sync"
 
 	"github.com/efficientgo/core/errors"
 	"github.com/parquet-go/parquet-go"
@@ -325,6 +326,7 @@ func (m *Materializer) materializeColumn(ctx context.Context, file *storage.Parq
 	}
 
 	r := make(map[RowRange][]parquet.Value, len(rr))
+	rMutex := &sync.Mutex{}
 	for _, v := range rr {
 		r[v] = []parquet.Value{}
 	}
@@ -357,7 +359,9 @@ func (m *Materializer) materializeColumn(ctx context.Context, file *storage.Parq
 				vi.Reset(page)
 				for vi.Next() {
 					if currentRow == next {
+						rMutex.Lock()
 						r[currentRr] = append(r[currentRr], vi.At())
+						rMutex.Unlock()
 						remaining--
 						if remaining > 0 {
 							next = next + 1
