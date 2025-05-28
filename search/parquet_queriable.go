@@ -106,7 +106,7 @@ func (p parquetQuerier) LabelValues(ctx context.Context, name string, hints *pro
 		limit = int64(hints.Limit)
 	}
 
-	resNameValues := [][]string{}
+	resNameValues := make([][]string, len(shards))
 	errGroup, ctx := errgroup.WithContext(ctx)
 	errGroup.SetLimit(p.opts.concurrency)
 
