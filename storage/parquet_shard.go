@@ -110,7 +110,7 @@ func OpenParquetShard(ctx context.Context, bkt objstore.Bucket, name string, sha
 	labelsFileName := schema.LabelsPfileNameForShard(name, shard)
 	chunksFileName := schema.ChunksPfileNameForShard(name, shard)
 
-	errGroup, ctx := errgroup.WithContext(ctx)
+	errGroup := errgroup.Group{}
 
 	var labelsFile, chunksFile *ParquetFile
 
