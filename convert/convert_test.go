@@ -117,10 +117,16 @@ func Test_Convert_TSDB(t *testing.T) {
 				}
 			}
 
+			colIdx, ok := shard.LabelsFile().Schema().Lookup(schema.ColIndexes)
+			require.True(t, ok)
 			// Make sure labels pages bounds are populated
-			for _, ci := range shard.LabelsFile().ColumnIndexes() {
+			for i, ci := range shard.LabelsFile().ColumnIndexes() {
 				for _, value := range append(ci.MinValues, ci.MaxValues...) {
-					require.NotEmpty(t, value)
+					if colIdx.ColumnIndex == i {
+						require.Empty(t, value)
+					} else {
+						require.NotEmpty(t, value)
+					}
 				}
 			}
 
