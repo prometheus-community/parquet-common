@@ -78,7 +78,6 @@ func OpenFile(r ReadAtWithContext, size int64, opts ...ShardOption) (*ParquetFil
 		opt(&cfg)
 	}
 	file, err := parquet.OpenFile(r, size, cfg.fileOptions...)
-
 	if err != nil {
 		return nil, err
 	}

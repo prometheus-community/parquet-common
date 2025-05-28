@@ -384,7 +384,7 @@ func (rc *regexConstraint) filter(ctx context.Context, rg parquet.RowGroup, prim
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get pages")
 	}
-	
+
 	defer func() { _ = pgs.Close() }()
 
 	oidx, err := cc.OffsetIndex()

@@ -22,7 +22,7 @@ import (
 	"slices"
 	"strings"
 	"time"
-	
+
 	"github.com/hashicorp/go-multierror"
 	"github.com/parquet-go/parquet-go"
 	"github.com/pkg/errors"
