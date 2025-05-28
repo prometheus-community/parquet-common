@@ -22,8 +22,8 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/efficientgo/core/errors"
 	"github.com/parquet-go/parquet-go"
+	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
 	prom_storage "github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/chunks"
@@ -191,7 +191,10 @@ func (m *Materializer) MaterializeAllLabelValues(ctx context.Context, name strin
 		return []string{}, nil
 	}
 	cc := labelsRg.ColumnChunks()[cIdx.ColumnIndex]
-	pages := m.b.LabelsFile().GetPages(ctx, cc)
+	pages, err := m.b.LabelsFile().GetPages(ctx, cc)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get pages")
+	}
 	p, err := pages.ReadPage()
 	if err != nil {
 		return []string{}, errors.Wrap(err, "failed to read page")
@@ -345,9 +348,12 @@ func (m *Materializer) materializeColumn(ctx context.Context, file *storage.Parq
 
 	for _, p := range pageRanges {
 		errGroup.Go(func() error {
-			pgs := file.GetPages(ctx, cc)
+			pgs, err := file.GetPages(ctx, cc, p.pages...)
+			if err != nil {
+				return errors.Wrap(err, "failed to get pages")
+			}
 			defer func() { _ = pgs.Close() }()
-			err := pgs.SeekToRow(p.rows[0].from)
+			err = pgs.SeekToRow(p.rows[0].from)
 			if err != nil {
 				return errors.Wrap(err, "could not seek to row")
 			}
