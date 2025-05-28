@@ -222,8 +222,7 @@ func (m *Materializer) materializeAllLabels(ctx context.Context, rgi int, rr []R
 			return nil, errors.Wrap(err, "materializer failed to decode column index")
 		}
 		for _, idx := range idxs {
-			v := make([]parquet.Value, 0, len(colsIdxs))
-			colsMap[idx] = &v
+			colsMap[idx] = &[]parquet.Value{}
 		}
 	}
 
@@ -237,7 +236,7 @@ func (m *Materializer) materializeAllLabels(ctx context.Context, rgi int, rr []R
 			if err != nil {
 				return errors.Wrap(err, "failed to materialize labels values")
 			}
-			*v = append(*v, values...)
+			*v = values
 			return nil
 		})
 	}
