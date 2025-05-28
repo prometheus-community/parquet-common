@@ -17,11 +17,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/parquet-go/parquet-go"
 	"math/rand"
 	"testing"
 	"time"
 
+	"github.com/parquet-go/parquet-go"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/promql/promqltest"
