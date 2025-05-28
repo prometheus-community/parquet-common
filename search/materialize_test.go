@@ -213,7 +213,7 @@ func generateTestData(t *testing.T, st *teststorage.TestStorage, ctx context.Con
 	}
 }
 
-func convertToParquet(t *testing.T, ctx context.Context, bkt *filesystem.Bucket, data testData, h convert.Convertible) *storage.ParquetShard {
+func convertToParquet(t *testing.T, ctx context.Context, bkt *filesystem.Bucket, data testData, h convert.Convertible, opts ...storage.ShardOption) *storage.ParquetShard {
 	colDuration := time.Hour
 	shards, err := convert.ConvertTSDBBlock(
 		ctx,
@@ -229,7 +229,7 @@ func convertToParquet(t *testing.T, ctx context.Context, bkt *filesystem.Bucket,
 	require.NoError(t, err)
 	require.Equal(t, 1, shards)
 
-	shard, err := storage.OpenParquetShard(ctx, bkt, "shard", 0)
+	shard, err := storage.OpenParquetShard(ctx, bkt, "shard", 0, opts...)
 	require.NoError(t, err)
 
 	return shard

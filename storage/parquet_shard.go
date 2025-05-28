@@ -35,6 +35,7 @@ type shardOptions struct {
 type ParquetFile struct {
 	*parquet.File
 	ReadAtWithContext
+	BloomFiltersLoaded bool
 
 	optimisticReader bool
 }
@@ -77,14 +78,22 @@ func OpenFile(r ReadAtWithContext, size int64, opts ...ShardOption) (*ParquetFil
 	for _, opt := range opts {
 		opt(&cfg)
 	}
+
+	c, err := parquet.NewFileConfig(cfg.fileOptions...)
+	if err != nil {
+		return nil, err
+	}
+
 	file, err := parquet.OpenFile(r, size, cfg.fileOptions...)
 	if err != nil {
 		return nil, err
 	}
+
 	return &ParquetFile{
-		File:              file,
-		ReadAtWithContext: r,
-		optimisticReader:  cfg.optimisticReader,
+		File:               file,
+		ReadAtWithContext:  r,
+		BloomFiltersLoaded: !c.SkipBloomFilters,
+		optimisticReader:   cfg.optimisticReader,
 	}, nil
 }
 
