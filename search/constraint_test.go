@@ -180,26 +180,26 @@ func TestFilter(t *testing.T) {
 
 	t.Run("", func(t *testing.T) {
 		type s struct {
-			A int64  `parquet:",optional,dict"`
-			B int64  `parquet:",optional,dict"`
+			A string `parquet:",optional,dict"`
+			B string `parquet:",optional,dict"`
 			C string `parquet:",optional,dict"`
 		}
 		for _, tt := range []testcase[s]{
 			{
 				rows: []s{
-					{A: 1, B: 2, C: "a"},
-					{A: 3, B: 4, C: "b"},
-					{A: 7, B: 12, C: "c"},
-					{A: 9, B: 22, C: "d"},
-					{A: 0, B: 1, C: "e"},
-					{A: 7, B: 1, C: "f"},
-					{A: 7, B: 1, C: "g"},
-					{A: 0, B: 1, C: "h"},
+					{A: "1", B: "2", C: "a"},
+					{A: "3", B: "4", C: "b"},
+					{A: "7", B: "12", C: "c"},
+					{A: "9", B: "22", C: "d"},
+					{A: "0", B: "1", C: "e"},
+					{A: "7", B: "1", C: "f"},
+					{A: "7", B: "1", C: "g"},
+					{A: "0", B: "1", C: "h"},
 				},
 				expectations: []expectation{
 					{
 						constraints: []Constraint{
-							Equal("A", parquet.ValueOf(7)),
+							Equal("A", parquet.ValueOf("7")),
 							Equal("C", parquet.ValueOf("g")),
 						},
 						expect: []RowRange{
@@ -208,7 +208,7 @@ func TestFilter(t *testing.T) {
 					},
 					{
 						constraints: []Constraint{
-							Equal("A", parquet.ValueOf(7)),
+							Equal("A", parquet.ValueOf("7")),
 						},
 						expect: []RowRange{
 							{from: 2, count: 1},
@@ -217,7 +217,7 @@ func TestFilter(t *testing.T) {
 					},
 					{
 						constraints: []Constraint{
-							Equal("A", parquet.ValueOf(7)), Not(Equal("B", parquet.ValueOf(1))),
+							Equal("A", parquet.ValueOf("7")), Not(Equal("B", parquet.ValueOf("1"))),
 						},
 						expect: []RowRange{
 							{from: 2, count: 1},
@@ -225,7 +225,7 @@ func TestFilter(t *testing.T) {
 					},
 					{
 						constraints: []Constraint{
-							Equal("A", parquet.ValueOf(7)), Not(Equal("C", parquet.ValueOf("c"))),
+							Equal("A", parquet.ValueOf("7")), Not(Equal("C", parquet.ValueOf("c"))),
 						},
 						expect: []RowRange{
 							{from: 5, count: 2},
@@ -233,7 +233,7 @@ func TestFilter(t *testing.T) {
 					},
 					{
 						constraints: []Constraint{
-							Not(Equal("A", parquet.ValueOf(227))),
+							Not(Equal("A", parquet.ValueOf("227"))),
 						},
 						expect: []RowRange{
 							{from: 0, count: 8},
@@ -252,23 +252,23 @@ func TestFilter(t *testing.T) {
 			},
 			{
 				rows: []s{
-					{A: 1, B: 2},
-					{A: 1, B: 3},
-					{A: 1, B: 4},
-					{A: 1, B: 4},
-					{A: 1, B: 5},
-					{A: 1, B: 5},
-					{A: 2, B: 5},
-					{A: 2, B: 5},
-					{A: 2, B: 5},
-					{A: 3, B: 5},
-					{A: 3, B: 6},
-					{A: 3, B: 2},
+					{A: "1", B: "2"},
+					{A: "1", B: "3"},
+					{A: "1", B: "4"},
+					{A: "1", B: "4"},
+					{A: "1", B: "5"},
+					{A: "1", B: "5"},
+					{A: "2", B: "5"},
+					{A: "2", B: "5"},
+					{A: "2", B: "5"},
+					{A: "3", B: "5"},
+					{A: "3", B: "6"},
+					{A: "3", B: "2"},
 				},
 				expectations: []expectation{
 					{
 						constraints: []Constraint{
-							Not(Equal("A", parquet.ValueOf(3))),
+							Not(Equal("A", parquet.ValueOf("3"))),
 						},
 						expect: []RowRange{
 							{from: 0, count: 9},
@@ -276,8 +276,8 @@ func TestFilter(t *testing.T) {
 					},
 					{
 						constraints: []Constraint{
-							Not(Equal("A", parquet.ValueOf(3))),
-							Equal("B", parquet.ValueOf(5)),
+							Not(Equal("A", parquet.ValueOf("3"))),
+							Equal("B", parquet.ValueOf("5")),
 						},
 						expect: []RowRange{
 							{from: 4, count: 5},
@@ -285,8 +285,8 @@ func TestFilter(t *testing.T) {
 					},
 					{
 						constraints: []Constraint{
-							Not(Equal("A", parquet.ValueOf(3))),
-							Not(Equal("A", parquet.ValueOf(1))),
+							Not(Equal("A", parquet.ValueOf("3"))),
+							Not(Equal("A", parquet.ValueOf("1"))),
 						},
 						expect: []RowRange{
 							{from: 6, count: 3},
@@ -294,22 +294,22 @@ func TestFilter(t *testing.T) {
 					},
 					{
 						constraints: []Constraint{
-							Equal("A", parquet.ValueOf(2)),
-							Not(Equal("B", parquet.ValueOf(5))),
+							Equal("A", parquet.ValueOf("2")),
+							Not(Equal("B", parquet.ValueOf("5"))),
 						},
 						expect: []RowRange{},
 					},
 					{
 						constraints: []Constraint{
-							Equal("A", parquet.ValueOf(2)),
-							Not(Equal("B", parquet.ValueOf(5))),
+							Equal("A", parquet.ValueOf("2")),
+							Not(Equal("B", parquet.ValueOf("5"))),
 						},
 						expect: []RowRange{},
 					},
 					{
 						constraints: []Constraint{
-							Equal("A", parquet.ValueOf(3)),
-							Not(Equal("B", parquet.ValueOf(2))),
+							Equal("A", parquet.ValueOf("3")),
+							Not(Equal("B", parquet.ValueOf("2"))),
 						},
 						expect: []RowRange{
 							{from: 9, count: 2},
@@ -319,20 +319,20 @@ func TestFilter(t *testing.T) {
 			},
 			{
 				rows: []s{
-					{A: 1, B: 1},
-					{A: 1, B: 2},
-					{A: 2, B: 1},
-					{A: 2, B: 2},
-					{A: 1, B: 1},
-					{A: 1, B: 2},
-					{A: 2, B: 1},
-					{A: 2, B: 2},
+					{A: "1", B: "1"},
+					{A: "1", B: "2"},
+					{A: "2", B: "1"},
+					{A: "2", B: "2"},
+					{A: "1", B: "1"},
+					{A: "1", B: "2"},
+					{A: "2", B: "1"},
+					{A: "2", B: "2"},
 				},
 				expectations: []expectation{
 					{
 						constraints: []Constraint{
-							Not(Equal("A", parquet.ValueOf(1))),
-							Not(Equal("B", parquet.ValueOf(2))),
+							Not(Equal("A", parquet.ValueOf("1"))),
+							Not(Equal("B", parquet.ValueOf("2"))),
 						},
 						expect: []RowRange{
 							{from: 2, count: 1},
@@ -379,17 +379,17 @@ func TestFilter(t *testing.T) {
 			},
 			{
 				rows: []s{
-					{A: 1, B: 1},
-					{A: 1, B: 2},
-					{A: 2, B: 1},
-					{A: 2, B: 2},
-					{A: 1, B: 1},
+					{A: "1", B: "1"},
+					{A: "1", B: "2"},
+					{A: "2", B: "1"},
+					{A: "2", B: "2"},
+					{A: "1", B: "1"},
 				},
 				expectations: []expectation{
 					{
 						constraints: []Constraint{
-							Equal("A", parquet.ValueOf(1)),
-							Equal("B", parquet.ValueOf(1)),
+							Equal("A", parquet.ValueOf("1")),
+							Equal("B", parquet.ValueOf("1")),
 						},
 						expect: []RowRange{
 							{from: 0, count: 1},
@@ -400,20 +400,20 @@ func TestFilter(t *testing.T) {
 			},
 			{
 				rows: []s{
-					{A: 1, B: 1},
-					{A: 1, B: 2},
+					{A: "1", B: "1"},
+					{A: "1", B: "2"},
 				},
 				expectations: []expectation{
 					{
 						constraints: []Constraint{
-							Equal("A", parquet.ValueOf(1)),
+							Equal("A", parquet.ValueOf("1")),
 							Equal("None", parquet.ValueOf("?")),
 						},
 						expect: []RowRange{},
 					},
 					{
 						constraints: []Constraint{
-							Equal("A", parquet.ValueOf(1)),
+							Equal("A", parquet.ValueOf("1")),
 							Equal("None", parquet.ValueOf("")),
 						},
 						expect: []RowRange{
@@ -422,14 +422,14 @@ func TestFilter(t *testing.T) {
 					},
 					{
 						constraints: []Constraint{
-							Equal("A", parquet.ValueOf(1)),
+							Equal("A", parquet.ValueOf("1")),
 							Regex("None", mustNewFastRegexMatcher(t, "f.*|b.*")),
 						},
 						expect: []RowRange{},
 					},
 					{
 						constraints: []Constraint{
-							Equal("A", parquet.ValueOf(1)),
+							Equal("A", parquet.ValueOf("1")),
 							Regex("None", mustNewFastRegexMatcher(t, "f.*|b.*|")),
 						},
 						expect: []RowRange{
@@ -440,17 +440,17 @@ func TestFilter(t *testing.T) {
 			},
 			{
 				rows: []s{
-					{A: 1, C: "a"},
-					{A: 2, C: "b"},
-					{A: 2},
-					{A: 3, C: "b"},
-					{A: 4},
-					{A: 5},
+					{A: "1", C: "a"},
+					{A: "2", C: "b"},
+					{A: "2"},
+					{A: "3", C: "b"},
+					{A: "4"},
+					{A: "5"},
 				},
 				expectations: []expectation{
 					{
 						constraints: []Constraint{
-							Null("C"),
+							Equal("C", parquet.ValueOf("")),
 						},
 						expect: []RowRange{
 							{from: 2, count: 1},
@@ -459,8 +459,8 @@ func TestFilter(t *testing.T) {
 					},
 					{
 						constraints: []Constraint{
-							Equal("A", parquet.ValueOf(2)),
-							Null("C"),
+							Equal("A", parquet.ValueOf("2")),
+							Equal("C", parquet.ValueOf("")),
 						},
 						expect: []RowRange{
 							{from: 2, count: 1},
