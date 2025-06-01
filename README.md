@@ -1,5 +1,7 @@
 # Prometheus Parquet Library (WIP)
 
+[![Go Report Card](https://goreportcard.com/badge/github.com/prometheus-community/parquet-common)](https://goreportcard.com/report/github.com/prometheus-community/parquet-common) [![Go Reference](https://pkg.go.dev/badge/github.com/prometheus-community/parquet-common.svg)](https://pkg.go.dev/github.com/prometheus-community/parquet-common) [![Slack](https://img.shields.io/badge/join%20slack-%23prometheus--parquet--dev-brightgreen?style=flat)](https://slack.cncf.io/)
+
 **Status: 🚧 Very early stage – expect breaking changes and rapid iteration**
 
 ---
