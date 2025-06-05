@@ -28,12 +28,14 @@ import (
 )
 
 type PrometheusParquetChunksEncoder struct {
-	schema *TSDBSchema
+	schema          *TSDBSchema
+	samplesPerChunk int
 }
 
-func NewPrometheusParquetChunksEncoder(schema *TSDBSchema) *PrometheusParquetChunksEncoder {
+func NewPrometheusParquetChunksEncoder(schema *TSDBSchema, samplesPerChunk int) *PrometheusParquetChunksEncoder {
 	return &PrometheusParquetChunksEncoder{
-		schema: schema,
+		schema:          schema,
+		samplesPerChunk: samplesPerChunk,
 	}
 }
 
@@ -101,6 +103,19 @@ func (e *PrometheusParquetChunksEncoder) Encode(it chunks.Iterator) ([][]byte, e
 				}
 				if t > chunk.MaxTime {
 					chunk.MaxTime = t
+				}
+				if chunk.Chunk.NumSamples() >= e.samplesPerChunk {
+					nChunk := &chunks.Meta{
+						Chunk:   chunkenc.NewXORChunk(),
+						MinTime: math.MaxInt64,
+					}
+					reEncodedChunks[chkIdx][chunkenc.EncXOR] = append(reEncodedChunks[chkIdx][chunkenc.EncXOR], nChunk)
+
+					app, err := nChunk.Chunk.Appender()
+					if err != nil {
+						return nil, err
+					}
+					reEncodedChunksAppenders[chkIdx][chunkenc.EncXOR] = app
 				}
 			}
 		case chunkenc.EncFloatHistogram:

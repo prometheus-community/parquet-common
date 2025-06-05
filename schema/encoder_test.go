@@ -32,7 +32,7 @@ import (
 func TestEncodeDecode(t *testing.T) {
 	ts := promqltest.LoadedStorage(t, `
 load 1m
-	float_only{env="prod"} 5 2+3x20
+	float_only{env="prod"} 5 2+3x200
     float_histogram_conversion{env="prod"} 5 2+3x2 _ stale {{schema:1 sum:3 count:22 buckets:[5 10 7]}}
 	http_requests_histogram{job="api-server", instance="3", group="canary"} {{schema:2 count:4 sum:10 buckets:[1 0 0 0 1 0 0 1 1]}}
     histogram_with_reset_bucket{le="1"} 1  3  9
@@ -57,7 +57,8 @@ load_with_nhcb 1m
 	mint, maxt := ts.Head().MinTime(), ts.Head().MaxTime()
 	sb := NewBuilder(mint, maxt, (time.Minute * 60).Milliseconds())
 	s, err := sb.Build()
-	enc := NewPrometheusParquetChunksEncoder(s)
+	maxSamplesPerChunk := 30
+	enc := NewPrometheusParquetChunksEncoder(s, maxSamplesPerChunk)
 	dec := NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
 
 	require.NoError(t, err)
@@ -87,8 +88,8 @@ load_with_nhcb 1m
 		for _, chunksByTime := range decodedChunksByTime {
 			decodedChunkMeta, err := dec.Decode(chunksByTime, mint, maxt)
 			require.NoError(t, err)
-			require.Len(t, decodedChunkMeta, len(chks))
 			for _, decodedChunk := range decodedChunkMeta {
+				require.LessOrEqual(t, decodedChunk.Chunk.NumSamples(), maxSamplesPerChunk)
 				decodedSamples += decodedChunk.Chunk.NumSamples()
 			}
 		}
