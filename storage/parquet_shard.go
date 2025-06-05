@@ -146,7 +146,7 @@ func OpenParquetShardFromBucket(ctx context.Context, bkt objstore.Bucket, name s
 	var labelsFile, chunksFile *ParquetFile
 
 	errGroup.Go(func() (err error) {
-		chunksFile, err = OpenFromBucket(ctx, bkt, labelsFileName, opts...)
+		labelsFile, err = OpenFromBucket(ctx, bkt, labelsFileName, opts...)
 		return err
 	})
 
