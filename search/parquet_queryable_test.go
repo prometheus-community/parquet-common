@@ -318,7 +318,7 @@ eval instant at 60s http_requests_total{route=~".+"}
 	})
 }
 
-func queryWithQueryable(t *testing.T, mint, maxt int64, shard *storage.ParquetShard, hints *prom_storage.SelectHints, matchers ...*labels.Matcher) []prom_storage.Series {
+func queryWithQueryable(t *testing.T, mint, maxt int64, shard storage.ParquetShard, hints *prom_storage.SelectHints, matchers ...*labels.Matcher) []prom_storage.Series {
 	ctx := context.Background()
 	queryable, err := createQueryable(shard)
 	require.NoError(t, err)
@@ -333,10 +333,10 @@ func queryWithQueryable(t *testing.T, mint, maxt int64, shard *storage.ParquetSh
 	return found
 }
 
-func createQueryable(shard *storage.ParquetShard) (prom_storage.Queryable, error) {
+func createQueryable(shard storage.ParquetShard) (prom_storage.Queryable, error) {
 	d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
-	return NewParquetQueryable(d, func(ctx context.Context, mint, maxt int64) ([]*storage.ParquetShard, error) {
-		return []*storage.ParquetShard{shard}, nil
+	return NewParquetQueryable(d, func(ctx context.Context, mint, maxt int64) ([]storage.ParquetShard, error) {
+		return []storage.ParquetShard{shard}, nil
 	})
 }
 
@@ -518,7 +518,7 @@ func BenchmarkSelect(b *testing.B) {
 	}
 }
 
-func convertToParquetForBench(tb testing.TB, ctx context.Context, bkt objstore.Bucket, data testData, h convert.Convertible, opts ...storage.ShardOption) *storage.ParquetShard {
+func convertToParquetForBench(tb testing.TB, ctx context.Context, bkt objstore.Bucket, data testData, h convert.Convertible, opts ...storage.ShardOption) storage.ParquetShard {
 	colDuration := time.Hour
 	shards, err := convert.ConvertTSDBBlock(
 		ctx,
@@ -538,7 +538,7 @@ func convertToParquetForBench(tb testing.TB, ctx context.Context, bkt objstore.B
 		tb.Fatalf("expected 1 shard, got %d", shards)
 	}
 
-	shard, err := storage.OpenParquetShard(ctx, bkt, "shard", 0, opts...)
+	shard, err := storage.OpenParquetShardFromBucket(ctx, bkt, "shard", 0, opts...)
 	if err != nil {
 		tb.Fatalf("error opening parquet shard: %v", err)
 	}

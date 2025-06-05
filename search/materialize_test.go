@@ -212,7 +212,7 @@ func generateTestData(t *testing.T, st *teststorage.TestStorage, ctx context.Con
 	}
 }
 
-func convertToParquet(t *testing.T, ctx context.Context, bkt *bucket, data testData, h convert.Convertible, opts ...storage.ShardOption) *storage.ParquetShard {
+func convertToParquet(t *testing.T, ctx context.Context, bkt *bucket, data testData, h convert.Convertible, opts ...storage.ShardOption) storage.ParquetShard {
 	colDuration := time.Hour
 	shards, err := convert.ConvertTSDBBlock(
 		ctx,
@@ -234,7 +234,7 @@ func convertToParquet(t *testing.T, ctx context.Context, bkt *bucket, data testD
 	return shard
 }
 
-func query(t *testing.T, mint, maxt int64, shard *storage.ParquetShard, constraints ...Constraint) []prom_storage.ChunkSeries {
+func query(t *testing.T, mint, maxt int64, shard storage.ParquetShard, constraints ...Constraint) []prom_storage.ChunkSeries {
 	ctx := context.Background()
 	for _, c := range constraints {
 		require.NoError(t, c.init(shard.LabelsFile()))
