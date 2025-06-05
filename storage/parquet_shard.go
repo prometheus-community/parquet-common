@@ -14,6 +14,7 @@
 package storage
 
 import (
+	"cmp"
 	"context"
 	"sync"
 
@@ -35,7 +36,7 @@ type shardOptions struct {
 
 type ParquetFile struct {
 	*parquet.File
-	ReadAtWithContext
+	ReadAtWithContextCloser
 	BloomFiltersLoaded bool
 
 	optimisticReader bool
@@ -73,7 +74,7 @@ func (f *ParquetFile) GetPages(ctx context.Context, cc parquet.ColumnChunk, page
 	return pages, nil
 }
 
-func OpenFile(r ReadAtWithContext, size int64, opts ...ShardOption) (*ParquetFile, error) {
+func OpenFile(ctx context.Context, r ReadAtWithContextCloser, size int64, opts ...ShardOption) (*ParquetFile, error) {
 	cfg := DefaultShardOptions
 
 	for _, opt := range opts {
@@ -85,16 +86,16 @@ func OpenFile(r ReadAtWithContext, size int64, opts ...ShardOption) (*ParquetFil
 		return nil, err
 	}
 
-	file, err := parquet.OpenFile(r, size, cfg.fileOptions...)
+	file, err := parquet.OpenFile(r.WithContext(ctx), size, cfg.fileOptions...)
 	if err != nil {
 		return nil, err
 	}
 
 	return &ParquetFile{
-		File:               file,
-		ReadAtWithContext:  r,
-		BloomFiltersLoaded: !c.SkipBloomFilters,
-		optimisticReader:   cfg.optimisticReader,
+		File:                    file,
+		ReadAtWithContextCloser: r,
+		BloomFiltersLoaded:      !c.SkipBloomFilters,
+		optimisticReader:        cfg.optimisticReader,
 	}, nil
 }
 
@@ -119,7 +120,7 @@ func OpenParquetShard(ctx context.Context, bkt objstore.Bucket, name string, sha
 		if err != nil {
 			return err
 		}
-		labelsFile, err = OpenFile(NewBucketReadAt(ctx, labelsFileName, bkt), labelsAttr.Size, opts...)
+		labelsFile, err = OpenFile(ctx, NewBucketReadAt(labelsFileName, bkt), labelsAttr.Size, opts...)
 		return err
 	})
 
@@ -128,7 +129,7 @@ func OpenParquetShard(ctx context.Context, bkt objstore.Bucket, name string, sha
 		if err != nil {
 			return err
 		}
-		chunksFile, err = OpenFile(NewBucketReadAt(ctx, chunksFileName, bkt), chunksFileAttr.Size, opts...)
+		chunksFile, err = OpenFile(ctx, NewBucketReadAt(chunksFileName, bkt), chunksFileAttr.Size, opts...)
 		return err
 	})
 
@@ -156,4 +157,10 @@ func (b *ParquetShard) TSDBSchema() (*schema.TSDBSchema, error) {
 		b.schema, err = schema.FromLabelsFile(b.labelsFile.File)
 	})
 	return b.schema, err
+}
+
+func (b *ParquetShard) Close() error {
+	err1 := b.labelsFile.Close()
+	err2 := b.chunksFile.Close()
+	return cmp.Or(err1, err2)
 }
