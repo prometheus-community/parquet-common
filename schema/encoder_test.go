@@ -33,8 +33,8 @@ func TestEncodeDecode(t *testing.T) {
 	ts := promqltest.LoadedStorage(t, `
 load 1m
 	float_only{env="prod"} 5 2+3x200
-    float_histogram_conversion{env="prod"} 5 2+3x2 _ stale {{schema:1 sum:3 count:22 buckets:[5 10 7]}}
-	http_requests_histogram{job="api-server", instance="3", group="canary"} {{schema:2 count:4 sum:10 buckets:[1 0 0 0 1 0 0 1 1]}}
+    float_histogram_conversion{env="prod"} 5 2+3x2 _ stale {{schema:1 sum:3 count:22 buckets:[5 10 7]}}x200
+	http_requests_histogram{job="api-server", instance="3", group="canary"} {{schema:2 count:4 sum:10 buckets:[1 0 0 0 1 0 0 1 1]}}x200
     histogram_with_reset_bucket{le="1"} 1  3  9
     histogram_with_reset_bucket{le="2"} 3  3  9
     histogram_with_reset_bucket{le="4"} 8  5 12
