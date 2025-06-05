@@ -16,6 +16,7 @@ package storage
 import (
 	"cmp"
 	"context"
+	"os"
 	"sync"
 
 	"github.com/parquet-go/parquet-go"
@@ -74,7 +75,7 @@ func (f *ParquetFile) GetPages(ctx context.Context, cc parquet.ColumnChunk, page
 	return pages, nil
 }
 
-func OpenFile(ctx context.Context, r ReadAtWithContextCloser, size int64, opts ...ShardOption) (*ParquetFile, error) {
+func Open(ctx context.Context, r ReadAtWithContextCloser, size int64, opts ...ShardOption) (*ParquetFile, error) {
 	cfg := DefaultShardOptions
 
 	for _, opt := range opts {
@@ -99,15 +100,44 @@ func OpenFile(ctx context.Context, r ReadAtWithContextCloser, size int64, opts .
 	}, nil
 }
 
+func OpenFromBucket(ctx context.Context, bkt objstore.BucketReader, name string, opts ...ShardOption) (*ParquetFile, error) {
+	attr, err := bkt.Attributes(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+
+	r := NewBucketReadAt(name, bkt)
+	return Open(ctx, r, attr.Size, opts...)
+}
+
+func OpenFromFile(ctx context.Context, path string, opts ...ShardOption) (*ParquetFile, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	stat, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	r := NewFileReadAt(f)
+	pf, err := Open(ctx, r, stat.Size(), opts...)
+	if err != nil {
+		_ = r.Close()
+		return nil, err
+	}
+	// At this point, the file's lifecycle is managed by the ParquetFile
+	return pf, nil
+}
+
 type ParquetShard struct {
 	labelsFile, chunksFile *ParquetFile
 	schema                 *schema.TSDBSchema
 	o                      sync.Once
 }
 
-// OpenParquetShard opens the sharded parquet block,
-// using the options param.
-func OpenParquetShard(ctx context.Context, bkt objstore.Bucket, name string, shard int, opts ...ShardOption) (*ParquetShard, error) {
+// OpenParquetShardFromBucket opens the sharded parquet block from the given bucket.
+func OpenParquetShardFromBucket(ctx context.Context, bkt objstore.Bucket, name string, shard int, opts ...ShardOption) (*ParquetShard, error) {
 	labelsFileName := schema.LabelsPfileNameForShard(name, shard)
 	chunksFileName := schema.ChunksPfileNameForShard(name, shard)
 
@@ -115,21 +145,13 @@ func OpenParquetShard(ctx context.Context, bkt objstore.Bucket, name string, sha
 
 	var labelsFile, chunksFile *ParquetFile
 
-	errGroup.Go(func() error {
-		labelsAttr, err := bkt.Attributes(ctx, labelsFileName)
-		if err != nil {
-			return err
-		}
-		labelsFile, err = OpenFile(ctx, NewBucketReadAt(labelsFileName, bkt), labelsAttr.Size, opts...)
+	errGroup.Go(func() (err error) {
+		chunksFile, err = OpenFromBucket(ctx, bkt, labelsFileName, opts...)
 		return err
 	})
 
-	errGroup.Go(func() error {
-		chunksFileAttr, err := bkt.Attributes(ctx, chunksFileName)
-		if err != nil {
-			return err
-		}
-		chunksFile, err = OpenFile(ctx, NewBucketReadAt(chunksFileName, bkt), chunksFileAttr.Size, opts...)
+	errGroup.Go(func() (err error) {
+		chunksFile, err = OpenFromBucket(ctx, bkt, chunksFileName, opts...)
 		return err
 	})
 
@@ -141,6 +163,13 @@ func OpenParquetShard(ctx context.Context, bkt objstore.Bucket, name string, sha
 		labelsFile: labelsFile,
 		chunksFile: chunksFile,
 	}, nil
+}
+
+func NewParquetShard(labelsFile, chunksFile *ParquetFile) *ParquetShard {
+	return &ParquetShard{
+		labelsFile: labelsFile,
+		chunksFile: chunksFile,
+	}
 }
 
 func (b *ParquetShard) LabelsFile() *ParquetFile {
