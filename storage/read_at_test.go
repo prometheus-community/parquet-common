@@ -83,7 +83,7 @@ func TestBucketReadAtWithLimitedReader(t *testing.T) {
 	// Create test data that's longer than our limited reader's chunk size
 	testData := []byte("Hello, this is a test string that is longer than 2 bytes")
 	bucket := &mockBucket{content: testData}
-	reader := NewBucketReadAt(context.Background(), "test", bucket)
+	reader := NewBucketReadAt("test", bucket).WithContext(context.Background())
 
 	// Test reading the entire content
 	buf := make([]byte, len(testData))
