@@ -371,7 +371,7 @@ func Test_SortedLabels(t *testing.T) {
 	}
 }
 
-func readSeries(t *testing.T, shard *storage.ParquetShard) ([]labels.Labels, [][]chunks.Meta, error) {
+func readSeries(t *testing.T, shard storage.ParquetShard) ([]labels.Labels, [][]chunks.Meta, error) {
 	lr := parquet.NewGenericReader[any](shard.LabelsFile().File)
 	cr := parquet.NewGenericReader[any](shard.ChunksFile().File)
 

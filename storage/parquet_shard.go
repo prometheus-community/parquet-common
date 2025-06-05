@@ -130,14 +130,20 @@ func OpenFromFile(ctx context.Context, path string, opts ...ShardOption) (*Parqu
 	return pf, nil
 }
 
-type ParquetShard struct {
+type ParquetShard interface {
+	LabelsFile() *ParquetFile
+	ChunksFile() *ParquetFile
+	TSDBSchema() (*schema.TSDBSchema, error)
+}
+
+type ParquetShardBucketLabelsAndChunks struct {
 	labelsFile, chunksFile *ParquetFile
 	schema                 *schema.TSDBSchema
 	o                      sync.Once
 }
 
 // OpenParquetShardFromBucket opens the sharded parquet block from the given bucket.
-func OpenParquetShardFromBucket(ctx context.Context, bkt objstore.Bucket, name string, shard int, opts ...ShardOption) (*ParquetShard, error) {
+func OpenParquetShardFromBucket(ctx context.Context, bkt objstore.Bucket, name string, shard int, opts ...ShardOption) (*ParquetShardBucketLabelsAndChunks, error) {
 	labelsFileName := schema.LabelsPfileNameForShard(name, shard)
 	chunksFileName := schema.ChunksPfileNameForShard(name, shard)
 
@@ -159,28 +165,28 @@ func OpenParquetShardFromBucket(ctx context.Context, bkt objstore.Bucket, name s
 		return nil, err
 	}
 
-	return &ParquetShard{
+	return &ParquetShardBucketLabelsAndChunks{
 		labelsFile: labelsFile,
 		chunksFile: chunksFile,
 	}, nil
 }
 
-func NewParquetShard(labelsFile, chunksFile *ParquetFile) *ParquetShard {
-	return &ParquetShard{
+func NewParquetShard(labelsFile, chunksFile *ParquetFile) *ParquetShardBucketLabelsAndChunks {
+	return &ParquetShardBucketLabelsAndChunks{
 		labelsFile: labelsFile,
 		chunksFile: chunksFile,
 	}
 }
 
-func (b *ParquetShard) LabelsFile() *ParquetFile {
+func (b *ParquetShardBucketLabelsAndChunks) LabelsFile() *ParquetFile {
 	return b.labelsFile
 }
 
-func (b *ParquetShard) ChunksFile() *ParquetFile {
+func (b *ParquetShardBucketLabelsAndChunks) ChunksFile() *ParquetFile {
 	return b.chunksFile
 }
 
-func (b *ParquetShard) TSDBSchema() (*schema.TSDBSchema, error) {
+func (b *ParquetShardBucketLabelsAndChunks) TSDBSchema() (*schema.TSDBSchema, error) {
 	var err error
 	b.o.Do(func() {
 		b.schema, err = schema.FromLabelsFile(b.labelsFile.File)
@@ -188,7 +194,7 @@ func (b *ParquetShard) TSDBSchema() (*schema.TSDBSchema, error) {
 	return b.schema, err
 }
 
-func (b *ParquetShard) Close() error {
+func (b *ParquetShardBucketLabelsAndChunks) Close() error {
 	err1 := b.labelsFile.Close()
 	err2 := b.chunksFile.Close()
 	return cmp.Or(err1, err2)

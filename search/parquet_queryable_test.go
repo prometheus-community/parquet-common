@@ -100,7 +100,7 @@ func (st *acceptanceTestStorage) Querier(from, to int64) (prom_storage.Querier, 
 
 	h := st.st.Head()
 	data := testData{minTime: h.MinTime(), maxTime: h.MaxTime()}
-	block := convertToParquet(st.t, context.Background(), bkt, data, h)
+	block := convertToParquetBucketLabelsAndChunks(st.t, context.Background(), bkt, data, h)
 
 	q, err := createQueryable(block)
 	if err != nil {
@@ -175,7 +175,7 @@ func TestQueryable(t *testing.T) {
 	for n, tc := range testCases {
 		t.Run(n, func(t *testing.T) {
 			// Convert to Parquet
-			shard := convertToParquet(t, ctx, bkt, data, st.Head(), tc.ops...)
+			shard := convertToParquetBucketLabelsAndChunks(t, ctx, bkt, data, st.Head(), tc.ops...)
 
 			t.Run("QueryByUniqueLabel", func(t *testing.T) {
 				matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
@@ -319,7 +319,7 @@ eval instant at 60s http_requests_total{route=~".+"}
 	})
 }
 
-func queryWithQueryable(t *testing.T, mint, maxt int64, shard *storage.ParquetShard, hints *prom_storage.SelectHints, matchers ...*labels.Matcher) []prom_storage.Series {
+func queryWithQueryable(t *testing.T, mint, maxt int64, shard *storage.ParquetShardBucketLabelsAndChunks, hints *prom_storage.SelectHints, matchers ...*labels.Matcher) []prom_storage.Series {
 	ctx := context.Background()
 	queryable, err := createQueryable(shard)
 	require.NoError(t, err)
@@ -334,10 +334,10 @@ func queryWithQueryable(t *testing.T, mint, maxt int64, shard *storage.ParquetSh
 	return found
 }
 
-func createQueryable(shard *storage.ParquetShard) (prom_storage.Queryable, error) {
+func createQueryable(shard storage.ParquetShard) (prom_storage.Queryable, error) {
 	d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
-	return NewParquetQueryable(d, func(ctx context.Context, mint, maxt int64) ([]*storage.ParquetShard, error) {
-		return []*storage.ParquetShard{shard}, nil
+	return NewParquetQueryable(d, func(ctx context.Context, mint, maxt int64) ([]storage.ParquetShard, error) {
+		return []storage.ParquetShard{shard}, nil
 	})
 }
 

@@ -46,7 +46,7 @@ func TestMaterializeE2E(t *testing.T) {
 	data := generateTestData(t, st, ctx, cfg)
 
 	// Convert to Parquet
-	shard := convertToParquet(t, ctx, bkt, data, st.Head())
+	shard := convertToParquetBucketLabelsAndChunks(t, ctx, bkt, data, st.Head())
 
 	t.Run("QueryByUniqueLabel", func(t *testing.T) {
 		eq := Equal(schema.LabelToColumn("unique"), parquet.ValueOf("unique_0"))
@@ -213,7 +213,7 @@ func generateTestData(t *testing.T, st *teststorage.TestStorage, ctx context.Con
 	}
 }
 
-func convertToParquet(t *testing.T, ctx context.Context, bkt *filesystem.Bucket, data testData, h convert.Convertible, opts ...storage.ShardOption) *storage.ParquetShard {
+func convertToParquetBucketLabelsAndChunks(t *testing.T, ctx context.Context, bkt *filesystem.Bucket, data testData, h convert.Convertible, opts ...storage.ShardOption) *storage.ParquetShardBucketLabelsAndChunks {
 	colDuration := time.Hour
 	shards, err := convert.ConvertTSDBBlock(
 		ctx,
@@ -235,7 +235,7 @@ func convertToParquet(t *testing.T, ctx context.Context, bkt *filesystem.Bucket,
 	return shard
 }
 
-func query(t *testing.T, mint, maxt int64, shard *storage.ParquetShard, constraints ...Constraint) []prom_storage.ChunkSeries {
+func query(t *testing.T, mint, maxt int64, shard storage.ParquetShard, constraints ...Constraint) []prom_storage.ChunkSeries {
 	ctx := context.Background()
 	for _, c := range constraints {
 		require.NoError(t, c.init(shard.LabelsFile()))
