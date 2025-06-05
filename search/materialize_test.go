@@ -228,7 +228,7 @@ func convertToParquet(t *testing.T, ctx context.Context, bkt *bucket, data testD
 	require.NoError(t, err)
 	require.Equal(t, 1, shards)
 
-	shard, err := storage.OpenParquetShard(ctx, bkt, "shard", 0, opts...)
+	shard, err := storage.OpenParquetShardFromBucket(ctx, bkt, "shard", 0, opts...)
 	require.NoError(t, err)
 
 	return shard

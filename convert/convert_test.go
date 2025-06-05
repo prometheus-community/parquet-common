@@ -102,7 +102,7 @@ func Test_Convert_TSDB(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, 1, shards)
 
-			shard, err := storage.OpenParquetShard(ctx, bkt, DefaultConvertOpts.name, 0)
+			shard, err := storage.OpenParquetShardFromBucket(ctx, bkt, DefaultConvertOpts.name, 0)
 			require.NoError(t, err)
 			require.Equal(t, len(shard.LabelsFile().RowGroups()), len(shard.ChunksFile().RowGroups()))
 			series, chunks, err := readSeries(t, shard)
@@ -179,7 +179,7 @@ func Test_CreateParquetWithReducedTimestampSamples(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, shards)
 
-	shard, err := storage.OpenParquetShard(ctx, bkt, DefaultConvertOpts.name, 0)
+	shard, err := storage.OpenParquetShardFromBucket(ctx, bkt, DefaultConvertOpts.name, 0)
 	require.NoError(t, err)
 
 	// Check metadatas
@@ -266,7 +266,7 @@ func Test_BlockHasOnlySomeSeriesInConvertTime(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, shards)
 
-	shard, err := storage.OpenParquetShard(ctx, bkt, DefaultConvertOpts.name, 0)
+	shard, err := storage.OpenParquetShardFromBucket(ctx, bkt, DefaultConvertOpts.name, 0)
 	require.NoError(t, err)
 
 	series, _, err := readSeries(t, shard)
@@ -341,7 +341,7 @@ func Test_SortedLabels(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, shards)
 
-	shard, err := storage.OpenParquetShard(ctx, bkt, DefaultConvertOpts.name, 0)
+	shard, err := storage.OpenParquetShardFromBucket(ctx, bkt, DefaultConvertOpts.name, 0)
 	require.NoError(t, err)
 
 	series, chunks, err := readSeries(t, shard)

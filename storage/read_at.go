@@ -31,11 +31,10 @@ type fileReadAt struct {
 }
 
 // NewFileReadAt returns a ReadAtCloserWithContext for reading from a local file.
-func NewFileReadAt(path string) (ReadAtWithContextCloser, error) {
-	f, err := os.Open(path)
+func NewFileReadAt(f *os.File) ReadAtWithContextCloser {
 	return &fileReadAt{
 		File: f,
-	}, err
+	}
 }
 
 func (f *fileReadAt) WithContext(_ context.Context) io.ReaderAt {
