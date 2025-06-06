@@ -38,5 +38,6 @@ jobs:
           # Enable alert commit comment
           comment-on-alert: true
           summary-always: true
+          alert-threshold: "200%"
           alert-comment-cc-users: "@jesusvazquez, @alanprot, @francoposa, @MichaHoffmann, @npazosmendez, @yeya24"
       # Upload the updated cache file for the next job by actions/cache
