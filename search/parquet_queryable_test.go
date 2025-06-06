@@ -498,6 +498,7 @@ func BenchmarkSelect(b *testing.B) {
 
 			var series int
 			for i := 0; i < b.N; i++ {
+				time.Sleep(500 * time.Millisecond)
 				ss := q.Select(ctx, true, &prom_storage.SelectHints{}, bc.matchers...)
 				for ss.Next() {
 					series++
