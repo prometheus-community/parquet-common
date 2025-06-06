@@ -24,6 +24,7 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	prom_storage "github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
+	"github.com/prometheus/prometheus/tsdb/chunks"
 	"github.com/prometheus/prometheus/util/teststorage"
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/objstore/providers/filesystem"
@@ -112,12 +113,12 @@ func TestMaterializeE2E(t *testing.T) {
 		// Test first column only
 		found := query(t, data.minTime, data.minTime+colDuration.Milliseconds()-1, shard, c1, c2)
 		require.Len(t, found, 1)
-		require.Len(t, found[0].(*concreteChunksSeries).chks, 1)
+		require.Len(t, pullAll(t, found[0]), 1)
 
 		// Test first two columns
 		found = query(t, data.minTime, data.minTime+(2*colDuration).Milliseconds()-1, shard, c1, c2)
 		require.Len(t, found, 1)
-		require.Len(t, found[0].(*concreteChunksSeries).chks, 2)
+		require.Len(t, pullAll(t, found[0]), 2)
 
 		// Query outside the range
 		found = query(t, data.minTime+(9*colDuration).Milliseconds(), data.minTime+(10*colDuration).Milliseconds()-1, shard, c1, c2)
@@ -260,4 +261,16 @@ func query(t *testing.T, mint, maxt int64, shard *storage.ParquetShard, constrai
 		found = append(found, series...)
 	}
 	return found
+}
+
+func pullAll(t *testing.T, chnks prom_storage.ChunkSeries) []chunks.Meta {
+	it := chnks.Iterator(nil)
+	var metas []chunks.Meta
+	for it.Next() {
+		metas = append(metas, it.At())
+	}
+	if err := it.Err(); err != nil {
+		t.Fatalf("error iterating chunks: %v", err)
+	}
+	return metas
 }
