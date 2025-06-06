@@ -384,47 +384,46 @@ var benchmarkCases = []struct {
 			labels.MustNewMatcher(labels.MatchEqual, "environment", "non-existent-environment"),
 		},
 	},
-	// TODO(jesus.vazquez) Enable these benchmarks once they don't panic.
-	// {
-	//	name: "MultipleMetricsRange",
-	//	matchers: []*labels.Matcher{
-	//		labels.MustNewMatcher(labels.MatchRegexp, "__name__", "test_metric_[1-5]"),
-	//	},
-	// },
-	// {
-	//	name: "MultipleMetricsSparse",
-	//	matchers: []*labels.Matcher{
-	//		labels.MustNewMatcher(labels.MatchRegexp, "__name__", "test_metric_(1|5|10|15|20)"),
-	//	},
-	// },
-	// {
-	//	name: "NegativeRegexSingleMetric",
-	//	matchers: []*labels.Matcher{
-	//		labels.MustNewMatcher(labels.MatchEqual, "__name__", "test_metric_1"),
-	//		labels.MustNewMatcher(labels.MatchNotRegexp, "instance", "(instance-1.*|instance-2.*)"),
-	//	},
-	// },
-	// {
-	//	name: "NegativeRegexMultipleMetrics",
-	//	matchers: []*labels.Matcher{
-	//		labels.MustNewMatcher(labels.MatchRegexp, "__name__", "test_metric_[1-3]"),
-	//		labels.MustNewMatcher(labels.MatchNotRegexp, "instance", "(instance-1.*|instance-2.*)"),
-	//	},
-	// },
-	// {
-	//	name: "ExpensiveRegexSingleMetric",
-	//	matchers: []*labels.Matcher{
-	//		labels.MustNewMatcher(labels.MatchEqual, "__name__", "test_metric_1"),
-	//		labels.MustNewMatcher(labels.MatchRegexp, "instance", "(container-1|instance-2|container-3|instance-4|container-5)"),
-	//	},
-	// },
-	// {
-	//	name: "ExpensiveRegexMultipleMetrics",
-	//	matchers: []*labels.Matcher{
-	//		labels.MustNewMatcher(labels.MatchRegexp, "__name__", "test_metric_[1-3]"),
-	//		labels.MustNewMatcher(labels.MatchRegexp, "instance", "(container-1|container-2|container-3|container-4|container-5)"),
-	//	},
-	// },
+	{
+		name: "MultipleMetricsRange",
+		matchers: []*labels.Matcher{
+			labels.MustNewMatcher(labels.MatchRegexp, "__name__", "test_metric_[1-5]"),
+		},
+	},
+	{
+		name: "MultipleMetricsSparse",
+		matchers: []*labels.Matcher{
+			labels.MustNewMatcher(labels.MatchRegexp, "__name__", "test_metric_(1|5|10|15|20)"),
+		},
+	},
+	{
+		name: "NegativeRegexSingleMetric",
+		matchers: []*labels.Matcher{
+			labels.MustNewMatcher(labels.MatchEqual, "__name__", "test_metric_1"),
+			labels.MustNewMatcher(labels.MatchNotRegexp, "instance", "(instance-1.*|instance-2.*)"),
+		},
+	},
+	{
+		name: "NegativeRegexMultipleMetrics",
+		matchers: []*labels.Matcher{
+			labels.MustNewMatcher(labels.MatchRegexp, "__name__", "test_metric_[1-3]"),
+			labels.MustNewMatcher(labels.MatchNotRegexp, "instance", "(instance-1.*|instance-2.*)"),
+		},
+	},
+	{
+		name: "ExpensiveRegexSingleMetric",
+		matchers: []*labels.Matcher{
+			labels.MustNewMatcher(labels.MatchEqual, "__name__", "test_metric_1"),
+			labels.MustNewMatcher(labels.MatchRegexp, "instance", "(container-1|instance-2|container-3|instance-4|container-5)"),
+		},
+	},
+	{
+		name: "ExpensiveRegexMultipleMetrics",
+		matchers: []*labels.Matcher{
+			labels.MustNewMatcher(labels.MatchRegexp, "__name__", "test_metric_[1-3]"),
+			labels.MustNewMatcher(labels.MatchRegexp, "instance", "(container-1|container-2|container-3|container-4|container-5)"),
+		},
+	},
 }
 
 func BenchmarkSelect(b *testing.B) {
@@ -467,7 +466,7 @@ func BenchmarkSelect(b *testing.B) {
 								"service", fmt.Sprintf("service-%d", s),
 								"environment", fmt.Sprintf("environment-%d", e),
 							)
-							app.Append(0, lbls, 0, rand.Float64())
+							_, _ = app.Append(0, lbls, 0, rand.Float64())
 							seriesCount++
 						}
 					}
