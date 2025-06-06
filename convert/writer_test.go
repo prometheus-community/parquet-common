@@ -84,7 +84,7 @@ func TestParquetWriter(t *testing.T) {
 		labelsAttr, err := bkt.Attributes(ctx, labelsFileName)
 		require.NoError(t, err)
 
-		labelsFile, err := parquet.OpenFile(storage.NewBucketReadAt(ctx, labelsFileName, bkt), labelsAttr.Size)
+		labelsFile, err := parquet.OpenFile(storage.NewBucketReadAt(labelsFileName, bkt).WithContext(context.Background()), labelsAttr.Size)
 		require.NoError(t, err)
 
 		// Inspect row groups
@@ -117,7 +117,7 @@ func TestParquetWriter(t *testing.T) {
 		chunksAttr, err := bkt.Attributes(ctx, chunksFileName)
 		require.NoError(t, err)
 
-		chunksFile, err := parquet.OpenFile(storage.NewBucketReadAt(ctx, chunksFileName, bkt), chunksAttr.Size)
+		chunksFile, err := parquet.OpenFile(storage.NewBucketReadAt(chunksFileName, bkt).WithContext(context.Background()), chunksAttr.Size)
 		require.NoError(t, err)
 
 		// should have the same number of row groups
