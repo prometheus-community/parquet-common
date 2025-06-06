@@ -171,7 +171,7 @@ func OpenParquetShardFromBucket(ctx context.Context, bkt objstore.Bucket, name s
 	}, nil
 }
 
-func NewParquetShard(labelsFile, chunksFile *ParquetFile) *ParquetShardBucketLabelsAndChunks {
+func NewParquetShardBucketLabelsAndChunks(labelsFile, chunksFile *ParquetFile) *ParquetShardBucketLabelsAndChunks {
 	return &ParquetShardBucketLabelsAndChunks{
 		labelsFile: labelsFile,
 		chunksFile: chunksFile,

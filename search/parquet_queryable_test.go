@@ -519,7 +519,7 @@ func BenchmarkSelect(b *testing.B) {
 	}
 }
 
-func convertToParquetForBench(tb testing.TB, ctx context.Context, bkt objstore.Bucket, data testData, h convert.Convertible, opts ...storage.ShardOption) *storage.ParquetShard {
+func convertToParquetForBench(tb testing.TB, ctx context.Context, bkt objstore.Bucket, data testData, h convert.Convertible, opts ...storage.ShardOption) *storage.ParquetShardBucketLabelsAndChunks {
 	colDuration := time.Hour
 	shards, err := convert.ConvertTSDBBlock(
 		ctx,
@@ -539,7 +539,7 @@ func convertToParquetForBench(tb testing.TB, ctx context.Context, bkt objstore.B
 		tb.Fatalf("expected 1 shard, got %d", shards)
 	}
 
-	shard, err := storage.OpenParquetShard(ctx, bkt, "shard", 0, opts...)
+	shard, err := storage.OpenParquetShardFromBucket(ctx, bkt, "shard", 0, opts...)
 	if err != nil {
 		tb.Fatalf("error opening parquet shard: %v", err)
 	}
