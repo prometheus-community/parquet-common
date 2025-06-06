@@ -9,3 +9,6 @@ test-short:
 
 all-tests-with-coverage:
 	$(GOTEST) -timeout 600s -v -count=1 -cover -coverprofile=coverage.txt ./...
+
+bench-select:
+	$(GOTEST) -bench=BenchmarkSelect -run='^$$' ./search/... -benchtime=1s -count=1
