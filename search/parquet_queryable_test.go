@@ -17,7 +17,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"math/rand"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -30,8 +32,10 @@ import (
 	"github.com/prometheus/prometheus/util/teststorage"
 	"github.com/prometheus/prometheus/util/testutil"
 	"github.com/stretchr/testify/require"
+	"github.com/thanos-io/objstore"
 	"github.com/thanos-io/objstore/providers/filesystem"
 
+	"github.com/prometheus-community/parquet-common/convert"
 	"github.com/prometheus-community/parquet-common/schema"
 	"github.com/prometheus-community/parquet-common/storage"
 )
@@ -103,6 +107,31 @@ func (st *acceptanceTestStorage) Querier(from, to int64) (prom_storage.Querier, 
 		st.t.Fatalf("unable to create queryable: %s", err)
 	}
 	return q.Querier(from, to)
+}
+
+type countingBucket struct {
+	objstore.Bucket
+
+	nGet       atomic.Int32
+	nGetRange  atomic.Int32
+	bsGetRange atomic.Int64
+}
+
+func (b *countingBucket) ResetCounters() {
+	b.nGet.Store(0)
+	b.nGetRange.Store(0)
+	b.bsGetRange.Store(0)
+}
+
+func (b *countingBucket) Get(ctx context.Context, name string) (io.ReadCloser, error) {
+	b.nGet.Add(1)
+	return b.Bucket.Get(ctx, name)
+}
+
+func (b *countingBucket) GetRange(ctx context.Context, name string, off int64, length int64) (io.ReadCloser, error) {
+	b.nGetRange.Add(1)
+	b.bsGetRange.Add(length)
+	return b.Bucket.GetRange(ctx, name, off, length)
 }
 
 func (st *acceptanceTestStorage) Close() error {
@@ -310,4 +339,211 @@ func createQueryable(shard *storage.ParquetShard) (prom_storage.Queryable, error
 	return NewParquetQueryable(d, func(ctx context.Context, mint, maxt int64) ([]*storage.ParquetShard, error) {
 		return []*storage.ParquetShard{shard}, nil
 	})
+}
+
+var benchmarkCases = []struct {
+	name     string
+	matchers []*labels.Matcher
+}{
+	{
+		name: "SingleMetricAllSeries",
+		matchers: []*labels.Matcher{
+			labels.MustNewMatcher(labels.MatchEqual, "__name__", "test_metric_1"),
+		},
+	},
+	{
+		name: "SingleMetricReducedSeries",
+		matchers: []*labels.Matcher{
+			labels.MustNewMatcher(labels.MatchEqual, "__name__", "test_metric_1"),
+			labels.MustNewMatcher(labels.MatchEqual, "instance", "instance-1"),
+		},
+	},
+	{
+		name: "SingleMetricOneSeries",
+		matchers: []*labels.Matcher{
+			labels.MustNewMatcher(labels.MatchEqual, "__name__", "test_metric_1"),
+			labels.MustNewMatcher(labels.MatchEqual, "instance", "instance-2"),
+			labels.MustNewMatcher(labels.MatchEqual, "region", "region-1"),
+			labels.MustNewMatcher(labels.MatchEqual, "zone", "zone-3"),
+			labels.MustNewMatcher(labels.MatchEqual, "service", "service-10"),
+			labels.MustNewMatcher(labels.MatchEqual, "environment", "environment-1"),
+		},
+	},
+	{
+		name: "SingleMetricSparseSeries",
+		matchers: []*labels.Matcher{
+			labels.MustNewMatcher(labels.MatchEqual, "__name__", "test_metric_1"),
+			labels.MustNewMatcher(labels.MatchEqual, "service", "service-1"),
+			labels.MustNewMatcher(labels.MatchEqual, "environment", "environment-0"),
+		},
+	},
+	{
+		name: "NonExistentSeries",
+		matchers: []*labels.Matcher{
+			labels.MustNewMatcher(labels.MatchEqual, "__name__", "test_metric_1"),
+			labels.MustNewMatcher(labels.MatchEqual, "environment", "non-existent-environment"),
+		},
+	},
+	// TODO(jesus.vazquez) Enable these benchmarks once they don't panic.
+	// {
+	//	name: "MultipleMetricsRange",
+	//	matchers: []*labels.Matcher{
+	//		labels.MustNewMatcher(labels.MatchRegexp, "__name__", "test_metric_[1-5]"),
+	//	},
+	// },
+	// {
+	//	name: "MultipleMetricsSparse",
+	//	matchers: []*labels.Matcher{
+	//		labels.MustNewMatcher(labels.MatchRegexp, "__name__", "test_metric_(1|5|10|15|20)"),
+	//	},
+	// },
+	// {
+	//	name: "NegativeRegexSingleMetric",
+	//	matchers: []*labels.Matcher{
+	//		labels.MustNewMatcher(labels.MatchEqual, "__name__", "test_metric_1"),
+	//		labels.MustNewMatcher(labels.MatchNotRegexp, "instance", "(instance-1.*|instance-2.*)"),
+	//	},
+	// },
+	// {
+	//	name: "NegativeRegexMultipleMetrics",
+	//	matchers: []*labels.Matcher{
+	//		labels.MustNewMatcher(labels.MatchRegexp, "__name__", "test_metric_[1-3]"),
+	//		labels.MustNewMatcher(labels.MatchNotRegexp, "instance", "(instance-1.*|instance-2.*)"),
+	//	},
+	// },
+	// {
+	//	name: "ExpensiveRegexSingleMetric",
+	//	matchers: []*labels.Matcher{
+	//		labels.MustNewMatcher(labels.MatchEqual, "__name__", "test_metric_1"),
+	//		labels.MustNewMatcher(labels.MatchRegexp, "instance", "(container-1|instance-2|container-3|instance-4|container-5)"),
+	//	},
+	// },
+	// {
+	//	name: "ExpensiveRegexMultipleMetrics",
+	//	matchers: []*labels.Matcher{
+	//		labels.MustNewMatcher(labels.MatchRegexp, "__name__", "test_metric_[1-3]"),
+	//		labels.MustNewMatcher(labels.MatchRegexp, "instance", "(container-1|container-2|container-3|container-4|container-5)"),
+	//	},
+	// },
+}
+
+func BenchmarkSelect(b *testing.B) {
+	ctx := context.Background()
+
+	st := teststorage.New(b)
+	b.Cleanup(func() { _ = st.Close() })
+	bkt, err := filesystem.NewBucket(b.TempDir())
+	if err != nil {
+		b.Fatal("error creating bucket: ", err)
+	}
+	b.Cleanup(func() { _ = bkt.Close() })
+
+	app := st.Appender(ctx)
+
+	// 5 metrics × 100 instances × 5 regions × 10 zones × 20 services × 3 environments = 1,500,000 series
+	metrics := 5
+	instances := 100
+	regions := 5
+	zones := 10
+	services := 20
+	environments := 3
+
+	totalSeries := metrics * instances * regions * zones * services * environments
+	b.Logf("Generating %d series (%d metrics × %d instances × %d regions × %d zones × %d services × %d environments)",
+		totalSeries, metrics, instances, regions, zones, services, environments)
+
+	seriesCount := 0
+	for m := range metrics {
+		for i := range instances {
+			for r := range regions {
+				for z := range zones {
+					for s := range services {
+						for e := range environments {
+							lbls := labels.FromStrings(
+								"__name__", fmt.Sprintf("test_metric_%d", m),
+								"instance", fmt.Sprintf("instance-%d", i),
+								"region", fmt.Sprintf("region-%d", r),
+								"zone", fmt.Sprintf("zone-%d", z),
+								"service", fmt.Sprintf("service-%d", s),
+								"environment", fmt.Sprintf("environment-%d", e),
+							)
+							app.Append(0, lbls, 0, rand.Float64())
+							seriesCount++
+						}
+					}
+				}
+			}
+		}
+	}
+	if err := app.Commit(); err != nil {
+		b.Fatal("error committing samples: ", err)
+	}
+
+	h := st.Head()
+	require.Equal(b, totalSeries, int(h.NumSeries()), "Expected number of series does not match")
+
+	cbkt := &countingBucket{Bucket: bkt}
+	data := testData{minTime: h.MinTime(), maxTime: h.MaxTime()}
+	block := convertToParquetForBench(b, ctx, cbkt, data, h)
+	queryable, err := createQueryable(block)
+	require.NoError(b, err, "unable to create queryable")
+
+	q, err := queryable.Querier(0, 120)
+	require.NoError(b, err, "unable to create querier")
+
+	for _, bc := range benchmarkCases {
+		b.Run(bc.name, func(b *testing.B) {
+			cbkt.ResetCounters()
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			var series int
+			for i := 0; i < b.N; i++ {
+				ss := q.Select(ctx, true, &prom_storage.SelectHints{}, bc.matchers...)
+				for ss.Next() {
+					series++
+					s := ss.At()
+					it := s.Iterator(nil)
+					for it.Next() != chunkenc.ValNone {
+					}
+				}
+				if err := ss.Err(); err != nil {
+					b.Error(err)
+				}
+			}
+
+			b.ReportMetric(float64(series)/float64(b.N), "series/op")
+			b.ReportMetric(float64(cbkt.nGet.Load())/float64(b.N), "get/op")
+			b.ReportMetric(float64(cbkt.nGetRange.Load())/float64(b.N), "get_range/op")
+			b.ReportMetric(float64(cbkt.bsGetRange.Load())/float64(b.N), "bytes_get_range/op")
+		})
+	}
+}
+
+func convertToParquetForBench(tb testing.TB, ctx context.Context, bkt objstore.Bucket, data testData, h convert.Convertible, opts ...storage.ShardOption) *storage.ParquetShard {
+	colDuration := time.Hour
+	shards, err := convert.ConvertTSDBBlock(
+		ctx,
+		bkt,
+		data.minTime,
+		data.maxTime,
+		[]convert.Convertible{h},
+		convert.WithName("shard"),
+		convert.WithColDuration(colDuration),
+		convert.WithRowGroupSize(500),
+		convert.WithPageBufferSize(300),
+	)
+	if err != nil {
+		tb.Fatalf("error converting to parquet: %v", err)
+	}
+	if shards != 1 {
+		tb.Fatalf("expected 1 shard, got %d", shards)
+	}
+
+	shard, err := storage.OpenParquetShard(ctx, bkt, "shard", 0, opts...)
+	if err != nil {
+		tb.Fatalf("error opening parquet shard: %v", err)
+	}
+
+	return shard
 }
