@@ -37,6 +37,7 @@ import (
 	"github.com/prometheus-community/parquet-common/convert"
 	"github.com/prometheus-community/parquet-common/schema"
 	"github.com/prometheus-community/parquet-common/storage"
+	"github.com/prometheus-community/parquet-common/util"
 )
 
 func TestPromQLAcceptance(t *testing.T) {
@@ -98,7 +99,7 @@ func (st *acceptanceTestStorage) Querier(from, to int64) (prom_storage.Querier, 
 	st.t.Cleanup(func() { _ = bkt.Close() })
 
 	h := st.st.Head()
-	data := testData{minTime: h.MinTime(), maxTime: h.MaxTime()}
+	data := util.TestData{MinTime: h.MinTime(), MaxTime: h.MaxTime()}
 	block := convertToParquet(st.t, context.Background(), bkt, data, h)
 
 	q, err := createQueryable(block)
@@ -150,8 +151,8 @@ func TestQueryable(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = bkt.Close() })
 
-	cfg := defaultTestConfig()
-	data := generateTestData(t, st, ctx, cfg)
+	cfg := util.DefaultTestConfig()
+	data := util.GenerateTestData(t, st, ctx, cfg)
 
 	ir, err := st.Head().Index()
 	require.NoError(t, err)
@@ -178,28 +179,28 @@ func TestQueryable(t *testing.T) {
 
 			t.Run("QueryByUniqueLabel", func(t *testing.T) {
 				matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
-				sFound := queryWithQueryable(t, data.minTime, data.maxTime, shard, nil, matchers...)
+				sFound := queryWithQueryable(t, data.MinTime, data.MaxTime, shard, nil, matchers...)
 				totalFound := 0
 				for _, series := range sFound {
 					require.Equal(t, series.Labels().Get("unique"), "unique_0")
-					require.Contains(t, data.seriesHash, series.Labels().Hash())
+					require.Contains(t, data.SeriesHash, series.Labels().Hash())
 					totalFound++
 				}
-				require.Equal(t, cfg.totalMetricNames, totalFound)
+				require.Equal(t, cfg.TotalMetricNames, totalFound)
 			})
 
 			t.Run("QueryByMetricName", func(t *testing.T) {
 				for i := 0; i < 50; i++ {
-					name := fmt.Sprintf("metric_%d", rand.Int()%cfg.totalMetricNames)
+					name := fmt.Sprintf("metric_%d", rand.Int()%cfg.TotalMetricNames)
 					matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, labels.MetricName, name)}
-					sFound := queryWithQueryable(t, data.minTime, data.maxTime, shard, nil, matchers...)
+					sFound := queryWithQueryable(t, data.MinTime, data.MaxTime, shard, nil, matchers...)
 					totalFound := 0
 					for _, series := range sFound {
 						totalFound++
 						require.Equal(t, series.Labels().Get(labels.MetricName), name)
-						require.Contains(t, data.seriesHash, series.Labels().Hash())
+						require.Contains(t, data.SeriesHash, series.Labels().Hash())
 					}
-					require.Equal(t, cfg.metricsPerMetricName, totalFound)
+					require.Equal(t, cfg.MetricsPerMetricName, totalFound)
 				}
 			})
 
@@ -208,20 +209,20 @@ func TestQueryable(t *testing.T) {
 				hints := &prom_storage.SelectHints{
 					Func: "series",
 				}
-				sFound := queryWithQueryable(t, data.minTime, data.maxTime, shard, hints, matchers...)
+				sFound := queryWithQueryable(t, data.MinTime, data.MaxTime, shard, hints, matchers...)
 				totalFound := 0
 				for _, series := range sFound {
 					totalFound++
 					require.Equal(t, series.Labels().Get("unique"), "unique_0")
-					require.Contains(t, data.seriesHash, series.Labels().Hash())
+					require.Contains(t, data.SeriesHash, series.Labels().Hash())
 				}
-				require.Equal(t, cfg.totalMetricNames, totalFound)
+				require.Equal(t, cfg.TotalMetricNames, totalFound)
 			})
 
 			t.Run("LabelNames", func(t *testing.T) {
 				queryable, err := createQueryable(shard)
 				require.NoError(t, err)
-				querier, err := queryable.Querier(data.minTime, data.maxTime)
+				querier, err := queryable.Querier(data.MinTime, data.MaxTime)
 				require.NoError(t, err)
 
 				t.Run("Without Matchers", func(t *testing.T) {
@@ -246,7 +247,7 @@ func TestQueryable(t *testing.T) {
 			t.Run("LabelValues", func(t *testing.T) {
 				queryable, err := createQueryable(shard)
 				require.NoError(t, err)
-				querier, err := queryable.Querier(data.minTime, data.maxTime)
+				querier, err := queryable.Querier(data.MinTime, data.MaxTime)
 				require.NoError(t, err)
 				t.Run("Without Matchers", func(t *testing.T) {
 					lValues, _, err := querier.LabelValues(context.Background(), labels.MetricName, nil)
@@ -481,7 +482,7 @@ func BenchmarkSelect(b *testing.B) {
 	require.Equal(b, totalSeries, int(h.NumSeries()), "Expected number of series does not match")
 
 	cbkt := &countingBucket{Bucket: bkt}
-	data := testData{minTime: h.MinTime(), maxTime: h.MaxTime()}
+	data := util.TestData{MinTime: h.MinTime(), MaxTime: h.MaxTime()}
 	block := convertToParquetForBench(b, ctx, cbkt, data, h)
 	queryable, err := createQueryable(block)
 	require.NoError(b, err, "unable to create queryable")
@@ -518,13 +519,13 @@ func BenchmarkSelect(b *testing.B) {
 	}
 }
 
-func convertToParquetForBench(tb testing.TB, ctx context.Context, bkt objstore.Bucket, data testData, h convert.Convertible, opts ...storage.ShardOption) storage.ParquetShard {
+func convertToParquetForBench(tb testing.TB, ctx context.Context, bkt objstore.Bucket, data util.TestData, h convert.Convertible, opts ...storage.ShardOption) storage.ParquetShard {
 	colDuration := time.Hour
 	shards, err := convert.ConvertTSDBBlock(
 		ctx,
 		bkt,
-		data.minTime,
-		data.maxTime,
+		data.MinTime,
+		data.MaxTime,
 		[]convert.Convertible{h},
 		convert.WithName("shard"),
 		convert.WithColDuration(colDuration),
