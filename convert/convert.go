@@ -36,8 +36,8 @@ import (
 	"github.com/prometheus-community/parquet-common/schema"
 )
 
-var DefaultConvertOpts = convertOpts{
-	name:               "block",
+var DefaultConvertOpts = ConvertOpts{
+	Name:               "block",
 	rowGroupSize:       1e6,
 	colDuration:        time.Hour * 8,
 	numRowGroups:       math.MaxInt32,
@@ -57,11 +57,11 @@ type Convertible interface {
 	Meta() tsdb.BlockMeta
 }
 
-type convertOpts struct {
+type ConvertOpts struct {
 	numRowGroups       int
 	rowGroupSize       int
 	colDuration        time.Duration
-	name               string
+	Name               string
 	sortedLabels       []string
 	bloomfilterLabels  []string
 	pageBufferSize     int
@@ -71,7 +71,7 @@ type convertOpts struct {
 	maxSamplesPerChunk int
 }
 
-func (cfg convertOpts) buildBloomfilterColumns() []parquet.BloomFilterColumn {
+func (cfg ConvertOpts) buildBloomfilterColumns() []parquet.BloomFilterColumn {
 	cols := make([]parquet.BloomFilterColumn, 0, len(cfg.bloomfilterLabels))
 	for _, label := range cfg.bloomfilterLabels {
 		cols = append(cols, parquet.SplitBlockFilter(10, schema.LabelToColumn(label)))
@@ -80,7 +80,7 @@ func (cfg convertOpts) buildBloomfilterColumns() []parquet.BloomFilterColumn {
 	return cols
 }
 
-func (cfg convertOpts) buildSortingColumns() []parquet.SortingColumn {
+func (cfg ConvertOpts) buildSortingColumns() []parquet.SortingColumn {
 	cols := make([]parquet.SortingColumn, 0, len(cfg.sortedLabels))
 
 	for _, label := range cfg.sortedLabels {
@@ -90,64 +90,64 @@ func (cfg convertOpts) buildSortingColumns() []parquet.SortingColumn {
 	return cols
 }
 
-type ConvertOption func(*convertOpts)
+type ConvertOption func(*ConvertOpts)
 
 func WithSortBy(labels ...string) ConvertOption {
-	return func(opts *convertOpts) {
+	return func(opts *ConvertOpts) {
 		opts.sortedLabels = labels
 	}
 }
 
 func WithColDuration(d time.Duration) ConvertOption {
-	return func(opts *convertOpts) {
+	return func(opts *ConvertOpts) {
 		opts.colDuration = d
 	}
 }
 
 func WithWriteBufferSize(s int) ConvertOption {
-	return func(opts *convertOpts) {
+	return func(opts *ConvertOpts) {
 		opts.writeBufferSize = s
 	}
 }
 
 func WithPageBufferSize(s int) ConvertOption {
-	return func(opts *convertOpts) {
+	return func(opts *ConvertOpts) {
 		opts.pageBufferSize = s
 	}
 }
 
 func WithName(name string) ConvertOption {
-	return func(opts *convertOpts) {
-		opts.name = name
+	return func(opts *ConvertOpts) {
+		opts.Name = name
 	}
 }
 
 func WithNumRowGroups(n int) ConvertOption {
-	return func(opts *convertOpts) {
+	return func(opts *ConvertOpts) {
 		opts.numRowGroups = n
 	}
 }
 
 func WithRowGroupSize(size int) ConvertOption {
-	return func(opts *convertOpts) {
+	return func(opts *ConvertOpts) {
 		opts.rowGroupSize = size
 	}
 }
 
 func WithConcurrency(concurrency int) ConvertOption {
-	return func(opts *convertOpts) {
+	return func(opts *ConvertOpts) {
 		opts.concurrency = concurrency
 	}
 }
 
 func WithMaxSamplesPerChunk(samplesPerChunk int) ConvertOption {
-	return func(opts *convertOpts) {
+	return func(opts *ConvertOpts) {
 		opts.maxSamplesPerChunk = samplesPerChunk
 	}
 }
 
 func WithColumnPageBuffers(buffers parquet.BufferPool) ConvertOption {
-	return func(opts *convertOpts) {
+	return func(opts *ConvertOpts) {
 		opts.columnPageBuffers = buffers
 	}
 }
@@ -171,7 +171,8 @@ func ConvertTSDBBlock(
 	}
 
 	defer func() { _ = rr.Close() }()
-	w := NewShardedWrite(rr, rr.Schema(), bkt, &cfg)
+	rwf := NewSplitFileBucketWriterFunc(bkt)
+	w := NewShardedWrite(rr, rwf, rr.Schema(), bkt, &cfg)
 	return w.currentShard, errors.Wrap(w.Write(ctx), "error writing block")
 }
 
@@ -192,7 +193,7 @@ type TsdbRowReader struct {
 	concurrency int
 }
 
-func NewTsdbRowReader(ctx context.Context, mint, maxt, colDuration int64, blks []Convertible, ops convertOpts) (*TsdbRowReader, error) {
+func NewTsdbRowReader(ctx context.Context, mint, maxt, colDuration int64, blks []Convertible, ops ConvertOpts) (*TsdbRowReader, error) {
 	var (
 		seriesSets = make([]storage.ChunkSeriesSet, 0, len(blks))
 		closers    = make([]io.Closer, 0, len(blks))

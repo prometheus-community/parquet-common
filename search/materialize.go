@@ -35,7 +35,7 @@ import (
 )
 
 type Materializer struct {
-	b           *storage.ParquetShard
+	b           storage.ParquetShard
 	s           *schema.TSDBSchema
 	d           *schema.PrometheusParquetChunksDecoder
 	partitioner util.Partitioner
@@ -48,7 +48,7 @@ type Materializer struct {
 
 func NewMaterializer(s *schema.TSDBSchema,
 	d *schema.PrometheusParquetChunksDecoder,
-	block *storage.ParquetShard,
+	block storage.ParquetShard,
 	concurrency int,
 	maxGapPartitioning int,
 ) (*Materializer, error) {

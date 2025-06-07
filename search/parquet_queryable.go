@@ -30,7 +30,7 @@ import (
 	"github.com/prometheus-community/parquet-common/util"
 )
 
-type ShardsFinderFunction func(ctx context.Context, mint, maxt int64) ([]*storage.ParquetShard, error)
+type ShardsFinderFunction func(ctx context.Context, mint, maxt int64) ([]storage.ParquetShard, error)
 
 type queryableOpts struct {
 	concurrency                int
@@ -210,12 +210,12 @@ func (p parquetQuerier) queryableShards(ctx context.Context, mint, maxt int64) (
 }
 
 type queryableShard struct {
-	shard       *storage.ParquetShard
+	shard       storage.ParquetShard
 	m           *Materializer
 	concurrency int
 }
 
-func newQueryableShard(opts *queryableOpts, block *storage.ParquetShard, d *schema.PrometheusParquetChunksDecoder) (*queryableShard, error) {
+func newQueryableShard(opts *queryableOpts, block storage.ParquetShard, d *schema.PrometheusParquetChunksDecoder) (*queryableShard, error) {
 	s, err := block.TSDBSchema()
 	if err != nil {
 		return nil, err

@@ -68,7 +68,8 @@ func TestParquetWriter(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = rr.Close() }()
 
-	sw := NewShardedWrite(rr, rr.tsdbSchema, bkt, &convertsOpts)
+	rwf := NewSplitFileBucketWriterFunc(bkt)
+	sw := NewShardedWrite(rr, rwf, rr.tsdbSchema, bkt, &convertsOpts)
 	err = sw.Write(ctx)
 	require.NoError(t, err)
 
@@ -80,11 +81,11 @@ func TestParquetWriter(t *testing.T) {
 	fChunks := make([][]chunks.Meta, 0, totalNumberOfSeries)
 
 	for i := 0; i < totalShards; i++ {
-		labelsFileName := schema.LabelsPfileNameForShard(convertsOpts.name, i)
+		labelsFileName := schema.LabelsPfileNameForShard(convertsOpts.Name, i)
 		labelsAttr, err := bkt.Attributes(ctx, labelsFileName)
 		require.NoError(t, err)
 
-		labelsFile, err := parquet.OpenFile(storage.NewBucketReadAt(ctx, labelsFileName, bkt), labelsAttr.Size)
+		labelsFile, err := parquet.OpenFile(storage.NewBucketReadAt(labelsFileName, bkt).WithContext(context.Background()), labelsAttr.Size)
 		require.NoError(t, err)
 
 		// Inspect row groups
@@ -113,11 +114,11 @@ func TestParquetWriter(t *testing.T) {
 			require.Len(t, chunk, 0)
 		}
 
-		chunksFileName := schema.ChunksPfileNameForShard(convertsOpts.name, i)
+		chunksFileName := schema.ChunksPfileNameForShard(convertsOpts.Name, i)
 		chunksAttr, err := bkt.Attributes(ctx, chunksFileName)
 		require.NoError(t, err)
 
-		chunksFile, err := parquet.OpenFile(storage.NewBucketReadAt(ctx, chunksFileName, bkt), chunksAttr.Size)
+		chunksFile, err := parquet.OpenFile(storage.NewBucketReadAt(chunksFileName, bkt).WithContext(context.Background()), chunksAttr.Size)
 		require.NoError(t, err)
 
 		// should have the same number of row groups
@@ -166,7 +167,7 @@ func Test_ShouldRespectContextCancellation(t *testing.T) {
 		}),
 	}
 
-	sw, err := newSplitFileWriter(ctx, bkt, s.Schema, map[string]*schema.TSDBProjection{"test": s})
+	sw, err := newSplitFileBucketWriter(ctx, bkt, s.Schema, map[string]*schema.TSDBProjection{"test": s})
 	require.NoError(t, err)
 	require.ErrorIs(t, sw.Close(), context.Canceled)
 }
