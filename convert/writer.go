@@ -17,6 +17,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/parquet-go/parquet-go"
@@ -37,23 +39,44 @@ type ShardedWriter struct {
 
 	currentShard int
 
-	rr  parquet.RowReader
-	s   *schema.TSDBSchema
-	bkt objstore.Bucket
+	rr                   parquet.RowReader
+	rwf                  RowWriterCloserFunc
+	outSchemaProjections map[string]*schema.TSDBProjection
+	s                    *schema.TSDBSchema
+	bkt                  objstore.Bucket
 
-	ops *convertOpts
+	ops *ConvertOpts
 }
 
-func NewShardedWrite(rr parquet.RowReader, s *schema.TSDBSchema, bkt objstore.Bucket, ops *convertOpts) *ShardedWriter {
+func NewShardedWrite(
+	rr parquet.RowReader,
+	rwf RowWriterCloserFunc,
+	s *schema.TSDBSchema,
+	//lblsProjection *schema.TSDBProjection,
+	//chksProjection *schema.TSDBProjection,
+	bkt objstore.Bucket,
+	ops *ConvertOpts,
+) *ShardedWriter {
+
+	name := ops.Name
+	currentShard := 0
+
+	//outSchemaProjections := map[string]*schema.TSDBProjection{
+	//	schema.LabelsPfileNameForShard(name, currentShard): lblsProjection,
+	//	schema.ChunksPfileNameForShard(name, currentShard): chksProjection,
+	//}
+
 	return &ShardedWriter{
-		name:         ops.name,
+		name:         name,
 		rowGroupSize: ops.rowGroupSize,
 		numRowGroups: ops.numRowGroups,
-		currentShard: 0,
+		currentShard: currentShard,
 		rr:           rr,
-		s:            s,
-		bkt:          bkt,
-		ops:          ops,
+		rwf:          rwf,
+		//outSchemaProjections: outSchemaProjections,
+		s:   s,
+		bkt: bkt,
+		ops: ops,
 	}
 }
 
@@ -78,7 +101,7 @@ func (c *ShardedWriter) convertShards(ctx context.Context) error {
 func (c *ShardedWriter) convertShard(ctx context.Context) (bool, error) {
 	rowsToWrite := c.numRowGroups * c.rowGroupSize
 
-	n, err := c.writeFile(ctx, c.s, rowsToWrite)
+	n, err := c.writeFile(ctx, rowsToWrite)
 	if err != nil {
 		return false, err
 	}
@@ -92,7 +115,7 @@ func (c *ShardedWriter) convertShard(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-func (c *ShardedWriter) writeFile(ctx context.Context, schema *schema.TSDBSchema, rowsToWrite int) (int64, error) {
+func (c *ShardedWriter) writeFile(ctx context.Context, rowsToWrite int) (int64, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -107,7 +130,7 @@ func (c *ShardedWriter) writeFile(ctx context.Context, schema *schema.TSDBSchema
 		parquet.ColumnPageBuffers(c.ops.columnPageBuffers),
 	}
 
-	for k, v := range schema.Metadata {
+	for k, v := range c.s.Metadata {
 		fileOpts = append(fileOpts, parquet.KeyValueMetadata(k, v))
 	}
 
@@ -116,9 +139,10 @@ func (c *ShardedWriter) writeFile(ctx context.Context, schema *schema.TSDBSchema
 		return 0, err
 	}
 
-	writer, err := newSplitFileWriter(ctx, c.bkt, schema.Schema, transformations,
-		fileOpts...,
-	)
+	//writer, err := newSplitFileBucketWriter(ctx, c.bkt, c.s.Schema, transformations,
+	//	fileOpts...,
+	//)
+	writer, err := c.rwf(ctx, c.s.Schema, transformations, fileOpts...)
 	if err != nil {
 		return 0, fmt.Errorf("unable to create row writer: %s", err)
 	}
@@ -153,8 +177,6 @@ func (c *ShardedWriter) transformations() (map[string]*schema.TSDBProjection, er
 	}, nil
 }
 
-var _ parquet.RowWriter = &splitPipeFileWriter{}
-
 type fileWriter struct {
 	pw   *parquet.GenericWriter[any]
 	conv parquet.Conversion
@@ -162,17 +184,35 @@ type fileWriter struct {
 	r    io.ReadCloser
 }
 
-type splitPipeFileWriter struct {
+type RowWriterCloser interface {
+	parquet.RowWriter
+	io.Closer
+}
+
+type RowWriterCloserFunc func(
+	ctx context.Context,
+	inSchema *parquet.Schema,
+	outSchemaProjections map[string]*schema.TSDBProjection,
+	options ...parquet.WriterOption,
+) (RowWriterCloser, error)
+
+var _ parquet.RowWriter = &splitPipeFileBucketWriter{}
+
+type splitPipeFileBucketWriter struct {
 	fileWriters map[string]*fileWriter
 	errGroup    *errgroup.Group
 }
 
-func newSplitFileWriter(ctx context.Context, bkt objstore.Bucket, inSchema *parquet.Schema,
-	files map[string]*schema.TSDBProjection, options ...parquet.WriterOption,
-) (*splitPipeFileWriter, error) {
+func newSplitFileBucketWriter(
+	ctx context.Context,
+	bkt objstore.Bucket,
+	inSchema *parquet.Schema,
+	outSchemaProjections map[string]*schema.TSDBProjection,
+	options ...parquet.WriterOption,
+) (*splitPipeFileBucketWriter, error) {
 	fileWriters := make(map[string]*fileWriter)
 	errGroup, ctx := errgroup.WithContext(ctx)
-	for file, projection := range files {
+	for file, projection := range outSchemaProjections {
 		conv, err := parquet.Convert(projection.Schema, inSchema)
 		if err != nil {
 			return nil, fmt.Errorf("unable to convert schemas")
@@ -191,13 +231,50 @@ func newSplitFileWriter(ctx context.Context, bkt objstore.Bucket, inSchema *parq
 			return bkt.Upload(ctx, file, r)
 		})
 	}
-	return &splitPipeFileWriter{
+	return &splitPipeFileBucketWriter{
 		fileWriters: fileWriters,
 		errGroup:    errGroup,
 	}, nil
 }
 
-func (s *splitPipeFileWriter) WriteRows(rows []parquet.Row) (int, error) {
+func NewSplitFileBucketWriterFunc(
+	bkt objstore.Bucket,
+) RowWriterCloserFunc {
+	return func(
+		ctx context.Context,
+		inSchema *parquet.Schema,
+		outSchemaProjections map[string]*schema.TSDBProjection,
+		options ...parquet.WriterOption,
+	) (RowWriterCloser, error) {
+		fileWriters := make(map[string]*fileWriter)
+		errGroup, ctx := errgroup.WithContext(ctx)
+		for file, projection := range outSchemaProjections {
+			conv, err := parquet.Convert(projection.Schema, inSchema)
+			if err != nil {
+				return nil, fmt.Errorf("unable to convert schemas")
+			}
+
+			r, w := io.Pipe()
+			opts := append(options, append(projection.ExtraOptions, projection.Schema)...)
+			fileWriters[file] = &fileWriter{
+				pw:   parquet.NewGenericWriter[any](w, opts...),
+				w:    w,
+				r:    r,
+				conv: conv,
+			}
+			errGroup.Go(func() error {
+				defer func() { _ = r.Close() }()
+				return bkt.Upload(ctx, file, r)
+			})
+		}
+		return &splitPipeFileBucketWriter{
+			fileWriters: fileWriters,
+			errGroup:    errGroup,
+		}, nil
+	}
+}
+
+func (s *splitPipeFileBucketWriter) WriteRows(rows []parquet.Row) (int, error) {
 	errGroup := &errgroup.Group{}
 	for _, writer := range s.fileWriters {
 		errGroup.Go(func() error {
@@ -220,7 +297,7 @@ func (s *splitPipeFileWriter) WriteRows(rows []parquet.Row) (int, error) {
 	return len(rows), errGroup.Wait()
 }
 
-func (s *splitPipeFileWriter) Close() error {
+func (s *splitPipeFileBucketWriter) Close() error {
 	var err error
 	for _, fw := range s.fileWriters {
 		if errClose := fw.pw.Close(); errClose != nil {
@@ -232,6 +309,140 @@ func (s *splitPipeFileWriter) Close() error {
 	}
 
 	if errClose := s.errGroup.Wait(); errClose != nil {
+		err = multierror.Append(err, errClose)
+	}
+	return err
+}
+
+var _ parquet.RowWriter = &SplitFileIOWriter{}
+
+type SplitFileIOWriter struct {
+	fileWriters map[string]*fileWriter
+	errGroup    *errgroup.Group
+}
+
+func NewSplitFileIOWriter(
+	ctx context.Context,
+	inSchema *parquet.Schema,
+	fileSchemas map[string]*schema.TSDBProjection,
+	writeCloser io.WriteCloser,
+	options ...parquet.WriterOption,
+) (*SplitFileIOWriter, error) {
+	fileWriters := make(map[string]*fileWriter)
+	errGroup, ctx := errgroup.WithContext(ctx)
+	for file, projection := range fileSchemas {
+		conv, err := parquet.Convert(projection.Schema, inSchema)
+		if err != nil {
+			return nil, fmt.Errorf("unable to convert schemas")
+		}
+
+		opts := append(options, append(projection.ExtraOptions, projection.Schema)...)
+		fileWriters[file] = &fileWriter{
+			pw:   parquet.NewGenericWriter[any](writeCloser, opts...),
+			w:    writeCloser,
+			conv: conv,
+		}
+	}
+	return &SplitFileIOWriter{
+		fileWriters: fileWriters,
+		errGroup:    errGroup,
+	}, nil
+}
+
+func NewSplitFileIOWriterFunc(
+	outDir string,
+) RowWriterCloserFunc {
+	return func(
+		ctx context.Context,
+		inSchema *parquet.Schema,
+		outSchemaProjections map[string]*schema.TSDBProjection,
+		options ...parquet.WriterOption,
+	) (RowWriterCloser, error) {
+		fileWriters := make(map[string]*fileWriter)
+		errGroup, ctx := errgroup.WithContext(ctx)
+		for file, projection := range outSchemaProjections {
+			conv, err := parquet.Convert(projection.Schema, inSchema)
+			if err != nil {
+				return nil, errors.Wrap(err, "unable to convert schemas")
+			}
+
+			// the "file" has a parent directory in its file name
+			// so we need to join to outDir to get the full path
+			// then get the parent directory from the full path
+			outPath := filepath.Join(outDir, file)
+			outPathDir := filepath.Dir(outPath)
+			os.MkdirAll(outPathDir, os.ModePerm)
+			writeCloser, err := os.Create(outPath)
+			if err != nil {
+				return nil, errors.Wrap(err, "error opening file for writing")
+			}
+
+			//r, w := io.Pipe()
+			//
+			//opts := append(options, append(projection.ExtraOptions, projection.Schema)...)
+			//fileWriters[file] = &fileWriter{
+			//	pw:   parquet.NewGenericWriter[any](writeCloser, opts...),
+			//	w:    w,
+			//	r:    r,
+			//	conv: conv,
+			//}
+
+			r, w := io.Pipe()
+			opts := append(options, append(projection.ExtraOptions, projection.Schema)...)
+			fileWriters[file] = &fileWriter{
+				pw:   parquet.NewGenericWriter[any](w, opts...),
+				w:    w,
+				r:    r,
+				conv: conv,
+			}
+			errGroup.Go(func() error {
+				defer func() { _ = r.Close() }()
+				_, err := io.Copy(writeCloser, r)
+				return err
+			})
+		}
+		return &SplitFileIOWriter{
+			fileWriters: fileWriters,
+			errGroup:    errGroup,
+		}, nil
+	}
+}
+
+func (iow *SplitFileIOWriter) WriteRows(rows []parquet.Row) (int, error) {
+	errGroup := &errgroup.Group{}
+	for _, writer := range iow.fileWriters {
+		errGroup.Go(func() error {
+			convertedRows := util.CloneRows(rows)
+			_, err := writer.conv.Convert(convertedRows)
+			if err != nil {
+				return fmt.Errorf("unable to convert rows: %d", err)
+			}
+			n, err := writer.pw.WriteRows(convertedRows)
+			if err != nil {
+				return fmt.Errorf("unable to write rows: %d", err)
+			}
+			if n != len(rows) {
+				return fmt.Errorf("unable to write rows: %d != %d", n, len(rows))
+			}
+			return nil
+		})
+	}
+
+	return len(rows), errGroup.Wait()
+}
+
+func (iow *SplitFileIOWriter) Close() error {
+	var err error
+	for _, fw := range iow.fileWriters {
+		if errClose := fw.pw.Close(); errClose != nil {
+			err = multierror.Append(err, errClose)
+		}
+		if errClose := fw.w.Close(); errClose != nil {
+			err = multierror.Append(err, errClose)
+		}
+	}
+
+	if errClose := iow.errGroup.Wait(); errClose != nil {
 		err = multierror.Append(err, errClose)
 	}
 	return err

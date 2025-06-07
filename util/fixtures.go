@@ -75,3 +75,28 @@ func GenerateTestData(t *testing.T, st *teststorage.TestStorage, ctx context.Con
 		MaxTime:    h.MaxTime(),
 	}
 }
+
+//func ConvertTestDataToParquetBucket(
+//	t *testing.T,
+//	ctx context.Context,
+//	bkt objstore.Bucket,
+//	data TestData,
+//	h convert.Convertible,
+//	convertOps ...convert.ConvertOption,
+//) {
+//	//colDuration := time.Hour
+//	shards, err := convert.ConvertTSDBBlock(
+//		ctx,
+//		bkt,
+//		data.MinTime,
+//		data.MaxTime,
+//		[]convert.Convertible{h},
+//		convertOps...,
+//	//convert.WithName("shard"),
+//	//convert.WithColDuration(colDuration), // let's force more than 1 data col
+//	//convert.WithRowGroupSize(500),
+//	//convert.WithPageBufferSize(300), // force creating multiples pages
+//	)
+//	require.NoError(t, err)
+//	require.Equal(t, 1, shards)
+//}
