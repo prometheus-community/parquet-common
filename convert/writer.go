@@ -52,7 +52,6 @@ func NewShardedWrite(
 	bkt objstore.Bucket,
 	ops *convertOpts,
 ) *ShardedWriter {
-
 	return &ShardedWriter{
 		name:                 ops.name,
 		rowGroupSize:         ops.rowGroupSize,
