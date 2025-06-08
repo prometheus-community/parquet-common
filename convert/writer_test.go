@@ -68,7 +68,15 @@ func TestParquetWriter(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = rr.Close() }()
 
-	sw := NewShardedWrite(rr, rr.tsdbSchema, bkt, &convertsOpts)
+	labelsProjection, err := rr.Schema().LabelsProjection()
+	require.NoError(t, err)
+	chunksProjection, err := rr.Schema().ChunksProjection()
+	require.NoError(t, err)
+	outSchemaProjections := []*schema.TSDBProjection{
+		labelsProjection, chunksProjection,
+	}
+
+	sw := NewShardedWrite(rr, rr.tsdbSchema, outSchemaProjections, bkt, &convertsOpts)
 	err = sw.Write(ctx)
 	require.NoError(t, err)
 

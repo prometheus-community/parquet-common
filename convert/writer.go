@@ -20,7 +20,6 @@ import (
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/parquet-go/parquet-go"
-	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/util/zeropool"
 	"github.com/thanos-io/objstore"
 	"golang.org/x/sync/errgroup"
@@ -37,23 +36,33 @@ type ShardedWriter struct {
 
 	currentShard int
 
-	rr  parquet.RowReader
-	s   *schema.TSDBSchema
+	rr                   parquet.RowReader
+	s                    *schema.TSDBSchema
+	outSchemaProjections []*schema.TSDBProjection
+
 	bkt objstore.Bucket
 
 	ops *convertOpts
 }
 
-func NewShardedWrite(rr parquet.RowReader, s *schema.TSDBSchema, bkt objstore.Bucket, ops *convertOpts) *ShardedWriter {
+func NewShardedWrite(
+	rr parquet.RowReader,
+	s *schema.TSDBSchema,
+	outSchemaProjections []*schema.TSDBProjection,
+	bkt objstore.Bucket,
+	ops *convertOpts,
+) *ShardedWriter {
+
 	return &ShardedWriter{
-		name:         ops.name,
-		rowGroupSize: ops.rowGroupSize,
-		numRowGroups: ops.numRowGroups,
-		currentShard: 0,
-		rr:           rr,
-		s:            s,
-		bkt:          bkt,
-		ops:          ops,
+		name:                 ops.name,
+		rowGroupSize:         ops.rowGroupSize,
+		numRowGroups:         ops.numRowGroups,
+		currentShard:         0,
+		rr:                   rr,
+		outSchemaProjections: outSchemaProjections,
+		s:                    s,
+		bkt:                  bkt,
+		ops:                  ops,
 	}
 }
 
@@ -111,12 +120,7 @@ func (c *ShardedWriter) writeFile(ctx context.Context, schema *schema.TSDBSchema
 		fileOpts = append(fileOpts, parquet.KeyValueMetadata(k, v))
 	}
 
-	transformations, err := c.transformations()
-	if err != nil {
-		return 0, err
-	}
-
-	writer, err := newSplitFileWriter(ctx, c.bkt, schema.Schema, transformations,
+	writer, err := newSplitFileWriter(ctx, c.bkt, schema.Schema, c.outSchemasForShard(),
 		fileOpts...,
 	)
 	if err != nil {
@@ -136,21 +140,13 @@ func (c *ShardedWriter) writeFile(ctx context.Context, schema *schema.TSDBSchema
 	return n, nil
 }
 
-func (c *ShardedWriter) transformations() (map[string]*schema.TSDBProjection, error) {
-	lblsProjection, err := c.s.LabelsProjection()
-	if err != nil {
-		return nil, errors.Wrap(err, "unable to get label projection")
-	}
+func (c *ShardedWriter) outSchemasForShard() map[string]*schema.TSDBProjection {
+	outSchemas := make(map[string]*schema.TSDBProjection, len(c.outSchemaProjections))
 
-	chksProjection, err := c.s.ChunksProjection()
-	if err != nil {
-		return nil, errors.Wrap(err, "unable to create chunk projection")
+	for _, projection := range c.outSchemaProjections {
+		outSchemas[projection.FilenameFunc(c.name, c.currentShard)] = projection
 	}
-
-	return map[string]*schema.TSDBProjection{
-		schema.LabelsPfileNameForShard(c.name, c.currentShard): lblsProjection,
-		schema.ChunksPfileNameForShard(c.name, c.currentShard): chksProjection,
-	}, nil
+	return outSchemas
 }
 
 var _ parquet.RowWriter = &splitPipeFileWriter{}
