@@ -539,7 +539,10 @@ func convertToParquetForBench(tb testing.TB, ctx context.Context, bkt objstore.B
 		tb.Fatalf("expected 1 shard, got %d", shards)
 	}
 
-	shard, err := storage.OpenParquetShardFromBucket(ctx, bkt, "shard", 0, opts...)
+	bucketOpener := storage.NewParquetBucketOpener(bkt)
+	shard, err := storage.NewParquetShardSyncOpener(
+		ctx, "shard", bucketOpener, bucketOpener, 0,
+	)
 	if err != nil {
 		tb.Fatalf("error opening parquet shard: %v", err)
 	}

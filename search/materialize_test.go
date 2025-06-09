@@ -157,62 +157,6 @@ type testConfig struct {
 	numberOfSamples      int
 }
 
-func defaultTestConfig() testConfig {
-	return testConfig{
-		totalMetricNames:     1_000,
-		metricsPerMetricName: 20,
-		numberOfLabels:       5,
-		randomLabels:         3,
-		numberOfSamples:      250,
-	}
-}
-
-type testData struct {
-	seriesHash map[uint64]*struct{}
-	minTime    int64
-	maxTime    int64
-}
-
-func generateTestData(t *testing.T, st *teststorage.TestStorage, ctx context.Context, cfg testConfig) testData {
-	app := st.Appender(ctx)
-	seriesHash := make(map[uint64]*struct{})
-	builder := labels.NewScratchBuilder(cfg.numberOfLabels)
-
-	for i := 0; i < cfg.totalMetricNames; i++ {
-		for n := 0; n < cfg.metricsPerMetricName; n++ {
-			builder.Reset()
-			builder.Add(labels.MetricName, fmt.Sprintf("metric_%d", i))
-			builder.Add("unique", fmt.Sprintf("unique_%d", n))
-
-			for j := 0; j < cfg.numberOfLabels; j++ {
-				builder.Add(fmt.Sprintf("label_name_%v", j), fmt.Sprintf("label_value_%v", j))
-			}
-
-			firstRandom := rand.Int() % 10
-			for k := firstRandom; k < firstRandom+cfg.randomLabels; k++ {
-				builder.Add(fmt.Sprintf("random_name_%v", k), fmt.Sprintf("random_value_%v", k))
-			}
-
-			builder.Sort()
-			lbls := builder.Labels()
-			seriesHash[lbls.Hash()] = &struct{}{}
-			for s := 0; s < cfg.numberOfSamples; s++ {
-				_, err := app.Append(0, lbls, (1 * time.Minute * time.Duration(s)).Milliseconds(), float64(i))
-				require.NoError(t, err)
-			}
-		}
-	}
-
-	require.NoError(t, app.Commit())
-	h := st.Head()
-
-	return testData{
-		seriesHash: seriesHash,
-		minTime:    h.MinTime(),
-		maxTime:    h.MaxTime(),
-	}
-}
-
 func convertToParquet(t *testing.T, ctx context.Context, bkt *bucket, data util.TestData, h convert.Convertible, opts ...storage.ShardOption) storage.ParquetShard {
 	colDuration := time.Hour
 	shards, err := convert.ConvertTSDBBlock(
@@ -229,7 +173,10 @@ func convertToParquet(t *testing.T, ctx context.Context, bkt *bucket, data util.
 	require.NoError(t, err)
 	require.Equal(t, 1, shards)
 
-	shard, err := storage.OpenParquetShardFromBucket(ctx, bkt, "shard", 0, opts...)
+	bucketOpener := storage.NewParquetBucketOpener(bkt)
+	shard, err := storage.NewParquetShardSyncOpener(
+		ctx, "shard", bucketOpener, bucketOpener, 0,
+	)
 	require.NoError(t, err)
 
 	return shard

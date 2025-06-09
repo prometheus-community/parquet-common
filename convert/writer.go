@@ -42,29 +42,28 @@ type ShardedWriter struct {
 	rr                   parquet.RowReader
 	s                    *schema.TSDBSchema
 	outSchemaProjections []*schema.TSDBProjection
+	pipeReaderWriter     PipeReaderWriter
 
-	writeFunc PipeReaderWriteFunc
-
-	ops *convertOpts
+	opts *convertOpts
 }
 
 func NewShardedWrite(
 	rr parquet.RowReader,
 	s *schema.TSDBSchema,
 	outSchemaProjections []*schema.TSDBProjection,
-	writeFunc PipeReaderWriteFunc,
-	ops *convertOpts,
+	pipeReaderWriter PipeReaderWriter,
+	opts *convertOpts,
 ) *ShardedWriter {
 	return &ShardedWriter{
-		name:                 ops.Name(),
-		rowGroupSize:         ops.rowGroupSize,
-		numRowGroups:         ops.numRowGroups,
+		name:                 opts.Name(),
+		rowGroupSize:         opts.rowGroupSize,
+		numRowGroups:         opts.numRowGroups,
 		currentShard:         0,
 		rr:                   rr,
 		outSchemaProjections: outSchemaProjections,
 		s:                    s,
-		writeFunc:            writeFunc,
-		ops:                  ops,
+		pipeReaderWriter:     pipeReaderWriter,
+		opts:                 opts,
 	}
 }
 
@@ -109,13 +108,13 @@ func (c *ShardedWriter) writeFile(ctx context.Context, schema *schema.TSDBSchema
 
 	fileOpts := []parquet.WriterOption{
 		parquet.SortingWriterConfig(
-			parquet.SortingColumns(c.ops.buildSortingColumns()...),
+			parquet.SortingColumns(c.opts.buildSortingColumns()...),
 		),
 		parquet.MaxRowsPerRowGroup(int64(c.rowGroupSize)),
-		parquet.BloomFilters(c.ops.buildBloomfilterColumns()...),
-		parquet.PageBufferSize(c.ops.pageBufferSize),
-		parquet.WriteBufferSize(c.ops.writeBufferSize),
-		parquet.ColumnPageBuffers(c.ops.columnPageBuffers),
+		parquet.BloomFilters(c.opts.buildBloomfilterColumns()...),
+		parquet.PageBufferSize(c.opts.pageBufferSize),
+		parquet.WriteBufferSize(c.opts.writeBufferSize),
+		parquet.ColumnPageBuffers(c.opts.columnPageBuffers),
 	}
 
 	for k, v := range schema.Metadata {
@@ -123,7 +122,7 @@ func (c *ShardedWriter) writeFile(ctx context.Context, schema *schema.TSDBSchema
 	}
 
 	writer, err := newSplitFileWriter(
-		ctx, schema.Schema, c.outSchemasForCurrentShard(), c.writeFunc, fileOpts...,
+		ctx, schema.Schema, c.outSchemasForCurrentShard(), c.pipeReaderWriter, fileOpts...,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("unable to create row writer: %s", err)
@@ -151,44 +150,56 @@ func (c *ShardedWriter) outSchemasForCurrentShard() map[string]*schema.TSDBProje
 	return outSchemas
 }
 
-// PipeReaderWriteFunc is called to write serialized data from an io.Reader to a destination.
-// Implementations should write the data and return any error encountered during the write.
-//
-// These will generally be closures to capture the implementation details of the destination writer.
-// Implementations are not expected to close or otherwise manage the lifecycle of the destination writer.
-type PipeReaderWriteFunc func(ctx context.Context, r io.Reader, outFile string) error
+// PipeReaderWriter is used to write serialized data from an io.Reader to the final output destination.
+type PipeReaderWriter interface {
+	// Write writes data to the output path and return any error encountered during the write.
+	Write(ctx context.Context, r io.Reader, outPath string) error
+}
 
-func PipeReaderBucketWriteFunc(
-	bkt objstore.Bucket,
-) PipeReaderWriteFunc {
-	return func(ctx context.Context, r io.Reader, outFile string) error {
-		err := bkt.Upload(ctx, outFile, r)
-		return err
+type PipeReaderBucketWriter struct {
+	bkt objstore.Bucket
+}
+
+func NewPipeReaderBucketWriter(bkt objstore.Bucket) *PipeReaderBucketWriter {
+	return &PipeReaderBucketWriter{
+		bkt: bkt,
 	}
 }
 
-func PipeReaderFileWriteFunc(
-	outDir string,
-) PipeReaderWriteFunc {
-	return func(ctx context.Context, r io.Reader, outFile string) error {
-		outPath := filepath.Join(outDir, outFile)
-		outPathDir := filepath.Dir(outPath)
-		err := os.MkdirAll(outPathDir, os.ModePerm)
-		if err != nil {
-			return errors.Wrap(err, "error creating directory for writing")
-		}
-		fileWriterCloser, err := os.Create(outPath)
-		defer func() { _ = fileWriterCloser.Close() }()
+func (w *PipeReaderBucketWriter) Write(ctx context.Context, r io.Reader, outPath string) error {
+	return w.bkt.Upload(ctx, outPath, r)
+}
 
-		if err != nil {
-			return errors.Wrap(err, "error opening outFile for writing")
-		}
-		_, err = io.Copy(fileWriterCloser, r)
-		if err != nil {
-			return errors.Wrap(err, "error copying from reader to outFile reader")
-		}
-		return nil
+type PipeReaderFileWriter struct {
+	outDir string
+}
+
+func NewPipeReaderFileWriter(outDir string) *PipeReaderFileWriter {
+	return &PipeReaderFileWriter{
+		outDir: outDir,
 	}
+}
+
+func (w *PipeReaderFileWriter) Write(ctx context.Context, r io.Reader, outPath string) error {
+	// outPath may include parent path segments in addition to the filename;
+	// join with w.outDir to get the full path for creating any necessary parent directories.
+	outPath = filepath.Join(w.outDir, outPath)
+	outPathDir := filepath.Dir(outPath)
+	err := os.MkdirAll(outPathDir, os.ModePerm)
+	if err != nil {
+		return errors.Wrap(err, "error creating directory for writing")
+	}
+	fileWriterCloser, err := os.Create(outPath)
+	defer func() { _ = fileWriterCloser.Close() }()
+
+	if err != nil {
+		return errors.Wrap(err, "error opening outPath for writing")
+	}
+	_, err = io.Copy(fileWriterCloser, r)
+	if err != nil {
+		return errors.Wrap(err, "error copying from reader to outPath reader")
+	}
+	return nil
 }
 
 var _ parquet.RowWriter = &splitPipeFileWriter{}
@@ -212,7 +223,7 @@ func newSplitFileWriter(
 	ctx context.Context,
 	inSchema *parquet.Schema,
 	outSchemas map[string]*schema.TSDBProjection,
-	writeFunc PipeReaderWriteFunc,
+	pipeReaderWriter PipeReaderWriter,
 	options ...parquet.WriterOption,
 ) (*splitPipeFileWriter, error) {
 	fileWriters := make(map[string]*fileWriter)
@@ -233,7 +244,7 @@ func newSplitFileWriter(
 		}
 		errGroup.Go(func() error {
 			defer func() { _ = r.Close() }()
-			return writeFunc(ctx, r, file)
+			return pipeReaderWriter.Write(ctx, r, file)
 		})
 	}
 	return &splitPipeFileWriter{

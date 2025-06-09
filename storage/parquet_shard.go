@@ -14,15 +14,18 @@
 package storage
 
 import (
-	"cmp"
 	"context"
 	"os"
+	"path/filepath"
 	"sync"
 
+	"github.com/hashicorp/go-multierror"
 	"github.com/parquet-go/parquet-go"
+	"github.com/pkg/errors"
 	"github.com/thanos-io/objstore"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/prometheus-community/parquet-common/convert"
 	"github.com/prometheus-community/parquet-common/schema"
 )
 
@@ -136,14 +139,96 @@ type ParquetShard interface {
 	TSDBSchema() (*schema.TSDBSchema, error)
 }
 
-type ParquetShardBucketLabelsAndChunks struct {
+type ParquetOpener interface {
+	Open(ctx context.Context, path string, opts ...ShardOption) (*ParquetFile, error)
+}
+
+type ParquetBucketOpener struct {
+	bkt objstore.BucketReader
+}
+
+func NewParquetBucketOpener(bkt objstore.BucketReader) *ParquetBucketOpener {
+	return &ParquetBucketOpener{
+		bkt: bkt,
+	}
+}
+
+func (o *ParquetBucketOpener) Open(ctx context.Context, name string, opts ...ShardOption) (*ParquetFile, error) {
+	return OpenFromBucket(ctx, o.bkt, name, opts...)
+}
+
+type ParquetLocalFileOpener struct{}
+
+func NewParquetLocalFileOpener() *ParquetLocalFileOpener {
+	return &ParquetLocalFileOpener{}
+}
+
+func (o *ParquetLocalFileOpener) Open(ctx context.Context, name string, opts ...ShardOption) (*ParquetFile, error) {
+	return OpenFromFile(ctx, name, opts...)
+}
+
+type ParquetBucketDownloadLabelsFileOpener struct {
+	bucketFileOpener *ParquetBucketOpener
+	shard            int
+	outDir           string
+}
+
+func NewParquetBucketDownloadLabelsFileOpener(
+	bucketOpener *ParquetBucketOpener,
+	shard int,
+	outDir string,
+) *ParquetBucketDownloadLabelsFileOpener {
+	return &ParquetBucketDownloadLabelsFileOpener{
+		bucketFileOpener: bucketOpener,
+		shard:            shard,
+		outDir:           outDir,
+	}
+}
+
+func (o *ParquetBucketDownloadLabelsFileOpener) Open(ctx context.Context, name string, opts ...ShardOption) (*ParquetFile, error) {
+	labelsFileName := schema.LabelsPfileNameForShard(name, o.shard)
+	bucketLabelsFile, err := o.bucketFileOpener.Open(ctx, labelsFileName, opts...)
+	if err != nil {
+		return nil, errors.Wrap(err, "error opening bucket labels parquet file")
+	}
+	bucketLabelsFileReader := parquet.NewGenericReader[any](bucketLabelsFile)
+	labelsFileSchema, err := schema.FromLabelsFile(bucketLabelsFile.File)
+	if err != nil {
+		return nil, errors.Wrap(err, "error getting schema from bucket labels parquet file")
+	}
+	labelsProjection, err := labelsFileSchema.LabelsProjection()
+	if err != nil {
+		return nil, errors.Wrap(err, "error getting schema projection from bucket parquet labels file schema")
+	}
+	outSchemaProjections := []*schema.TSDBProjection{labelsProjection}
+
+	pipeReaderFileWriter := convert.NewPipeReaderFileWriter(o.outDir)
+	shardedBucketToFileWriter := convert.NewShardedWrite(
+		bucketLabelsFileReader, labelsFileSchema, outSchemaProjections, pipeReaderFileWriter, &convert.DefaultConvertOpts,
+	)
+	err = shardedBucketToFileWriter.Write(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "error writing bucket labels parquet file to local filesystem")
+	}
+
+	filePath := filepath.Join(o.outDir, labelsFileName)
+	return NewParquetLocalFileOpener().Open(ctx, filePath, opts...)
+}
+
+type ParquetShardSyncOpener struct {
 	labelsFile, chunksFile *ParquetFile
 	schema                 *schema.TSDBSchema
 	o                      sync.Once
 }
 
-// OpenParquetShardFromBucket opens the sharded parquet block from the given bucket.
-func OpenParquetShardFromBucket(ctx context.Context, bkt objstore.Bucket, name string, shard int, opts ...ShardOption) (*ParquetShardBucketLabelsAndChunks, error) {
+func NewParquetShardSyncOpener(
+	ctx context.Context,
+	name string,
+	labelsFileOpener ParquetOpener,
+	chunksFileOpener ParquetOpener,
+	shard int,
+	opts ...ShardOption,
+) (*ParquetShardSyncOpener, error) {
 	labelsFileName := schema.LabelsPfileNameForShard(name, shard)
 	chunksFileName := schema.ChunksPfileNameForShard(name, shard)
 
@@ -152,12 +237,12 @@ func OpenParquetShardFromBucket(ctx context.Context, bkt objstore.Bucket, name s
 	var labelsFile, chunksFile *ParquetFile
 
 	errGroup.Go(func() (err error) {
-		labelsFile, err = OpenFromBucket(ctx, bkt, labelsFileName, opts...)
+		labelsFile, err = labelsFileOpener.Open(ctx, labelsFileName, opts...)
 		return err
 	})
 
 	errGroup.Go(func() (err error) {
-		chunksFile, err = OpenFromBucket(ctx, bkt, chunksFileName, opts...)
+		chunksFile, err = chunksFileOpener.Open(ctx, chunksFileName, opts...)
 		return err
 	})
 
@@ -165,37 +250,31 @@ func OpenParquetShardFromBucket(ctx context.Context, bkt objstore.Bucket, name s
 		return nil, err
 	}
 
-	return &ParquetShardBucketLabelsAndChunks{
+	return &ParquetShardSyncOpener{
 		labelsFile: labelsFile,
 		chunksFile: chunksFile,
 	}, nil
 }
 
-func NewParquetShardBucketLabelsAndChunks(labelsFile, chunksFile *ParquetFile) *ParquetShardBucketLabelsAndChunks {
-	return &ParquetShardBucketLabelsAndChunks{
-		labelsFile: labelsFile,
-		chunksFile: chunksFile,
-	}
+func (s *ParquetShardSyncOpener) LabelsFile() *ParquetFile {
+	return s.labelsFile
 }
 
-func (b *ParquetShardBucketLabelsAndChunks) LabelsFile() *ParquetFile {
-	return b.labelsFile
+func (s *ParquetShardSyncOpener) ChunksFile() *ParquetFile {
+	return s.chunksFile
 }
 
-func (b *ParquetShardBucketLabelsAndChunks) ChunksFile() *ParquetFile {
-	return b.chunksFile
-}
-
-func (b *ParquetShardBucketLabelsAndChunks) TSDBSchema() (*schema.TSDBSchema, error) {
+func (s *ParquetShardSyncOpener) TSDBSchema() (*schema.TSDBSchema, error) {
 	var err error
-	b.o.Do(func() {
-		b.schema, err = schema.FromLabelsFile(b.labelsFile.File)
+	s.o.Do(func() {
+		s.schema, err = schema.FromLabelsFile(s.labelsFile.File)
 	})
-	return b.schema, err
+	return s.schema, err
 }
 
-func (b *ParquetShardBucketLabelsAndChunks) Close() error {
-	err1 := b.labelsFile.Close()
-	err2 := b.chunksFile.Close()
-	return cmp.Or(err1, err2)
+func (s *ParquetShardSyncOpener) Close() error {
+	err := &multierror.Error{}
+	err = multierror.Append(err, s.labelsFile.Close())
+	err = multierror.Append(err, s.chunksFile.Close())
+	return err.ErrorOrNil()
 }
