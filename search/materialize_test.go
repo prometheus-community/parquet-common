@@ -174,7 +174,7 @@ type testData struct {
 	maxTime    int64
 }
 
-func generateTestData(t *testing.T, st *teststorage.TestStorage, ctx context.Context, cfg testConfig) testData {
+func generateTestData(t testing.TB, st *teststorage.TestStorage, ctx context.Context, cfg testConfig) testData {
 	app := st.Appender(ctx)
 	seriesHash := make(map[uint64]*struct{})
 	builder := labels.NewScratchBuilder(cfg.numberOfLabels)
@@ -214,7 +214,7 @@ func generateTestData(t *testing.T, st *teststorage.TestStorage, ctx context.Con
 	}
 }
 
-func convertToParquet(t *testing.T, ctx context.Context, bkt *filesystem.Bucket, data testData, h convert.Convertible, opts ...storage.ShardOption) *storage.ParquetShard {
+func convertToParquet(t testing.TB, ctx context.Context, bkt *filesystem.Bucket, data testData, h convert.Convertible, opts ...storage.ShardOption) *storage.ParquetShard {
 	colDuration := time.Hour
 	shards, err := convert.ConvertTSDBBlock(
 		ctx,
@@ -273,4 +273,140 @@ func pullAll(t *testing.T, chnks prom_storage.ChunkSeries) []chunks.Meta {
 		t.Fatalf("error iterating chunks: %v", err)
 	}
 	return metas
+}
+
+func BenchmarkMaterialize(b *testing.B) {
+	ctx := context.Background()
+	st := teststorage.New(b)
+	b.Cleanup(func() { _ = st.Close() })
+
+	bkt, err := filesystem.NewBucket(b.TempDir())
+	if err != nil {
+		b.Fatal("error creating bucket: ", err)
+	}
+	b.Cleanup(func() { _ = bkt.Close() })
+
+	cfg := testConfig{
+		totalMetricNames:     100,
+		metricsPerMetricName: 50,
+		numberOfLabels:       5,
+		randomLabels:         3,
+		numberOfSamples:      1000,
+	}
+	data := generateTestData(b, st, ctx, cfg)
+	shard := convertToParquet(b, ctx, bkt, data, st.Head())
+
+	s, err := shard.TSDBSchema()
+	if err != nil {
+		b.Fatal("error getting schema: ", err)
+	}
+	d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
+	m, err := NewMaterializer(ctx, s, d, shard, 1, 10*1024)
+	if err != nil {
+		b.Fatal("error creating materializer: ", err)
+	}
+
+	totalRows := shard.LabelsFile().RowGroups()[0].NumRows()
+	b.Logf("Data has %d row groups, first row group has %d rows", len(shard.LabelsFile().RowGroups()), totalRows)
+
+	testCases := []struct {
+		name string
+		rr   []RowRange
+	}{
+		{
+			name: "AllRows",
+			rr:   []RowRange{{from: 0, count: totalRows}},
+		},
+		{
+			name: "FirstHalf",
+			rr:   []RowRange{{from: 0, count: totalRows / 2}},
+		},
+		{
+			name: "SecondHalf",
+			rr:   []RowRange{{from: totalRows / 2, count: totalRows / 2}},
+		},
+		{
+			name: "TopAndBottom",
+			rr: []RowRange{
+				{from: 0, count: totalRows / 4},
+				{from: totalRows * 3 / 4, count: totalRows / 4},
+			},
+		},
+		{
+			name: "Interleaved",
+			rr: []RowRange{
+				{from: 0, count: totalRows / 10},
+				{from: totalRows / 5, count: totalRows / 10},
+				{from: totalRows * 2 / 5, count: totalRows / 10},
+				{from: totalRows * 3 / 5, count: totalRows / 10},
+				{from: totalRows * 4 / 5, count: totalRows / 10},
+			},
+		},
+		{
+			name: "SparseSmall",
+			rr: []RowRange{
+				{from: 0, count: 10},
+				{from: totalRows / 4, count: 10},
+				{from: totalRows / 2, count: 10},
+				{from: totalRows * 3 / 4, count: 10},
+			},
+		},
+		{
+			name: "Sequential",
+			rr: []RowRange{
+				{from: 0, count: 100},
+				{from: 100, count: 100},
+				{from: 200, count: 100},
+				{from: 300, count: 100},
+			},
+		},
+		{
+			name: "SingleRow",
+			rr:   []RowRange{{from: totalRows / 2, count: 1}},
+		},
+	}
+
+	for _, tc := range testCases {
+		b.Run("Meterialize_"+tc.name, func(b *testing.B) {
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				series, err := m.Materialize(ctx, 0, data.minTime, data.maxTime, false, tc.rr)
+				if err != nil {
+					b.Fatal("error materializing: ", err)
+				}
+				if len(series) == 0 {
+					b.Fatal("no series returned")
+				}
+			}
+		})
+		b.Run("MeterializeOld_"+tc.name, func(b *testing.B) {
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				series, err := m.MaterializeOld(ctx, 0, data.minTime, data.maxTime, false, tc.rr)
+				if err != nil {
+					b.Fatal("error materializing: ", err)
+				}
+				if len(series) == 0 {
+					b.Fatal("no series returned")
+				}
+			}
+		})
+	}
+
+	b.Run("SkipChunks", func(b *testing.B) {
+		rr := []RowRange{{from: 0, count: totalRows}}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			series, err := m.Materialize(ctx, 0, data.minTime, data.maxTime, true, rr)
+			if err != nil {
+				b.Fatal("error materializing: ", err)
+			}
+			if len(series) == 0 {
+				b.Fatal("no series returned")
+			}
+		}
+	})
 }
