@@ -270,7 +270,7 @@ func (b *Bucket) GetRange(ctx context.Context, name string, off, length int64) (
 			return nil, errors.Wrapf(err, "stat %s", file)
 		}
 
-		f, err := os.OpenFile(filepath.Clean(file), os.O_RDONLY, 0600)
+		f, err := os.OpenFile(filepath.Clean(file), os.O_RDONLY, 0o600)
 		if err != nil {
 			return nil, err
 		}
@@ -284,7 +284,7 @@ func (b *Bucket) GetRange(ctx context.Context, name string, off, length int64) (
 		// Check again in case another goroutine added it while we were waiting for the lock
 		if existingInfo, alreadyExists := b.fileCache[file]; alreadyExists {
 			// Another goroutine already added it, close our copy and use the existing one
-			f.Close()
+			_ = f.Close()
 			cachedInfo = existingInfo
 		} else {
 			// We're the first to add it to the cache

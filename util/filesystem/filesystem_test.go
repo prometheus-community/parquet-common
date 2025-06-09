@@ -82,7 +82,7 @@ func TestIterWithAttributes(t *testing.T) {
 	dir := t.TempDir()
 	f, err := os.CreateTemp(dir, "test")
 	testutil.Ok(t, err)
-	defer f.Close()
+	t.Cleanup(func() { _ = f.Close() })
 
 	stat, err := f.Stat()
 	testutil.Ok(t, err)
@@ -128,7 +128,6 @@ func TestIterWithAttributes(t *testing.T) {
 				testutil.Equals(t, tc.expectedUpdatedAt, lastModified)
 			}
 		})
-
 	}
 }
 
