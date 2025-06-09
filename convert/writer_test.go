@@ -76,7 +76,9 @@ func TestParquetWriter(t *testing.T) {
 		labelsProjection, chunksProjection,
 	}
 
-	sw := NewShardedWrite(rr, rr.tsdbSchema, outSchemaProjections, bkt, &convertsOpts)
+	writeFunc := PipeReaderBucketWriteFunc(bkt)
+
+	sw := NewShardedWrite(rr, rr.tsdbSchema, outSchemaProjections, writeFunc, &convertsOpts)
 	err = sw.Write(ctx)
 	require.NoError(t, err)
 
@@ -174,7 +176,9 @@ func Test_ShouldRespectContextCancellation(t *testing.T) {
 		}),
 	}
 
-	sw, err := newSplitFileWriter(ctx, bkt, s.Schema, map[string]*schema.TSDBProjection{"test": s})
+	writeFunc := PipeReaderBucketWriteFunc(bkt)
+
+	sw, err := newSplitFileWriter(ctx, s.Schema, map[string]*schema.TSDBProjection{"test": s}, writeFunc)
 	require.NoError(t, err)
 	require.ErrorIs(t, sw.Close(), context.Canceled)
 }

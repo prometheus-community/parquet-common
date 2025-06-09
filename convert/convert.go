@@ -187,7 +187,9 @@ func ConvertTSDBBlock(
 		labelsProjection, chunksProjection,
 	}
 
-	w := NewShardedWrite(rr, rr.Schema(), outSchemaProjections, bkt, &cfg)
+	writeFunc := PipeReaderBucketWriteFunc(bkt)
+
+	w := NewShardedWrite(rr, rr.Schema(), outSchemaProjections, writeFunc, &cfg)
 	return w.currentShard, errors.Wrap(w.Write(ctx), "error writing block")
 }
 

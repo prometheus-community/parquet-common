@@ -17,9 +17,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/parquet-go/parquet-go"
+	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/util/zeropool"
 	"github.com/thanos-io/objstore"
 	"golang.org/x/sync/errgroup"
@@ -40,7 +43,7 @@ type ShardedWriter struct {
 	s                    *schema.TSDBSchema
 	outSchemaProjections []*schema.TSDBProjection
 
-	bkt objstore.Bucket
+	writeFunc PipeReaderWriteFunc
 
 	ops *convertOpts
 }
@@ -49,7 +52,7 @@ func NewShardedWrite(
 	rr parquet.RowReader,
 	s *schema.TSDBSchema,
 	outSchemaProjections []*schema.TSDBProjection,
-	bkt objstore.Bucket,
+	writeFunc PipeReaderWriteFunc,
 	ops *convertOpts,
 ) *ShardedWriter {
 	return &ShardedWriter{
@@ -60,7 +63,7 @@ func NewShardedWrite(
 		rr:                   rr,
 		outSchemaProjections: outSchemaProjections,
 		s:                    s,
-		bkt:                  bkt,
+		writeFunc:            writeFunc,
 		ops:                  ops,
 	}
 }
@@ -119,8 +122,8 @@ func (c *ShardedWriter) writeFile(ctx context.Context, schema *schema.TSDBSchema
 		fileOpts = append(fileOpts, parquet.KeyValueMetadata(k, v))
 	}
 
-	writer, err := newSplitFileWriter(ctx, c.bkt, schema.Schema, c.outSchemasForCurrentShard(),
-		fileOpts...,
+	writer, err := newSplitFileWriter(
+		ctx, schema.Schema, c.outSchemasForCurrentShard(), c.writeFunc, fileOpts...,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("unable to create row writer: %s", err)
@@ -148,6 +151,46 @@ func (c *ShardedWriter) outSchemasForCurrentShard() map[string]*schema.TSDBProje
 	return outSchemas
 }
 
+// PipeReaderWriteFunc is called to write serialized data from an io.Reader to a destination.
+// Implementations should write the data and return any error encountered during the write.
+//
+// These will generally be closures to capture the implementation details of the destination writer.
+// Implementations are not expected to close or otherwise manage the lifecycle of the destination writer.
+type PipeReaderWriteFunc func(ctx context.Context, r io.Reader, outFile string) error
+
+func PipeReaderBucketWriteFunc(
+	bkt objstore.Bucket,
+) PipeReaderWriteFunc {
+	return func(ctx context.Context, r io.Reader, outFile string) error {
+		err := bkt.Upload(ctx, outFile, r)
+		return err
+	}
+}
+
+func PipeReaderFileWriteFunc(
+	outDir string,
+) PipeReaderWriteFunc {
+	return func(ctx context.Context, r io.Reader, outFile string) error {
+		outPath := filepath.Join(outDir, outFile)
+		outPathDir := filepath.Dir(outPath)
+		err := os.MkdirAll(outPathDir, os.ModePerm)
+		if err != nil {
+			return errors.Wrap(err, "error creating directory for writing")
+		}
+		fileWriterCloser, err := os.Create(outPath)
+		defer func() { _ = fileWriterCloser.Close() }()
+
+		if err != nil {
+			return errors.Wrap(err, "error opening outFile for writing")
+		}
+		_, err = io.Copy(fileWriterCloser, r)
+		if err != nil {
+			return errors.Wrap(err, "error copying from reader to outFile reader")
+		}
+		return nil
+	}
+}
+
 var _ parquet.RowWriter = &splitPipeFileWriter{}
 
 type fileWriter struct {
@@ -157,17 +200,24 @@ type fileWriter struct {
 	r    io.ReadCloser
 }
 
+// splitPipeFileWriter creates a paired io.Reader and io.Writer from an io.Pipe for each output file.
+// The writer receives the serialized data from parquet.GenericWriter and forwards through the pipe
+// to the reader, which can be read from to write the data to any destination.
 type splitPipeFileWriter struct {
 	fileWriters map[string]*fileWriter
 	errGroup    *errgroup.Group
 }
 
-func newSplitFileWriter(ctx context.Context, bkt objstore.Bucket, inSchema *parquet.Schema,
-	files map[string]*schema.TSDBProjection, options ...parquet.WriterOption,
+func newSplitFileWriter(
+	ctx context.Context,
+	inSchema *parquet.Schema,
+	outSchemas map[string]*schema.TSDBProjection,
+	writeFunc PipeReaderWriteFunc,
+	options ...parquet.WriterOption,
 ) (*splitPipeFileWriter, error) {
 	fileWriters := make(map[string]*fileWriter)
 	errGroup, ctx := errgroup.WithContext(ctx)
-	for file, projection := range files {
+	for file, projection := range outSchemas {
 		conv, err := parquet.Convert(projection.Schema, inSchema)
 		if err != nil {
 			return nil, fmt.Errorf("unable to convert schemas")
@@ -183,7 +233,7 @@ func newSplitFileWriter(ctx context.Context, bkt objstore.Bucket, inSchema *parq
 		}
 		errGroup.Go(func() error {
 			defer func() { _ = r.Close() }()
-			return bkt.Upload(ctx, file, r)
+			return writeFunc(ctx, r, file)
 		})
 	}
 	return &splitPipeFileWriter{
