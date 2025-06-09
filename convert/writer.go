@@ -119,7 +119,7 @@ func (c *ShardedWriter) writeFile(ctx context.Context, schema *schema.TSDBSchema
 		fileOpts = append(fileOpts, parquet.KeyValueMetadata(k, v))
 	}
 
-	writer, err := newSplitFileWriter(ctx, c.bkt, schema.Schema, c.outSchemasForShard(),
+	writer, err := newSplitFileWriter(ctx, c.bkt, schema.Schema, c.outSchemasForCurrentShard(),
 		fileOpts...,
 	)
 	if err != nil {
@@ -139,7 +139,7 @@ func (c *ShardedWriter) writeFile(ctx context.Context, schema *schema.TSDBSchema
 	return n, nil
 }
 
-func (c *ShardedWriter) outSchemasForShard() map[string]*schema.TSDBProjection {
+func (c *ShardedWriter) outSchemasForCurrentShard() map[string]*schema.TSDBProjection {
 	outSchemas := make(map[string]*schema.TSDBProjection, len(c.outSchemaProjections))
 
 	for _, projection := range c.outSchemaProjections {
@@ -302,14 +302,21 @@ func (b *bufferedReader) ReadRows(rows []parquet.Row) (int, error) {
 	}
 
 	current := b.current[b.currentIndex:]
-	i := min(len(current), len(rows))
-	copy(rows[:i], current[:i])
-	b.currentIndex += i
+	numRows := min(len(current), len(rows))
+
+	for i := 0; i < numRows; i++ {
+		// deep copy only to avoid data race;
+		// current may return to the pool while rows is still being read by the caller
+		rows[i] = current[i].Clone()
+	}
+
+	b.currentIndex += numRows
 	if b.currentIndex >= len(b.current) {
+		// already read all rows in current; return it to the pool
 		b.rowPool.Put(b.current[0:cap(b.current)])
 		b.current = nil
 	}
-	return i, nil
+	return numRows, nil
 }
 
 func (b *bufferedReader) Close() {
