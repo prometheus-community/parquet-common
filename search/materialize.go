@@ -41,6 +41,7 @@ type Materializer struct {
 	s           *schema.TSDBSchema
 	d           *schema.PrometheusParquetChunksDecoder
 	partitioner util.Partitioner
+	ctx         context.Context
 
 	colIdx      int
 	concurrency int
@@ -48,7 +49,7 @@ type Materializer struct {
 	dataColToIndex []int
 }
 
-func NewMaterializer(s *schema.TSDBSchema,
+func NewMaterializer(ctx context.Context, s *schema.TSDBSchema,
 	d *schema.PrometheusParquetChunksDecoder,
 	block *storage.ParquetShard,
 	concurrency int,
@@ -70,6 +71,7 @@ func NewMaterializer(s *schema.TSDBSchema,
 	}
 
 	return &Materializer{
+		ctx:            ctx,
 		s:              s,
 		d:              d,
 		b:              block,
@@ -137,13 +139,9 @@ func (m *Materializer) Materialize(ctx context.Context, rgi int, mint, maxt int6
 
 	i := 0
 
-	for chunks, err := range m.materializeChunksIter(ctx, rgi, mint, maxt, rr) {
-		if err != nil {
-			return nil, err
-		}
-
+	for chnks := range m.materializeChunksIter(rgi, mint, maxt, rr) {
 		if i >= len(sLbls) {
-			return nil, errors.New("more chunks rows than labels rows found, this should not happen")
+			return nil, fmt.Errorf("more chunks rows than labels rows found, this should not happen: %d vs %d", i, len(sLbls))
 		}
 
 		s := sLbls[i]
@@ -151,12 +149,10 @@ func (m *Materializer) Materialize(ctx context.Context, rgi int, mint, maxt int6
 
 		series := &iteratorChunksSeries{
 			lbls:   s,
-			chunks: chunks,
+			chunks: chnks,
 		}
-		if len(chunks) == 0 {
-			// If there are no chunks for this series, skip it
-			continue
-		}
+		// TODO: we can't know if the series has chunks or not until we iterate it.
+
 		results = append(results, series)
 		i++
 	}
@@ -468,7 +464,7 @@ func (m *Materializer) materializeColumn(ctx context.Context, file *storage.Parq
 }
 
 // materializeColumnIter returns an iterator that yields values from a parquet column
-func (m *Materializer) materializeColumnIter(ctx context.Context, file *storage.ParquetFile, group parquet.RowGroup, cc parquet.ColumnChunk, rr []RowRange) iter.Seq2[parquet.Value, error] {
+func (m *Materializer) materializeColumnIter(file *storage.ParquetFile, group parquet.RowGroup, cc parquet.ColumnChunk, rr []RowRange) iter.Seq2[parquet.Value, error] {
 	return func(yield func(parquet.Value, error) bool) {
 		if len(rr) == 0 {
 			return
@@ -509,7 +505,7 @@ func (m *Materializer) materializeColumnIter(ctx context.Context, file *storage.
 
 		// TODO: we are losing the concurrency here, is that a trade off or can we do better?
 		for _, p := range pageRanges {
-			pgs, err := file.GetPages(ctx, cc, p.pages...)
+			pgs, err := file.GetPages(m.ctx, cc, p.pages...)
 			if err != nil {
 				yield(parquet.Value{}, errors.Wrap(err, "failed to get pages"))
 				return
@@ -699,7 +695,7 @@ func (c concreteChunksSeries) Iterator(_ chunks.Iterator) chunks.Iterator {
 
 type iteratorChunksSeries struct {
 	lbls   labels.Labels
-	chunks []chunks.Meta
+	chunks iter.Seq2[chunks.Meta, error]
 }
 
 func (i *iteratorChunksSeries) Labels() labels.Labels {
@@ -707,22 +703,69 @@ func (i *iteratorChunksSeries) Labels() labels.Labels {
 }
 
 func (i *iteratorChunksSeries) Iterator(_ chunks.Iterator) chunks.Iterator {
-	return prom_storage.NewListChunkSeriesIterator(i.chunks...)
+	next, stop := iter.Pull2(i.chunks)
+	return &chunksMetaIterator{
+		next: next,
+		stop: stop,
+	}
 }
 
-func (m *Materializer) materializeChunksIter(ctx context.Context, rgi int, mint, maxt int64, rr []RowRange) iter.Seq2[[]chunks.Meta, error] {
+type chunksMetaIterator struct {
+	next func() (chunks.Meta, error, bool)
+	stop func()
+
+	meta chunks.Meta
+	err  error
+}
+
+func (c *chunksMetaIterator) Next() bool {
+	if c.err != nil {
+		return false
+	}
+
+	meta, err, ok := c.next()
+	if err != nil {
+		c.err = errors.Wrap(err, "failed to get next chunk meta")
+		return false
+	}
+	if !ok {
+		return false
+	}
+
+	c.err = nil
+	c.meta = meta
+	return true
+}
+
+func (c *chunksMetaIterator) At() chunks.Meta {
+	if c.err != nil {
+		panic(errors.Wrap(c.err, "cannot get chunk meta when iterator is in error state"))
+	}
+	return c.meta
+}
+
+func (c *chunksMetaIterator) Err() error {
+	if c.err != nil {
+		return errors.Wrap(c.err, "chunks meta iterator error")
+	}
+	return nil
+}
+
+var noChunksIterator = func(yield func(chunks.Meta, error) bool) {
+}
+
+func (m *Materializer) materializeChunksIter(rgi int, mint, maxt int64, rr []RowRange) iter.Seq[iter.Seq2[chunks.Meta, error]] {
 	minDataCol := m.s.DataColumIdx(mint)
 	maxDataCol := m.s.DataColumIdx(maxt)
 	rg := m.b.ChunksFile().RowGroups()[rgi]
 
 	dataColCount := min(maxDataCol, len(m.dataColToIndex)-1) - minDataCol + 1
+	rowCount := totalRows(rr)
 	if dataColCount <= 0 {
-		return func(yield func([]chunks.Meta, error) bool) {
-			for _, r := range rr {
-				for i := 0; i < int(r.count); i++ {
-					if !yield([]chunks.Meta{}, nil) {
-						return
-					}
+		return func(yield func(iter.Seq2[chunks.Meta, error]) bool) {
+			for range rowCount {
+				if !yield(noChunksIterator) {
+					return
 				}
 			}
 		}
@@ -731,47 +774,53 @@ func (m *Materializer) materializeChunksIter(ctx context.Context, rgi int, mint,
 	stoppers := make([]func(), dataColCount)
 	// TODO: instead of this, I could define a util Zip(iter.Seq2[k,v]...) iter.Seq2[iter.Seq2[k,v], error] ?
 	for i := range dataColCount {
-		nexts[i], stoppers[i] = iter.Pull2(m.materializeColumnIter(ctx, m.b.ChunksFile(), rg, rg.ColumnChunks()[m.dataColToIndex[minDataCol+i]], rr))
+		nexts[i], stoppers[i] = iter.Pull2(m.materializeColumnIter(m.b.ChunksFile(), rg, rg.ColumnChunks()[m.dataColToIndex[minDataCol+i]], rr))
 	}
-	return func(yield func([]chunks.Meta, error) bool) {
-		defer func() {
-			for _, stop := range stoppers {
-				stop()
-			}
-		}()
-		for {
-			rowChunks := make([]chunks.Meta, 0, dataColCount) // TODO: At least one per data column, but can we do better?
-			for i := 0; i < dataColCount; i++ {
-				value, err, ok := nexts[i]()
-				if err != nil {
-					yield(nil, errors.Wrap(err, "failed to get next data column value"))
-					return
-				}
-				if !ok {
-					// No more values in this column. All columns should have the
-					// same number of values, so we can stop here.
-					if i != 0 {
-						panic("unexpected" + strconv.Itoa(i))
+	return func(yield func(iter.Seq2[chunks.Meta, error]) bool) {
+		// TODO: where should we stop the iterators?
+		// defer func() {
+		// 	for _, stop := range stoppers {
+		// 		stop()
+		// 	}
+		// }()
+		for range rowCount {
+			iterator := func(yield func(chunks.Meta, error) bool) {
+				for i := 0; i < dataColCount; i++ {
+					value, err, ok := nexts[i]()
+					if err != nil {
+						yield(chunks.Meta{}, errors.Wrap(err, "failed to get next data column value"))
+						return
 					}
-					for j := i + 1; j < dataColCount; j++ {
-						_, err, ok := nexts[j]()
-						if err != nil {
-							panic(errors.Wrap(err, "failed to get next data column value"))
+					if !ok {
+						// No more values in this column. All columns should have the
+						// same number of values, so we can stop here.
+						if i != 0 {
+							panic("unexpected" + strconv.Itoa(i))
 						}
-						if ok {
-							panic("unexpected value in column " + strconv.Itoa(j))
+						for j := i + 1; j < dataColCount; j++ {
+							_, err, ok := nexts[j]()
+							if err != nil {
+								panic(errors.Wrap(err, "failed to get next data column value"))
+							}
+							if ok {
+								panic("unexpected value in column " + strconv.Itoa(j))
+							}
+						}
+						return
+					}
+					chks, err := m.d.Decode(value.ByteArray(), mint, maxt)
+					if err != nil {
+						yield(chunks.Meta{}, errors.Wrap(err, "failed to decode chunks"))
+						return
+					}
+					for i := range chks {
+						if !yield(chks[i], nil) {
+							return
 						}
 					}
-					return
 				}
-				chks, err := m.d.Decode(value.ByteArray(), mint, maxt)
-				if err != nil {
-					yield(nil, errors.Wrap(err, "failed to decode chunks"))
-					return
-				}
-				rowChunks = append(rowChunks, chks...)
 			}
-			if !yield(rowChunks, nil) {
+			if !yield(iterator) {
 				return
 			}
 		}

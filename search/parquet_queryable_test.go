@@ -331,6 +331,9 @@ func queryWithQueryable(t *testing.T, mint, maxt int64, shard *storage.ParquetSh
 	for ss.Next() {
 		found = append(found, ss.At())
 	}
+	if ss.Err() != nil {
+		t.Fatalf("error during query: %v", ss.Err())
+	}
 	return found
 }
 

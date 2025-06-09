@@ -200,7 +200,7 @@ func (p parquetQuerier) queryableShards(ctx context.Context, mint, maxt int64) (
 	}
 	qBlocks := make([]*queryableShard, len(shards))
 	for i, shard := range shards {
-		qb, err := newQueryableShard(p.opts, shard, p.d)
+		qb, err := newQueryableShard(ctx, p.opts, shard, p.d)
 		if err != nil {
 			return nil, err
 		}
@@ -215,12 +215,12 @@ type queryableShard struct {
 	concurrency int
 }
 
-func newQueryableShard(opts *queryableOpts, block *storage.ParquetShard, d *schema.PrometheusParquetChunksDecoder) (*queryableShard, error) {
+func newQueryableShard(ctx context.Context, opts *queryableOpts, block *storage.ParquetShard, d *schema.PrometheusParquetChunksDecoder) (*queryableShard, error) {
 	s, err := block.TSDBSchema()
 	if err != nil {
 		return nil, err
 	}
-	m, err := NewMaterializer(s, d, block, opts.concurrency, opts.pagePartitioningMaxGapSize)
+	m, err := NewMaterializer(ctx, s, d, block, opts.concurrency, opts.pagePartitioningMaxGapSize)
 	if err != nil {
 		return nil, err
 	}
