@@ -730,7 +730,7 @@ func (m *Materializer) materializeChunksIter(ctx context.Context, rgi int, mint,
 	nexts := make([]func() (parquet.Value, error, bool), dataColCount)
 	stoppers := make([]func(), dataColCount)
 	// TODO: instead of this, I could define a util Zip(iter.Seq2[k,v]...) iter.Seq2[iter.Seq2[k,v], error] ?
-	for i := 0; i < dataColCount; i++ {
+	for i := range dataColCount {
 		nexts[i], stoppers[i] = iter.Pull2(m.materializeColumnIter(ctx, m.b.ChunksFile(), rg, rg.ColumnChunks()[m.dataColToIndex[minDataCol+i]], rr))
 	}
 	return func(yield func([]chunks.Meta, error) bool) {
