@@ -33,11 +33,11 @@ import (
 	"github.com/prometheus/prometheus/util/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/thanos-io/objstore"
-	"github.com/thanos-io/objstore/providers/filesystem"
 
 	"github.com/prometheus-community/parquet-common/convert"
 	"github.com/prometheus-community/parquet-common/schema"
 	"github.com/prometheus-community/parquet-common/storage"
+	"github.com/prometheus-community/parquet-common/util/filesystem"
 )
 
 func TestPromQLAcceptance(t *testing.T) {
