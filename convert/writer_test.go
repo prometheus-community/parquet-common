@@ -34,16 +34,32 @@ import (
 )
 
 func TestParquetWriter(t *testing.T) {
-	ctx := context.Background()
-	st := teststorage.New(t)
-	t.Cleanup(func() { _ = st.Close() })
-
 	bkt, err := filesystem.NewBucket(t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = bkt.Close() })
 
-	app := st.Appender(ctx)
+	pipeReaderBucketWriter := NewPipeReaderBucketWriter(bkt)
+	pipeReaderFileWriter := NewPipeReaderFileWriter(t.TempDir())
 
+	testCases := []struct {
+		name             string
+		pipeReaderWriter PipeReaderWriter
+	}{
+		{
+			name:             "bucketWriter",
+			pipeReaderWriter: pipeReaderBucketWriter,
+		},
+		{
+			name:             "fileWriter",
+			pipeReaderWriter: pipeReaderFileWriter,
+		},
+	}
+
+	ctx := context.Background()
+	st := teststorage.New(t)
+	t.Cleanup(func() { _ = st.Close() })
+
+	app := st.Appender(ctx)
 	totalNumberOfSeries := 1_150
 	for i := 0; i != totalNumberOfSeries; i++ {
 		for j := 0; j < 10; j++ {
@@ -54,6 +70,9 @@ func TestParquetWriter(t *testing.T) {
 	}
 
 	require.NoError(t, app.Commit())
+
+	// head block can be re-used between tests cases;
+	// it is not consumed like an iterator and does not need to be closed or reset
 	h := st.Head()
 
 	convertsOpts := DefaultConvertOpts
@@ -64,102 +83,106 @@ func TestParquetWriter(t *testing.T) {
 	convertsOpts.writeBufferSize = 10
 	convertsOpts.sortedLabels = []string{labels.MetricName, "bar"}
 
-	rr, err := NewTsdbRowReader(ctx, h.MinTime(), h.MaxTime(), (time.Minute * 10).Milliseconds(), []Convertible{h}, convertsOpts)
-	require.NoError(t, err)
-	defer func() { _ = rr.Close() }()
+	for _, testCase := range testCases {
+		testName := fmt.Sprintf("pipeReaderWriter=%s", testCase.name)
+		t.Run(testName, func(t *testing.T) {
+			rr, err := NewTsdbRowReader(ctx, h.MinTime(), h.MaxTime(), (time.Minute * 10).Milliseconds(), []Convertible{h}, convertsOpts)
+			require.NoError(t, err)
+			defer func() { _ = rr.Close() }()
 
-	labelsProjection, err := rr.Schema().LabelsProjection()
-	require.NoError(t, err)
-	chunksProjection, err := rr.Schema().ChunksProjection()
-	require.NoError(t, err)
-	outSchemaProjections := []*schema.TSDBProjection{
-		labelsProjection, chunksProjection,
-	}
-
-	pipeReaderWriter := NewPipeReaderBucketWriter(bkt)
-	sw := NewShardedWrite(rr, rr.tsdbSchema, outSchemaProjections, pipeReaderWriter, &convertsOpts)
-	err = sw.Write(ctx)
-	require.NoError(t, err)
-
-	totalShards := int(math.Ceil(float64(totalNumberOfSeries) / float64(convertsOpts.numRowGroups*convertsOpts.rowGroupSize)))
-	remainingRows := totalNumberOfSeries
-	chunksDecoder := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
-	buf := make([]parquet.Row, totalNumberOfSeries)
-	fSeries := make([]labels.Labels, 0, totalNumberOfSeries)
-	fChunks := make([][]chunks.Meta, 0, totalNumberOfSeries)
-
-	for i := 0; i < totalShards; i++ {
-		labelsFileName := schema.LabelsPfileNameForShard(convertsOpts.Name(), i)
-		labelsAttr, err := bkt.Attributes(ctx, labelsFileName)
-		require.NoError(t, err)
-
-		labelsFile, err := parquet.OpenFile(storage.NewBucketReadAt(labelsFileName, bkt).WithContext(context.Background()), labelsAttr.Size)
-		require.NoError(t, err)
-
-		// Inspect row groups
-		for _, group := range labelsFile.RowGroups() {
-			require.LessOrEqual(t, group.NumRows(), int64(convertsOpts.rowGroupSize))
-			for i, sortingCol := range convertsOpts.buildSortingColumns() {
-				require.Equal(t, sortingCol.Path(), group.SortingColumns()[i].Path())
-				require.Equal(t, sortingCol.Descending(), group.SortingColumns()[i].Descending())
-				require.Equal(t, sortingCol.NullsFirst(), group.SortingColumns()[i].NullsFirst())
+			labelsProjection, err := rr.Schema().LabelsProjection()
+			require.NoError(t, err)
+			chunksProjection, err := rr.Schema().ChunksProjection()
+			require.NoError(t, err)
+			outSchemaProjections := []*schema.TSDBProjection{
+				labelsProjection, chunksProjection,
 			}
-		}
 
-		lr := parquet.NewGenericReader[any](labelsFile)
-		n, err := lr.ReadRows(buf)
-		// Read the whole file
-		require.ErrorIs(t, err, io.EOF)
-		require.Equal(t, math.Min(float64(remainingRows), float64(convertsOpts.numRowGroups*convertsOpts.rowGroupSize)), float64(n))
+			sw := NewShardedWrite(rr, rr.tsdbSchema, outSchemaProjections, testCase.pipeReaderWriter, &convertsOpts)
+			err = sw.Write(ctx)
+			require.NoError(t, err)
 
-		series, chunks, err := rowToSeries(t, labelsFile.Schema(), chunksDecoder, buf[:n])
-		require.NoError(t, err)
-		require.Len(t, series, n)
-		require.Len(t, chunks, n)
-		fSeries = append(fSeries, series...)
-		// Should not have any chunk data on the labels file
-		for _, chunk := range chunks {
-			require.Len(t, chunk, 0)
-		}
+			totalShards := int(math.Ceil(float64(totalNumberOfSeries) / float64(convertsOpts.numRowGroups*convertsOpts.rowGroupSize)))
+			remainingRows := totalNumberOfSeries
+			chunksDecoder := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
+			buf := make([]parquet.Row, totalNumberOfSeries)
+			fSeries := make([]labels.Labels, 0, totalNumberOfSeries)
+			fChunks := make([][]chunks.Meta, 0, totalNumberOfSeries)
 
-		chunksFileName := schema.ChunksPfileNameForShard(convertsOpts.Name(), i)
-		chunksAttr, err := bkt.Attributes(ctx, chunksFileName)
-		require.NoError(t, err)
+			for i := 0; i < totalShards; i++ {
+				labelsFileName := schema.LabelsPfileNameForShard(convertsOpts.Name(), i)
+				labelsAttr, err := bkt.Attributes(ctx, labelsFileName)
+				require.NoError(t, err)
 
-		chunksFile, err := parquet.OpenFile(storage.NewBucketReadAt(chunksFileName, bkt).WithContext(context.Background()), chunksAttr.Size)
-		require.NoError(t, err)
+				labelsFile, err := parquet.OpenFile(storage.NewBucketReadAt(labelsFileName, bkt).WithContext(context.Background()), labelsAttr.Size)
+				require.NoError(t, err)
 
-		// should have the same number of row groups
-		require.Equal(t, len(chunksFile.RowGroups()), len(chunksFile.RowGroups()))
+				// Inspect row groups
+				for _, group := range labelsFile.RowGroups() {
+					require.LessOrEqual(t, group.NumRows(), int64(convertsOpts.rowGroupSize))
+					for i, sortingCol := range convertsOpts.buildSortingColumns() {
+						require.Equal(t, sortingCol.Path(), group.SortingColumns()[i].Path())
+						require.Equal(t, sortingCol.Descending(), group.SortingColumns()[i].Descending())
+						require.Equal(t, sortingCol.NullsFirst(), group.SortingColumns()[i].NullsFirst())
+					}
+				}
 
-		cr := parquet.NewGenericReader[any](chunksFile)
-		n, err = cr.ReadRows(buf)
-		// Read the whole file
-		require.ErrorIs(t, err, io.EOF)
-		require.Equal(t, math.Min(float64(remainingRows), float64(convertsOpts.numRowGroups*convertsOpts.rowGroupSize)), float64(n))
+				lr := parquet.NewGenericReader[any](labelsFile)
+				n, err := lr.ReadRows(buf)
+				// Read the whole file
+				require.ErrorIs(t, err, io.EOF)
+				require.Equal(t, math.Min(float64(remainingRows), float64(convertsOpts.numRowGroups*convertsOpts.rowGroupSize)), float64(n))
 
-		series, chunks, err = rowToSeries(t, chunksFile.Schema(), chunksDecoder, buf[:n])
-		require.NoError(t, err)
-		require.Len(t, series, n)
-		require.Len(t, chunks, n)
-		fChunks = append(fChunks, chunks...)
+				series, chunks, err := rowToSeries(t, labelsFile.Schema(), chunksDecoder, buf[:n])
+				require.NoError(t, err)
+				require.Len(t, series, n)
+				require.Len(t, chunks, n)
+				fSeries = append(fSeries, series...)
+				// Should not have any chunk data on the labels file
+				for _, chunk := range chunks {
+					require.Len(t, chunk, 0)
+				}
 
-		// Should not have any label
-		for _, l := range series {
-			require.Len(t, l, 0)
-		}
+				chunksFileName := schema.ChunksPfileNameForShard(convertsOpts.Name(), i)
+				chunksAttr, err := bkt.Attributes(ctx, chunksFileName)
+				require.NoError(t, err)
 
-		remainingRows -= n
-	}
-	require.Len(t, fSeries, totalNumberOfSeries)
-	require.Len(t, fChunks, totalNumberOfSeries)
+				chunksFile, err := parquet.OpenFile(storage.NewBucketReadAt(chunksFileName, bkt).WithContext(context.Background()), chunksAttr.Size)
+				require.NoError(t, err)
 
-	// make sure the series are sorted
-	for i := 0; i < len(fSeries)-1; i++ {
-		require.LessOrEqual(t, fSeries[i].Get(labels.MetricName), fSeries[i+1].Get(labels.MetricName))
-		if fSeries[i].Get(labels.MetricName) == fSeries[i+1].Get(labels.MetricName) {
-			require.LessOrEqual(t, fSeries[i].Get("bar"), fSeries[i+1].Get("bar"))
-		}
+				// should have the same number of row groups
+				require.Equal(t, len(chunksFile.RowGroups()), len(chunksFile.RowGroups()))
+
+				cr := parquet.NewGenericReader[any](chunksFile)
+				n, err = cr.ReadRows(buf)
+				// Read the whole file
+				require.ErrorIs(t, err, io.EOF)
+				require.Equal(t, math.Min(float64(remainingRows), float64(convertsOpts.numRowGroups*convertsOpts.rowGroupSize)), float64(n))
+
+				series, chunks, err = rowToSeries(t, chunksFile.Schema(), chunksDecoder, buf[:n])
+				require.NoError(t, err)
+				require.Len(t, series, n)
+				require.Len(t, chunks, n)
+				fChunks = append(fChunks, chunks...)
+
+				// Should not have any label
+				for _, l := range series {
+					require.Len(t, l, 0)
+				}
+
+				remainingRows -= n
+			}
+			require.Len(t, fSeries, totalNumberOfSeries)
+			require.Len(t, fChunks, totalNumberOfSeries)
+
+			// make sure the series are sorted
+			for i := 0; i < len(fSeries)-1; i++ {
+				require.LessOrEqual(t, fSeries[i].Get(labels.MetricName), fSeries[i+1].Get(labels.MetricName))
+				if fSeries[i].Get(labels.MetricName) == fSeries[i+1].Get(labels.MetricName) {
+					require.LessOrEqual(t, fSeries[i].Get("bar"), fSeries[i+1].Get("bar"))
+				}
+			}
+		})
 	}
 }
 
