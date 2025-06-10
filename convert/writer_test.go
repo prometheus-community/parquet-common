@@ -70,10 +70,7 @@ func TestParquetWriter(t *testing.T) {
 	}
 
 	require.NoError(t, app.Commit())
-
-	// head block can be re-used between tests cases;
-	// it is not consumed like an iterator and does not need to be closed or reset
-	h := st.Head()
+	h := st.Head() // head block can be re-used between test cases
 
 	convertsOpts := DefaultConvertOpts
 
