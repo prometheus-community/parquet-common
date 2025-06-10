@@ -71,10 +71,6 @@ type convertOpts struct {
 	maxSamplesPerChunk int
 }
 
-func (cfg convertOpts) Name() string {
-	return cfg.name
-}
-
 func (cfg convertOpts) buildBloomfilterColumns() []parquet.BloomFilterColumn {
 	cols := make([]parquet.BloomFilterColumn, 0, len(cfg.bloomfilterLabels))
 	for _, label := range cfg.bloomfilterLabels {

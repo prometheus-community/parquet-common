@@ -110,7 +110,7 @@ func TestParquetWriter(t *testing.T) {
 			fChunks := make([][]chunks.Meta, 0, totalNumberOfSeries)
 
 			for i := 0; i < totalShards; i++ {
-				labelsFileName := schema.LabelsPfileNameForShard(convertsOpts.Name(), i)
+				labelsFileName := schema.LabelsPfileNameForShard(convertsOpts.name, i)
 				labelsAttr, err := bkt.Attributes(ctx, labelsFileName)
 				require.NoError(t, err)
 
@@ -143,7 +143,7 @@ func TestParquetWriter(t *testing.T) {
 					require.Len(t, chunk, 0)
 				}
 
-				chunksFileName := schema.ChunksPfileNameForShard(convertsOpts.Name(), i)
+				chunksFileName := schema.ChunksPfileNameForShard(convertsOpts.name, i)
 				chunksAttr, err := bkt.Attributes(ctx, chunksFileName)
 				require.NoError(t, err)
 

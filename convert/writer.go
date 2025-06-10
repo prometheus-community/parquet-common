@@ -55,7 +55,7 @@ func NewShardedWrite(
 	opts *convertOpts,
 ) *ShardedWriter {
 	return &ShardedWriter{
-		name:                 opts.Name(),
+		name:                 opts.name,
 		rowGroupSize:         opts.rowGroupSize,
 		numRowGroups:         opts.numRowGroups,
 		currentShard:         0,

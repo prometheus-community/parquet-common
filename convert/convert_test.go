@@ -104,7 +104,7 @@ func Test_Convert_TSDB(t *testing.T) {
 
 			bucketOpener := storage.NewParquetBucketOpener(bkt)
 			shard, err := storage.NewParquetShardSyncOpener(
-				ctx, DefaultConvertOpts.Name(), bucketOpener, bucketOpener, 0,
+				ctx, DefaultConvertOpts.name, bucketOpener, bucketOpener, 0,
 			)
 			require.NoError(t, err)
 
@@ -185,7 +185,7 @@ func Test_CreateParquetWithReducedTimestampSamples(t *testing.T) {
 
 	bucketOpener := storage.NewParquetBucketOpener(bkt)
 	shard, err := storage.NewParquetShardSyncOpener(
-		ctx, DefaultConvertOpts.Name(), bucketOpener, bucketOpener, 0,
+		ctx, DefaultConvertOpts.name, bucketOpener, bucketOpener, 0,
 	)
 	require.NoError(t, err)
 
@@ -275,7 +275,7 @@ func Test_BlockHasOnlySomeSeriesInConvertTime(t *testing.T) {
 
 	bucketOpener := storage.NewParquetBucketOpener(bkt)
 	shard, err := storage.NewParquetShardSyncOpener(
-		ctx, DefaultConvertOpts.Name(), bucketOpener, bucketOpener, 0,
+		ctx, DefaultConvertOpts.name, bucketOpener, bucketOpener, 0,
 	)
 	require.NoError(t, err)
 
@@ -353,7 +353,7 @@ func Test_SortedLabels(t *testing.T) {
 
 	bucketOpener := storage.NewParquetBucketOpener(bkt)
 	shard, err := storage.NewParquetShardSyncOpener(
-		ctx, DefaultConvertOpts.Name(), bucketOpener, bucketOpener, 0,
+		ctx, DefaultConvertOpts.name, bucketOpener, bucketOpener, 0,
 	)
 	require.NoError(t, err)
 
