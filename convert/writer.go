@@ -152,7 +152,7 @@ func (c *ShardedWriter) outSchemasForCurrentShard() map[string]*schema.TSDBProje
 
 // PipeReaderWriter is used to write serialized data from an io.Reader to the final output destination.
 type PipeReaderWriter interface {
-	// Write writes data to the output path and return any error encountered during the write.
+	// Write writes data to the output path and returns any error encountered during the write.
 	Write(ctx context.Context, r io.Reader, outPath string) error
 }
 
@@ -180,7 +180,7 @@ func NewPipeReaderFileWriter(outDir string) *PipeReaderFileWriter {
 	}
 }
 
-func (w *PipeReaderFileWriter) Write(ctx context.Context, r io.Reader, outPath string) error {
+func (w *PipeReaderFileWriter) Write(_ context.Context, r io.Reader, outPath string) error {
 	// outPath may include parent path segments in addition to the filename;
 	// join with w.outDir to get the full path for creating any necessary parent directories.
 	outPath = filepath.Join(w.outDir, outPath)
@@ -189,15 +189,16 @@ func (w *PipeReaderFileWriter) Write(ctx context.Context, r io.Reader, outPath s
 	if err != nil {
 		return errors.Wrap(err, "error creating directory for writing")
 	}
+
 	fileWriterCloser, err := os.Create(outPath)
+	if err != nil {
+		return errors.Wrap(err, "error opening file for writing")
+	}
 	defer func() { _ = fileWriterCloser.Close() }()
 
-	if err != nil {
-		return errors.Wrap(err, "error opening outPath for writing")
-	}
 	_, err = io.Copy(fileWriterCloser, r)
 	if err != nil {
-		return errors.Wrap(err, "error copying from reader to outPath reader")
+		return errors.Wrap(err, "error copying from reader to file writer")
 	}
 	return nil
 }
@@ -366,7 +367,7 @@ func (b *bufferedReader) ReadRows(rows []parquet.Row) (int, error) {
 	numRows := min(len(current), len(rows))
 
 	for i := 0; i < numRows; i++ {
-		// deep copy only to avoid data race;
+		// deep copy slice contents to avoid data race;
 		// current may return to the pool while rows is still being read by the caller
 		rows[i] = current[i].Clone()
 	}
