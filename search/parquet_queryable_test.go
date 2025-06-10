@@ -540,7 +540,7 @@ func convertToParquetForBench(tb testing.TB, ctx context.Context, bkt objstore.B
 	}
 
 	bucketOpener := storage.NewParquetBucketOpener(bkt)
-	shard, err := storage.NewParquetShardSyncOpener(
+	shard, err := storage.NewParquetShardOpener(
 		ctx, "shard", bucketOpener, bucketOpener, 0,
 	)
 	if err != nil {

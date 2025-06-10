@@ -164,20 +164,20 @@ func (o *ParquetLocalFileOpener) Open(ctx context.Context, name string, opts ...
 	return OpenFromFile(ctx, name, opts...)
 }
 
-type ParquetShardSyncOpener struct {
+type ParquetShardOpener struct {
 	labelsFile, chunksFile *ParquetFile
 	schema                 *schema.TSDBSchema
 	o                      sync.Once
 }
 
-func NewParquetShardSyncOpener(
+func NewParquetShardOpener(
 	ctx context.Context,
 	name string,
 	labelsFileOpener ParquetOpener,
 	chunksFileOpener ParquetOpener,
 	shard int,
 	opts ...ShardOption,
-) (*ParquetShardSyncOpener, error) {
+) (*ParquetShardOpener, error) {
 	labelsFileName := schema.LabelsPfileNameForShard(name, shard)
 	chunksFileName := schema.ChunksPfileNameForShard(name, shard)
 
@@ -199,21 +199,21 @@ func NewParquetShardSyncOpener(
 		return nil, err
 	}
 
-	return &ParquetShardSyncOpener{
+	return &ParquetShardOpener{
 		labelsFile: labelsFile,
 		chunksFile: chunksFile,
 	}, nil
 }
 
-func (s *ParquetShardSyncOpener) LabelsFile() *ParquetFile {
+func (s *ParquetShardOpener) LabelsFile() *ParquetFile {
 	return s.labelsFile
 }
 
-func (s *ParquetShardSyncOpener) ChunksFile() *ParquetFile {
+func (s *ParquetShardOpener) ChunksFile() *ParquetFile {
 	return s.chunksFile
 }
 
-func (s *ParquetShardSyncOpener) TSDBSchema() (*schema.TSDBSchema, error) {
+func (s *ParquetShardOpener) TSDBSchema() (*schema.TSDBSchema, error) {
 	var err error
 	s.o.Do(func() {
 		s.schema, err = schema.FromLabelsFile(s.labelsFile.File)
@@ -221,7 +221,7 @@ func (s *ParquetShardSyncOpener) TSDBSchema() (*schema.TSDBSchema, error) {
 	return s.schema, err
 }
 
-func (s *ParquetShardSyncOpener) Close() error {
+func (s *ParquetShardOpener) Close() error {
 	err := &multierror.Error{}
 	err = multierror.Append(err, s.labelsFile.Close())
 	err = multierror.Append(err, s.chunksFile.Close())
