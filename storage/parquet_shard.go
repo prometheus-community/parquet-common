@@ -16,16 +16,13 @@ package storage
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"sync"
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/parquet-go/parquet-go"
-	"github.com/pkg/errors"
 	"github.com/thanos-io/objstore"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/prometheus-community/parquet-common/convert"
 	"github.com/prometheus-community/parquet-common/schema"
 )
 
@@ -165,54 +162,6 @@ func NewParquetLocalFileOpener() *ParquetLocalFileOpener {
 
 func (o *ParquetLocalFileOpener) Open(ctx context.Context, name string, opts ...ShardOption) (*ParquetFile, error) {
 	return OpenFromFile(ctx, name, opts...)
-}
-
-type ParquetBucketDownloadLabelsFileOpener struct {
-	bucketFileOpener *ParquetBucketOpener
-	shard            int
-	outDir           string
-}
-
-func NewParquetBucketDownloadLabelsFileOpener(
-	bucketOpener *ParquetBucketOpener,
-	shard int,
-	outDir string,
-) *ParquetBucketDownloadLabelsFileOpener {
-	return &ParquetBucketDownloadLabelsFileOpener{
-		bucketFileOpener: bucketOpener,
-		shard:            shard,
-		outDir:           outDir,
-	}
-}
-
-func (o *ParquetBucketDownloadLabelsFileOpener) Open(ctx context.Context, name string, opts ...ShardOption) (*ParquetFile, error) {
-	labelsFileName := schema.LabelsPfileNameForShard(name, o.shard)
-	bucketLabelsFile, err := o.bucketFileOpener.Open(ctx, labelsFileName, opts...)
-	if err != nil {
-		return nil, errors.Wrap(err, "error opening bucket labels parquet file")
-	}
-	bucketLabelsFileReader := parquet.NewGenericReader[any](bucketLabelsFile)
-	labelsFileSchema, err := schema.FromLabelsFile(bucketLabelsFile.File)
-	if err != nil {
-		return nil, errors.Wrap(err, "error getting schema from bucket labels parquet file")
-	}
-	labelsProjection, err := labelsFileSchema.LabelsProjection()
-	if err != nil {
-		return nil, errors.Wrap(err, "error getting schema projection from bucket parquet labels file schema")
-	}
-	outSchemaProjections := []*schema.TSDBProjection{labelsProjection}
-
-	pipeReaderFileWriter := convert.NewPipeReaderFileWriter(o.outDir)
-	shardedBucketToFileWriter := convert.NewShardedWrite(
-		bucketLabelsFileReader, labelsFileSchema, outSchemaProjections, pipeReaderFileWriter, &convert.DefaultConvertOpts,
-	)
-	err = shardedBucketToFileWriter.Write(ctx)
-	if err != nil {
-		return nil, errors.Wrap(err, "error writing bucket labels parquet file to local filesystem")
-	}
-
-	filePath := filepath.Join(o.outDir, labelsFileName)
-	return NewParquetLocalFileOpener().Open(ctx, filePath, opts...)
 }
 
 type ParquetShardSyncOpener struct {

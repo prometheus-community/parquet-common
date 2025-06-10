@@ -149,14 +149,6 @@ func TestMaterializeE2E(t *testing.T) {
 	})
 }
 
-type testConfig struct {
-	totalMetricNames     int
-	metricsPerMetricName int
-	numberOfLabels       int
-	randomLabels         int
-	numberOfSamples      int
-}
-
 func convertToParquet(t *testing.T, ctx context.Context, bkt *bucket, data util.TestData, h convert.Convertible, opts ...storage.ShardOption) storage.ParquetShard {
 	colDuration := time.Hour
 	shards, err := convert.ConvertTSDBBlock(
