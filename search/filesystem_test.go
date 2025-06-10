@@ -10,24 +10,27 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// Provenance-includes-location: https://github.com/thanos-io/objstore/blob/71fdd5acb3633b26f88c75dd6768fdc2f9ec246b/providers/filesystem/filesystem.go
+// Provenance-includes-location: https://github.com/thanos-io/objstore/blob/71fdd5acb3633b26f88c75dd6768fdc2f9ec246b/providers/filesystem/filesystem_test.go
 // Provenance-includes-license: Apache-2.0
 // Provenance-includes-copyright: The Thanos Authors.
 
-package filesystem
+package search
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"testing"
+	"time"
 
 	"github.com/efficientgo/core/errcapture"
+	"github.com/efficientgo/core/testutil"
 	"github.com/pkg/errors"
-	"gopkg.in/yaml.v2"
-
 	"github.com/thanos-io/objstore"
 )
 
@@ -42,46 +45,34 @@ type cachedFileInfo struct {
 	size int64
 }
 
-// Bucket implements the objstore.Bucket interfaces against filesystem that binary runs on.
-// Methods from Bucket interface are thread-safe. Objects are assumed to be immutable.
+// bucket implements the objstore.Bucket interfaces against filesystem that binary runs on.
+// Methods from bucket interface are thread-safe. Objects are assumed to be immutable.
 // NOTE: It does not follow symbolic links.
-type Bucket struct {
+type bucket struct {
 	rootDir   string
 	fileCache map[string]*cachedFileInfo
 	mutex     sync.RWMutex
 }
 
-// NewBucketFromConfig returns a new filesystem.Bucket from config.
-func NewBucketFromConfig(conf []byte) (*Bucket, error) {
-	var c Config
-	if err := yaml.Unmarshal(conf, &c); err != nil {
-		return nil, err
-	}
-	if c.Directory == "" {
-		return nil, errors.New("missing directory for filesystem bucket")
-	}
-	return NewBucket(c.Directory)
-}
-
-// NewBucket returns a new filesystem.Bucket.
-func NewBucket(rootDir string) (*Bucket, error) {
+// newBucket returns a new filesystem.Bucket.
+func newBucket(rootDir string) (*bucket, error) {
 	absDir, err := filepath.Abs(rootDir)
 	if err != nil {
 		return nil, err
 	}
-	return &Bucket{
+	return &bucket{
 		rootDir:   absDir,
 		fileCache: make(map[string]*cachedFileInfo),
 	}, nil
 }
 
-func (b *Bucket) Provider() objstore.ObjProvider { return objstore.FILESYSTEM }
+func (b *bucket) Provider() objstore.ObjProvider { return objstore.FILESYSTEM }
 
-func (b *Bucket) SupportedIterOptions() []objstore.IterOptionType {
+func (b *bucket) SupportedIterOptions() []objstore.IterOptionType {
 	return []objstore.IterOptionType{objstore.Recursive, objstore.UpdatedAt}
 }
 
-func (b *Bucket) IterWithAttributes(ctx context.Context, dir string, f func(attrs objstore.IterObjectAttributes) error, options ...objstore.IterOption) error {
+func (b *bucket) IterWithAttributes(ctx context.Context, dir string, f func(attrs objstore.IterObjectAttributes) error, options ...objstore.IterOption) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -155,7 +146,7 @@ func (b *Bucket) IterWithAttributes(ctx context.Context, dir string, f func(attr
 
 // Iter calls f for each entry in the given directory. The argument to f is the full
 // object name including the prefix of the inspected directory.
-func (b *Bucket) Iter(ctx context.Context, dir string, f func(string) error, opts ...objstore.IterOption) error {
+func (b *bucket) Iter(ctx context.Context, dir string, f func(string) error, opts ...objstore.IterOption) error {
 	// Only include recursive option since attributes are not used in this method.
 	var filteredOpts []objstore.IterOption
 	for _, opt := range opts {
@@ -171,7 +162,7 @@ func (b *Bucket) Iter(ctx context.Context, dir string, f func(string) error, opt
 }
 
 // Get returns a reader for the given object name.
-func (b *Bucket) Get(ctx context.Context, name string) (io.ReadCloser, error) {
+func (b *bucket) Get(ctx context.Context, name string) (io.ReadCloser, error) {
 	return b.GetRange(ctx, name, 0, -1)
 }
 
@@ -209,7 +200,7 @@ func (r *readAtReader) Close() error {
 }
 
 // Attributes returns information about the specified object.
-func (b *Bucket) Attributes(ctx context.Context, name string) (objstore.ObjectAttributes, error) {
+func (b *bucket) Attributes(ctx context.Context, name string) (objstore.ObjectAttributes, error) {
 	if ctx.Err() != nil {
 		return objstore.ObjectAttributes{}, ctx.Err()
 	}
@@ -247,7 +238,7 @@ func (b *Bucket) Attributes(ctx context.Context, name string) (objstore.ObjectAt
 }
 
 // GetRange returns a new range reader for the given object name and range.
-func (b *Bucket) GetRange(ctx context.Context, name string, off, length int64) (io.ReadCloser, error) {
+func (b *bucket) GetRange(ctx context.Context, name string, off, length int64) (io.ReadCloser, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -326,7 +317,7 @@ func (b *Bucket) GetRange(ctx context.Context, name string, off, length int64) (
 }
 
 // Exists checks if the given directory exists in memory.
-func (b *Bucket) Exists(ctx context.Context, name string) (bool, error) {
+func (b *bucket) Exists(ctx context.Context, name string) (bool, error) {
 	if ctx.Err() != nil {
 		return false, ctx.Err()
 	}
@@ -342,7 +333,7 @@ func (b *Bucket) Exists(ctx context.Context, name string) (bool, error) {
 }
 
 // Upload writes the file specified in src to into the memory.
-func (b *Bucket) Upload(ctx context.Context, name string, r io.Reader, _ ...objstore.ObjectUploadOption) (err error) {
+func (b *bucket) Upload(ctx context.Context, name string, r io.Reader, _ ...objstore.ObjectUploadOption) (err error) {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -382,7 +373,7 @@ func isDirEmpty(name string) (ok bool, err error) {
 }
 
 // Delete removes all data prefixed with the dir.
-func (b *Bucket) Delete(ctx context.Context, name string) error {
+func (b *bucket) Delete(ctx context.Context, name string) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -405,16 +396,16 @@ func (b *Bucket) Delete(ctx context.Context, name string) error {
 }
 
 // IsObjNotFoundErr returns true if error means that object is not found. Relevant to Get operations.
-func (b *Bucket) IsObjNotFoundErr(err error) bool {
+func (b *bucket) IsObjNotFoundErr(err error) bool {
 	return os.IsNotExist(errors.Cause(err))
 }
 
 // IsAccessDeniedErr returns true if access to object is denied.
-func (b *Bucket) IsAccessDeniedErr(_ error) bool {
+func (b *bucket) IsAccessDeniedErr(_ error) bool {
 	return false
 }
 
-func (b *Bucket) Close() error {
+func (b *bucket) Close() error {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
@@ -435,6 +426,179 @@ func (b *Bucket) Close() error {
 }
 
 // Name returns the bucket name.
-func (b *Bucket) Name() string {
+func (b *bucket) Name() string {
 	return fmt.Sprintf("fs: %s", b.rootDir)
+}
+
+func TestDelete_EmptyDirDeletionRaceCondition(t *testing.T) {
+	const runs = 1000
+
+	ctx := context.Background()
+
+	for r := 0; r < runs; r++ {
+		b, err := newBucket(t.TempDir())
+		testutil.Ok(t, err)
+
+		// Upload 2 objects in a subfolder.
+		testutil.Ok(t, b.Upload(ctx, "subfolder/first", strings.NewReader("first")))
+		testutil.Ok(t, b.Upload(ctx, "subfolder/second", strings.NewReader("second")))
+
+		// Prepare goroutines to concurrently delete the 2 objects (each one deletes a different object)
+		start := make(chan struct{})
+		group := sync.WaitGroup{}
+		group.Add(2)
+
+		for _, object := range []string{"first", "second"} {
+			go func(object string) {
+				defer group.Done()
+
+				<-start
+				testutil.Ok(t, b.Delete(ctx, "subfolder/"+object))
+			}(object)
+		}
+
+		// Go!
+		close(start)
+		group.Wait()
+	}
+}
+
+func TestIter_CancelledContext(t *testing.T) {
+	b, err := newBucket(t.TempDir())
+	testutil.Ok(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err = b.Iter(ctx, "", func(s string) error {
+		return nil
+	})
+
+	testutil.NotOk(t, err)
+	testutil.Equals(t, context.Canceled, err)
+}
+
+func TestIterWithAttributes(t *testing.T) {
+	dir := t.TempDir()
+	f, err := os.CreateTemp(dir, "test")
+	testutil.Ok(t, err)
+	t.Cleanup(func() { _ = f.Close() })
+
+	stat, err := f.Stat()
+	testutil.Ok(t, err)
+
+	cases := []struct {
+		name              string
+		opts              []objstore.IterOption
+		expectedUpdatedAt time.Time
+	}{
+		{
+			name: "no options",
+			opts: nil,
+		},
+		{
+			name: "with updated at",
+			opts: []objstore.IterOption{
+				objstore.WithUpdatedAt(),
+			},
+			expectedUpdatedAt: stat.ModTime(),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := newBucket(dir)
+			testutil.Ok(t, err)
+
+			var attrs objstore.IterObjectAttributes
+
+			ctx := context.Background()
+			err = b.IterWithAttributes(ctx, "", func(objectAttrs objstore.IterObjectAttributes) error {
+				attrs = objectAttrs
+				return nil
+			}, tc.opts...)
+
+			testutil.Ok(t, err)
+
+			lastModified, ok := attrs.LastModified()
+			if zero := tc.expectedUpdatedAt.IsZero(); zero {
+				testutil.Equals(t, false, ok)
+			} else {
+				testutil.Equals(t, true, ok)
+				testutil.Equals(t, tc.expectedUpdatedAt, lastModified)
+			}
+		})
+	}
+}
+
+func TestGet_CancelledContext(t *testing.T) {
+	b, err := newBucket(t.TempDir())
+	testutil.Ok(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = b.Get(ctx, "some-file")
+	testutil.NotOk(t, err)
+	testutil.Equals(t, context.Canceled, err)
+}
+
+func TestAttributes_CancelledContext(t *testing.T) {
+	b, err := newBucket(t.TempDir())
+	testutil.Ok(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = b.Attributes(ctx, "some-file")
+	testutil.NotOk(t, err)
+	testutil.Equals(t, context.Canceled, err)
+}
+
+func TestGetRange_CancelledContext(t *testing.T) {
+	b, err := newBucket(t.TempDir())
+	testutil.Ok(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = b.GetRange(ctx, "some-file", 0, 100)
+	testutil.NotOk(t, err)
+	testutil.Equals(t, context.Canceled, err)
+}
+
+func TestExists_CancelledContext(t *testing.T) {
+	b, err := newBucket(t.TempDir())
+	testutil.Ok(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = b.Exists(ctx, "some-file")
+	testutil.NotOk(t, err)
+	testutil.Equals(t, context.Canceled, err)
+}
+
+func TestUpload_CancelledContext(t *testing.T) {
+	b, err := newBucket(t.TempDir())
+	testutil.Ok(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err = b.Upload(ctx, "some-file", bytes.NewReader([]byte("file content")))
+	testutil.NotOk(t, err)
+	testutil.Equals(t, context.Canceled, err)
+}
+
+func TestDelete_CancelledContext(t *testing.T) {
+	b, err := newBucket(t.TempDir())
+	testutil.Ok(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err = b.Delete(ctx, "some-file")
+	testutil.NotOk(t, err)
+	testutil.Equals(t, context.Canceled, err)
 }

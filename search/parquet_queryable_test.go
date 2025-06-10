@@ -37,7 +37,6 @@ import (
 	"github.com/prometheus-community/parquet-common/convert"
 	"github.com/prometheus-community/parquet-common/schema"
 	"github.com/prometheus-community/parquet-common/storage"
-	"github.com/prometheus-community/parquet-common/util/filesystem"
 )
 
 func TestPromQLAcceptance(t *testing.T) {
@@ -92,7 +91,7 @@ func (st *acceptanceTestStorage) Querier(from, to int64) (prom_storage.Querier, 
 		// parquet-go panics when writing an empty parquet file
 		return st.st.Querier(from, to)
 	}
-	bkt, err := filesystem.NewBucket(st.t.TempDir())
+	bkt, err := newBucket(st.t.TempDir())
 	if err != nil {
 		st.t.Fatalf("unable to create bucket: %s", err)
 	}
@@ -147,7 +146,7 @@ func TestQueryable(t *testing.T) {
 	ctx := context.Background()
 	t.Cleanup(func() { _ = st.Close() })
 
-	bkt, err := filesystem.NewBucket(t.TempDir())
+	bkt, err := newBucket(t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = bkt.Close() })
 
@@ -431,7 +430,7 @@ func BenchmarkSelect(b *testing.B) {
 
 	st := teststorage.New(b)
 	b.Cleanup(func() { _ = st.Close() })
-	bkt, err := filesystem.NewBucket(b.TempDir())
+	bkt, err := newBucket(b.TempDir())
 	if err != nil {
 		b.Fatal("error creating bucket: ", err)
 	}

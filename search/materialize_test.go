@@ -30,7 +30,6 @@ import (
 	"github.com/prometheus-community/parquet-common/convert"
 	"github.com/prometheus-community/parquet-common/schema"
 	"github.com/prometheus-community/parquet-common/storage"
-	"github.com/prometheus-community/parquet-common/util/filesystem"
 )
 
 func TestMaterializeE2E(t *testing.T) {
@@ -38,7 +37,7 @@ func TestMaterializeE2E(t *testing.T) {
 	ctx := context.Background()
 	t.Cleanup(func() { _ = st.Close() })
 
-	bkt, err := filesystem.NewBucket(t.TempDir())
+	bkt, err := newBucket(t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = bkt.Close() })
 
@@ -213,7 +212,7 @@ func generateTestData(t *testing.T, st *teststorage.TestStorage, ctx context.Con
 	}
 }
 
-func convertToParquet(t *testing.T, ctx context.Context, bkt *filesystem.Bucket, data testData, h convert.Convertible, opts ...storage.ShardOption) *storage.ParquetShard {
+func convertToParquet(t *testing.T, ctx context.Context, bkt *bucket, data testData, h convert.Convertible, opts ...storage.ShardOption) *storage.ParquetShard {
 	colDuration := time.Hour
 	shards, err := convert.ConvertTSDBBlock(
 		ctx,
