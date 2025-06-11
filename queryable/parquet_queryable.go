@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package search
+package queryable
 
 import (
 	"context"
@@ -26,6 +26,7 @@ import (
 
 	"github.com/prometheus-community/parquet-common/convert"
 	"github.com/prometheus-community/parquet-common/schema"
+	"github.com/prometheus-community/parquet-common/search"
 	"github.com/prometheus-community/parquet-common/storage"
 	"github.com/prometheus-community/parquet-common/util"
 )
@@ -211,7 +212,7 @@ func (p parquetQuerier) queryableShards(ctx context.Context, mint, maxt int64) (
 
 type queryableShard struct {
 	shard       storage.ParquetShard
-	m           *Materializer
+	m           *search.Materializer
 	concurrency int
 }
 
@@ -220,7 +221,7 @@ func newQueryableShard(opts *queryableOpts, block storage.ParquetShard, d *schem
 	if err != nil {
 		return nil, err
 	}
-	m, err := NewMaterializer(s, d, block, opts.concurrency, opts.pagePartitioningMaxGapSize)
+	m, err := search.NewMaterializer(s, d, block, opts.concurrency, opts.pagePartitioningMaxGapSize)
 	if err != nil {
 		return nil, err
 	}
@@ -241,15 +242,15 @@ func (b queryableShard) Query(ctx context.Context, sorted bool, mint, maxt int64
 
 	for i, group := range b.shard.LabelsFile().RowGroups() {
 		errGroup.Go(func() error {
-			cs, err := MatchersToConstraint(matchers...)
+			cs, err := search.MatchersToConstraint(matchers...)
 			if err != nil {
 				return err
 			}
-			err = Initialize(b.shard.LabelsFile(), cs...)
+			err = search.Initialize(b.shard.LabelsFile(), cs...)
 			if err != nil {
 				return err
 			}
-			rr, err := Filter(ctx, group, cs...)
+			rr, err := search.Filter(ctx, group, cs...)
 			if err != nil {
 				return err
 			}
@@ -291,15 +292,15 @@ func (b queryableShard) LabelNames(ctx context.Context, limit int64, matchers []
 
 	for i, group := range b.shard.LabelsFile().RowGroups() {
 		errGroup.Go(func() error {
-			cs, err := MatchersToConstraint(matchers...)
+			cs, err := search.MatchersToConstraint(matchers...)
 			if err != nil {
 				return err
 			}
-			err = Initialize(b.shard.LabelsFile(), cs...)
+			err = search.Initialize(b.shard.LabelsFile(), cs...)
 			if err != nil {
 				return err
 			}
-			rr, err := Filter(ctx, group, cs...)
+			rr, err := search.Filter(ctx, group, cs...)
 			if err != nil {
 				return err
 			}
@@ -331,15 +332,15 @@ func (b queryableShard) LabelValues(ctx context.Context, name string, limit int6
 
 	for i, group := range b.shard.LabelsFile().RowGroups() {
 		errGroup.Go(func() error {
-			cs, err := MatchersToConstraint(matchers...)
+			cs, err := search.MatchersToConstraint(matchers...)
 			if err != nil {
 				return err
 			}
-			err = Initialize(b.shard.LabelsFile(), cs...)
+			err = search.Initialize(b.shard.LabelsFile(), cs...)
 			if err != nil {
 				return err
 			}
-			rr, err := Filter(ctx, group, cs...)
+			rr, err := search.Filter(ctx, group, cs...)
 			if err != nil {
 				return err
 			}

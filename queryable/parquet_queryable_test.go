@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package search
+package queryable
 
 import (
 	"context"
@@ -32,7 +32,6 @@ import (
 	"github.com/prometheus/prometheus/util/teststorage"
 	"github.com/prometheus/prometheus/util/testutil"
 	"github.com/stretchr/testify/require"
-	"github.com/thanos-io/objstore"
 
 	"github.com/prometheus-community/parquet-common/convert"
 	"github.com/prometheus-community/parquet-common/schema"
@@ -110,11 +109,15 @@ func (st *acceptanceTestStorage) Querier(from, to int64) (prom_storage.Querier, 
 }
 
 type countingBucket struct {
-	objstore.Bucket
+	*bucket
 
 	nGet       atomic.Int32
 	nGetRange  atomic.Int32
 	bsGetRange atomic.Int64
+}
+
+func newCountingBucket(bkt *bucket) *countingBucket {
+	return &countingBucket{bucket: bkt}
 }
 
 func (b *countingBucket) ResetCounters() {
@@ -125,13 +128,13 @@ func (b *countingBucket) ResetCounters() {
 
 func (b *countingBucket) Get(ctx context.Context, name string) (io.ReadCloser, error) {
 	b.nGet.Add(1)
-	return b.Bucket.Get(ctx, name)
+	return b.bucket.Get(ctx, name)
 }
 
 func (b *countingBucket) GetRange(ctx context.Context, name string, off int64, length int64) (io.ReadCloser, error) {
 	b.nGetRange.Add(1)
 	b.bsGetRange.Add(length)
-	return b.Bucket.GetRange(ctx, name, off, length)
+	return b.bucket.GetRange(ctx, name, off, length)
 }
 
 func (st *acceptanceTestStorage) Close() error {
@@ -481,9 +484,9 @@ func BenchmarkSelect(b *testing.B) {
 	h := st.Head()
 	require.Equal(b, totalSeries, int(h.NumSeries()), "Expected number of series does not match")
 
-	cbkt := &countingBucket{Bucket: bkt}
+	cbkt := newCountingBucket(bkt)
 	data := util.TestData{MinTime: h.MinTime(), MaxTime: h.MaxTime()}
-	block := convertToParquetForBench(b, ctx, cbkt, data, h)
+	block := convertToParquetForBenchWithCountingBucket(b, ctx, bkt, cbkt, data, h)
 	queryable, err := createQueryable(block)
 	require.NoError(b, err, "unable to create queryable")
 
@@ -519,7 +522,38 @@ func BenchmarkSelect(b *testing.B) {
 	}
 }
 
-func convertToParquetForBench(tb testing.TB, ctx context.Context, bkt objstore.Bucket, data util.TestData, h convert.Convertible, opts ...storage.ShardOption) storage.ParquetShard {
+func convertToParquet(t *testing.T, ctx context.Context, bkt *bucket, data util.TestData, h convert.Convertible, opts ...storage.ShardOption) storage.ParquetShard {
+	colDuration := time.Hour
+	shards, err := convert.ConvertTSDBBlock(
+		ctx,
+		bkt,
+		data.MinTime,
+		data.MaxTime,
+		[]convert.Convertible{h},
+		convert.WithName("shard"),
+		convert.WithColDuration(colDuration),
+		convert.WithRowGroupSize(500),
+		convert.WithPageBufferSize(300),
+	)
+	if err != nil {
+		t.Fatalf("error converting to parquet: %v", err)
+	}
+	if shards != 1 {
+		t.Fatalf("expected 1 shard, got %d", shards)
+	}
+
+	bucketOpener := storage.NewParquetBucketOpener(bkt)
+	shard, err := storage.NewParquetShardOpener(
+		ctx, "shard", bucketOpener, bucketOpener, 0,
+	)
+	if err != nil {
+		t.Fatalf("error opening parquet shard: %v", err)
+	}
+
+	return shard
+}
+
+func convertToParquetForBenchWithCountingBucket(tb testing.TB, ctx context.Context, bkt *bucket, cbkt *countingBucket, data util.TestData, h convert.Convertible, opts ...storage.ShardOption) storage.ParquetShard {
 	colDuration := time.Hour
 	shards, err := convert.ConvertTSDBBlock(
 		ctx,
@@ -539,7 +573,7 @@ func convertToParquetForBench(tb testing.TB, ctx context.Context, bkt objstore.B
 		tb.Fatalf("expected 1 shard, got %d", shards)
 	}
 
-	bucketOpener := storage.NewParquetBucketOpener(bkt)
+	bucketOpener := storage.NewParquetBucketOpener(cbkt)
 	shard, err := storage.NewParquetShardOpener(
 		ctx, "shard", bucketOpener, bucketOpener, 0,
 	)

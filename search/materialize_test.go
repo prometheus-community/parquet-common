@@ -27,6 +27,8 @@ import (
 	"github.com/prometheus/prometheus/util/teststorage"
 	"github.com/stretchr/testify/require"
 
+	"github.com/thanos-io/objstore/providers/filesystem"
+
 	"github.com/prometheus-community/parquet-common/convert"
 	"github.com/prometheus-community/parquet-common/schema"
 	"github.com/prometheus-community/parquet-common/storage"
@@ -38,7 +40,7 @@ func TestMaterializeE2E(t *testing.T) {
 	ctx := context.Background()
 	t.Cleanup(func() { _ = st.Close() })
 
-	bkt, err := newBucket(t.TempDir())
+	bkt, err := filesystem.NewBucket(t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = bkt.Close() })
 
@@ -57,16 +59,6 @@ func TestMaterializeE2E(t *testing.T) {
 			require.Equal(t, series.Labels().Get("unique"), "unique_0")
 			require.Contains(t, data.SeriesHash, series.Labels().Hash())
 		}
-
-		matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
-		sFound := queryWithQueryable(t, data.MinTime, data.MaxTime, shard, nil, matchers...)
-		totalFound := 0
-		for _, series := range sFound {
-			require.Equal(t, series.Labels().Get("unique"), "unique_0")
-			require.Contains(t, data.SeriesHash, series.Labels().Hash())
-			totalFound++
-		}
-		require.Equal(t, cfg.TotalMetricNames, totalFound)
 	})
 
 	t.Run("QueryByMetricName", func(t *testing.T) {
@@ -91,16 +83,6 @@ func TestMaterializeE2E(t *testing.T) {
 				}
 				require.Equal(t, totalSamples, cfg.NumberOfSamples)
 			}
-
-			matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, labels.MetricName, name)}
-			sFound := queryWithQueryable(t, data.MinTime, data.MaxTime, shard, nil, matchers...)
-			totalFound := 0
-			for _, series := range sFound {
-				totalFound++
-				require.Equal(t, series.Labels().Get(labels.MetricName), name)
-				require.Contains(t, data.SeriesHash, series.Labels().Hash())
-			}
-			require.Equal(t, cfg.MetricsPerMetricName, totalFound)
 		}
 	})
 
@@ -149,7 +131,7 @@ func TestMaterializeE2E(t *testing.T) {
 	})
 }
 
-func convertToParquet(t *testing.T, ctx context.Context, bkt *bucket, data util.TestData, h convert.Convertible, opts ...storage.ShardOption) storage.ParquetShard {
+func convertToParquet(t *testing.T, ctx context.Context, bkt *filesystem.Bucket, data util.TestData, h convert.Convertible, opts ...storage.ShardOption) storage.ParquetShard {
 	colDuration := time.Hour
 	shards, err := convert.ConvertTSDBBlock(
 		ctx,
