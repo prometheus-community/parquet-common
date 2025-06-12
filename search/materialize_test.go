@@ -24,6 +24,7 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	prom_storage "github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
+	"github.com/prometheus/prometheus/tsdb/chunks"
 	"github.com/prometheus/prometheus/util/teststorage"
 	"github.com/stretchr/testify/require"
 
@@ -48,7 +49,7 @@ func TestMaterializeE2E(t *testing.T) {
 	data := util.GenerateTestData(t, st, ctx, cfg)
 
 	// Convert to Parquet
-	shard := convertToParquet(t, ctx, bkt, data, st.Head())
+	shard := convertToParquet(t, ctx, bkt, data, st.Head(), nil, nil)
 
 	t.Run("QueryByUniqueLabel", func(t *testing.T) {
 		eq := Equal(schema.LabelToColumn("unique"), parquet.ValueOf("unique_0"))
@@ -94,12 +95,12 @@ func TestMaterializeE2E(t *testing.T) {
 		// Test first column only
 		found := query(t, data.MinTime, data.MinTime+colDuration.Milliseconds()-1, shard, c1, c2)
 		require.Len(t, found, 1)
-		require.Len(t, found[0].(*concreteChunksSeries).chks, 1)
+		require.Len(t, pullChunks(t, found[0]), 1)
 
 		// Test first two columns
 		found = query(t, data.MinTime, data.MinTime+(2*colDuration).Milliseconds()-1, shard, c1, c2)
 		require.Len(t, found, 1)
-		require.Len(t, found[0].(*concreteChunksSeries).chks, 2)
+		require.Len(t, pullChunks(t, found[0]), 2)
 
 		// Query outside the range
 		found = query(t, data.MinTime+(9*colDuration).Milliseconds(), data.MinTime+(10*colDuration).Milliseconds()-1, shard, c1, c2)
@@ -110,7 +111,7 @@ func TestMaterializeE2E(t *testing.T) {
 		s, err := shard.TSDBSchema()
 		require.NoError(t, err)
 		d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
-		m, err := NewMaterializer(s, d, shard, 10, 10*1024)
+		m, err := NewMaterializer(ctx, s, d, shard, 10, 10*1024)
 		require.NoError(t, err)
 		rr := []RowRange{{from: int64(0), count: shard.LabelsFile().RowGroups()[0].NumRows()}}
 		ctx, cancel := context.WithCancel(ctx)
@@ -123,7 +124,7 @@ func TestMaterializeE2E(t *testing.T) {
 		s, err := shard.TSDBSchema()
 		require.NoError(t, err)
 		d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
-		m, err := NewMaterializer(s, d, shard, 10, -1)
+		m, err := NewMaterializer(ctx, s, d, shard, 10, -1)
 		require.NoError(t, err)
 		rr := []RowRange{{from: int64(0), count: shard.LabelsFile().RowGroups()[0].NumRows()}}
 		_, err = m.Materialize(ctx, 0, data.MinTime, data.MaxTime, false, rr)
@@ -131,26 +132,27 @@ func TestMaterializeE2E(t *testing.T) {
 	})
 }
 
-func convertToParquet(t *testing.T, ctx context.Context, bkt *filesystem.Bucket, data util.TestData, h convert.Convertible, opts ...storage.ShardOption) storage.ParquetShard {
-	colDuration := time.Hour
+func convertToParquet(t testing.TB, ctx context.Context, bkt *filesystem.Bucket, data util.TestData, h convert.Convertible, convOpts []convert.ConvertOption, shardOpts []storage.ShardOption) storage.ParquetShard {
+	defaultOpts := []convert.ConvertOption{
+		convert.WithName("shard"),
+		convert.WithColDuration(time.Hour), // force more than 1 data col
+		convert.WithRowGroupSize(500),
+		convert.WithPageBufferSize(300), // force creating multiples pages
+	}
+	convOpts = append(defaultOpts, convOpts...)
 	shards, err := convert.ConvertTSDBBlock(
 		ctx,
 		bkt,
 		data.MinTime,
 		data.MaxTime,
 		[]convert.Convertible{h},
-		convert.WithName("shard"),
-		convert.WithColDuration(colDuration), // let's force more than 1 data col
-		convert.WithRowGroupSize(500),
-		convert.WithPageBufferSize(300), // force creating multiples pages
+		convOpts...,
 	)
 	require.NoError(t, err)
 	require.Equal(t, 1, shards)
 
 	bucketOpener := storage.NewParquetBucketOpener(bkt)
-	shard, err := storage.NewParquetShardOpener(
-		ctx, "shard", bucketOpener, bucketOpener, 0,
-	)
+	shard, err := storage.NewParquetShardOpener(ctx, "shard", bucketOpener, bucketOpener, 0, shardOpts...)
 	require.NoError(t, err)
 
 	return shard
@@ -165,7 +167,7 @@ func query(t *testing.T, mint, maxt int64, shard storage.ParquetShard, constrain
 	s, err := shard.TSDBSchema()
 	require.NoError(t, err)
 	d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
-	m, err := NewMaterializer(s, d, shard, 10, 10*1024)
+	m, err := NewMaterializer(ctx, s, d, shard, 10, 10*1024)
 	require.NoError(t, err)
 
 	found := make([]prom_storage.ChunkSeries, 0, 100)
@@ -178,7 +180,149 @@ func query(t *testing.T, mint, maxt int64, shard storage.ParquetShard, constrain
 		require.NoError(t, err)
 		series, err := m.Materialize(ctx, i, mint, maxt, false, rr)
 		require.NoError(t, err)
-		found = append(found, series...)
+		found = append(found, pullSeries(t, series)...)
 	}
 	return found
+}
+
+func pullChunks(t *testing.T, chnks prom_storage.ChunkSeries) []chunks.Meta {
+	it := chnks.Iterator(nil)
+	var metas []chunks.Meta
+	for it.Next() {
+		metas = append(metas, it.At())
+	}
+	if err := it.Err(); err != nil {
+		t.Fatalf("error iterating chunks: %v", err)
+	}
+	return metas
+}
+
+func pullSeries(t *testing.T, series prom_storage.ChunkSeriesSet) []prom_storage.ChunkSeries {
+	var found []prom_storage.ChunkSeries
+	for series.Next() {
+		found = append(found, series.At())
+	}
+	if err := series.Err(); err != nil {
+		t.Fatalf("error iterating series: %v", err)
+	}
+	return found
+}
+
+func BenchmarkMaterialize(b *testing.B) {
+	ctx := context.Background()
+	st := teststorage.New(b)
+	b.Cleanup(func() { _ = st.Close() })
+
+	bkt, err := filesystem.NewBucket(b.TempDir())
+	if err != nil {
+		b.Fatal("error creating bucket: ", err)
+	}
+	b.Cleanup(func() { _ = bkt.Close() })
+
+	cfg := util.DefaultTestConfig()
+	cfg.NumberOfSamples = 1500 // non-trivial chunks
+	data := util.GenerateTestData(b, st, ctx, cfg)
+	shard := convertToParquet(b, ctx, bkt, data, st.Head(), []convert.ConvertOption{
+		// We are benchmarking a single row group, so let's fit it all in a single one
+		convert.WithRowGroupSize(len(data.SeriesHash)),
+	}, nil)
+
+	s, err := shard.TSDBSchema()
+	if err != nil {
+		b.Fatal("error getting schema: ", err)
+	}
+
+	// We will benchmark the first row group only.
+	totalRows := shard.LabelsFile().RowGroups()[0].NumRows()
+
+	testCases := []struct {
+		name        string
+		rr          []RowRange
+		concurrency int
+		skipChunks  bool
+	}{
+		{
+			name:        "AllRows",
+			concurrency: 1,
+			rr:          []RowRange{{from: 0, count: totalRows}},
+		},
+		{
+			name:        "AllRowsConcur4",
+			concurrency: 4,
+			rr:          []RowRange{{from: 0, count: totalRows}},
+		},
+		{
+			name:        "Interleaved",
+			concurrency: 1,
+			rr: []RowRange{
+				{from: 0, count: totalRows / 10},
+				{from: totalRows / 5, count: totalRows / 10},
+				{from: totalRows * 2 / 5, count: totalRows / 10},
+				{from: totalRows * 3 / 5, count: totalRows / 10},
+				{from: totalRows * 4 / 5, count: totalRows / 10},
+			},
+		},
+		{
+			name:        "Sparse",
+			concurrency: 1,
+			rr: []RowRange{
+				{from: 0, count: 50},
+				{from: totalRows / 4, count: 50},
+				{from: totalRows / 2, count: 50},
+				{from: totalRows * 3 / 4, count: 50},
+			},
+		},
+		{
+			name:        "SingleRow",
+			concurrency: 1,
+			rr:          []RowRange{{from: totalRows / 2, count: 1}},
+		},
+		{
+			name:        "SkipChunks",
+			concurrency: 1,
+			rr:          []RowRange{{from: 0, count: totalRows}},
+			skipChunks:  true,
+		},
+	}
+
+	for _, tc := range testCases {
+		b.Run(tc.name, func(b *testing.B) {
+			d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
+			m, err := NewMaterializer(ctx, s, d, shard, tc.concurrency, 10*1024)
+			if err != nil {
+				b.Fatal("error creating materializer: ", err)
+			}
+			// Warm up
+			_, _ = m.Materialize(ctx, 0, data.MinTime, data.MaxTime, tc.skipChunks, tc.rr)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				start := time.Now()
+				series, err := m.Materialize(ctx, 0, data.MinTime, data.MaxTime, tc.skipChunks, tc.rr)
+				if err != nil {
+					b.Fatal("error materializing: ", err)
+				}
+				firstChunk := true
+				for series.Next() {
+					s := series.At()
+					_ = s.Labels()
+					it := s.Iterator(nil)
+					for it.Next() {
+						chk := it.At()
+						if firstChunk {
+							firstChunk = false
+							b.ReportMetric(float64(time.Since(start).Nanoseconds()/int64(b.N)), "ns_to_first_chunk/op")
+						}
+						_ = chk.Chunk.NumSamples()
+					}
+					if it.Err() != nil {
+						b.Fatal("error iterating chunks: ", it.Err())
+					}
+				}
+				if err := series.Err(); err != nil {
+					b.Fatal("error iterating series: ", err)
+				}
+			}
+		})
+	}
 }
