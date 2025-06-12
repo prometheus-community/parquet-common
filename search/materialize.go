@@ -34,6 +34,28 @@ import (
 	"github.com/prometheus-community/parquet-common/util"
 )
 
+var (
+	labelsColsMapPool = sync.Pool{
+		New: func() interface{} {
+			return make(map[int]*[]parquet.Value, 10)
+		},
+	}
+
+	parquetValueSlicePool = sync.Pool{
+		New: func() interface{} {
+			slice := make([]parquet.Value, 0, 64)
+			return &slice
+		},
+	}
+
+	labelsResultsPool = sync.Pool{
+		New: func() interface{} {
+			results := make([]labels.Labels, 0, 1000)
+			return &results
+		},
+	}
+)
+
 type Materializer struct {
 	b           storage.ParquetShard
 	s           *schema.TSDBSchema
@@ -216,8 +238,36 @@ func (m *Materializer) materializeAllLabels(ctx context.Context, rgi int, rr []R
 		return nil, errors.Wrap(err, "materializer failed to materialize columns")
 	}
 
-	colsMap := make(map[int]*[]parquet.Value, 10)
-	results := make([]labels.Labels, len(colsIdxs))
+	colsMap := labelsColsMapPool.Get().(map[int]*[]parquet.Value)
+
+	resultsPtr := labelsResultsPool.Get().(*[]labels.Labels)
+
+	slicePtrs := make([]*[]parquet.Value, 0, len(colsIdxs)*4) // Estimate capacity
+
+	defer func() {
+		for k := range colsMap {
+			delete(colsMap, k)
+		}
+		labelsColsMapPool.Put(colsMap)
+
+		for _, slicePtr := range slicePtrs {
+			*slicePtr = (*slicePtr)[:0]
+			parquetValueSlicePool.Put(slicePtr)
+		}
+
+		*resultsPtr = (*resultsPtr)[:0]
+		labelsResultsPool.Put(resultsPtr)
+	}()
+
+	if cap(*resultsPtr) < len(colsIdxs) {
+		*resultsPtr = make([]labels.Labels, len(colsIdxs))
+	} else {
+		*resultsPtr = (*resultsPtr)[:len(colsIdxs)]
+		for i := range *resultsPtr {
+			(*resultsPtr)[i] = (*resultsPtr)[i][:0]
+		}
+	}
+	results := *resultsPtr
 
 	for _, colsIdx := range colsIdxs {
 		idxs, err := schema.DecodeUintSlice(colsIdx.ByteArray())
@@ -225,7 +275,10 @@ func (m *Materializer) materializeAllLabels(ctx context.Context, rgi int, rr []R
 			return nil, errors.Wrap(err, "materializer failed to decode column index")
 		}
 		for _, idx := range idxs {
-			colsMap[idx] = &[]parquet.Value{}
+			slicePtr := parquetValueSlicePool.Get().(*[]parquet.Value)
+			*slicePtr = (*slicePtr)[:0]
+			colsMap[idx] = slicePtr
+			slicePtrs = append(slicePtrs, slicePtr)
 		}
 	}
 
@@ -264,7 +317,10 @@ func (m *Materializer) materializeAllLabels(ctx context.Context, rgi int, rr []R
 		}
 	}
 
-	return results, nil
+	// Create a copy to return since we'll reset the pooled slice during the defer call.
+	resultsCopy := make([]labels.Labels, len(results))
+	copy(resultsCopy, results)
+	return resultsCopy, nil
 }
 
 func totalRows(rr []RowRange) int64 {
@@ -471,7 +527,12 @@ func (vi *valuesIterator) Reset(p parquet.Page) {
 	vi.vr = nil
 	if p.Dictionary() != nil {
 		vi.st.Reset(p)
-		vi.cachedSymbols = make(map[int32]parquet.Value, p.Dictionary().Len())
+		if vi.cachedSymbols == nil {
+			vi.cachedSymbols = make(map[int32]parquet.Value, p.Dictionary().Len())
+		}
+		for k := range vi.cachedSymbols {
+			delete(vi.cachedSymbols, k)
+		}
 	} else {
 		vi.vr = p.Values()
 		vi.buffer = make([]parquet.Value, 0, 128)
