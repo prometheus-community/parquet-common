@@ -201,7 +201,7 @@ func (p parquetQuerier) queryableShards(ctx context.Context, mint, maxt int64) (
 	}
 	qBlocks := make([]*queryableShard, len(shards))
 	for i, shard := range shards {
-		qb, err := newQueryableShard(p.opts, shard, p.d)
+		qb, err := newQueryableShard(ctx, p.opts, shard, p.d)
 		if err != nil {
 			return nil, err
 		}
@@ -216,12 +216,12 @@ type queryableShard struct {
 	concurrency int
 }
 
-func newQueryableShard(opts *queryableOpts, block storage.ParquetShard, d *schema.PrometheusParquetChunksDecoder) (*queryableShard, error) {
+func newQueryableShard(ctx context.Context, opts *queryableOpts, block storage.ParquetShard, d *schema.PrometheusParquetChunksDecoder) (*queryableShard, error) {
 	s, err := block.TSDBSchema()
 	if err != nil {
 		return nil, err
 	}
-	m, err := search.NewMaterializer(s, d, block, opts.concurrency, opts.pagePartitioningMaxGapSize)
+	m, err := search.NewMaterializer(ctx, s, d, block, opts.concurrency, opts.pagePartitioningMaxGapSize)
 	if err != nil {
 		return nil, err
 	}
@@ -259,14 +259,16 @@ func (b queryableShard) Query(ctx context.Context, sorted bool, mint, maxt int64
 				return nil
 			}
 
-			series, err := b.m.Materialize(ctx, i, mint, maxt, skipChunks, rr)
+			set, err := b.m.Materialize(ctx, i, mint, maxt, skipChunks, rr)
 			if err != nil {
 				return err
 			}
-			rMtx.Lock()
-			results = append(results, series...)
-			rMtx.Unlock()
-			return nil
+			for set.Next() {
+				rMtx.Lock()
+				results = append(results, set.At())
+				rMtx.Unlock()
+			}
+			return set.Err()
 		})
 	}
 

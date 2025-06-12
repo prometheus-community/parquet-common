@@ -99,7 +99,7 @@ func (st *acceptanceTestStorage) Querier(from, to int64) (prom_storage.Querier, 
 
 	h := st.st.Head()
 	data := util.TestData{MinTime: h.MinTime(), MaxTime: h.MaxTime()}
-	block := convertToParquet(st.t, context.Background(), bkt, data, h)
+	block := convertToParquet(st.t, context.Background(), bkt, data, h, nil, nil)
 
 	q, err := createQueryable(block)
 	if err != nil {
@@ -333,6 +333,9 @@ func queryWithQueryable(t *testing.T, mint, maxt int64, shard storage.ParquetSha
 	found := make([]prom_storage.Series, 0, 100)
 	for ss.Next() {
 		found = append(found, ss.At())
+	}
+	if ss.Err() != nil {
+		t.Fatalf("error during query: %v", ss.Err())
 	}
 	return found
 }
