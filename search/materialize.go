@@ -80,10 +80,26 @@ func NewMaterializer(ctx context.Context, s *schema.TSDBSchema,
 	}, nil
 }
 
+type ChunkSeriesSetClose interface {
+	prom_storage.ChunkSeriesSet
+
+	// Close releases any memory buffers held by the ChunkSeriesSet or the
+	// underlying ChunkSeries. It is not safe to use the ChunkSeriesSet
+	// or any of its ChunkSeries after calling Close.
+	Close()
+}
+
+type noopCloseChunkSeriesSet struct {
+	prom_storage.ChunkSeriesSet
+}
+
+func (n *noopCloseChunkSeriesSet) Close() {
+}
+
 // Materialize reconstructs the ChunkSeries that belong to the specified row ranges (rr).
 // It uses the row group index (rgi) and time bounds (mint, maxt) to filter and decode the series.
 // Labels are loaded upfront, but chunks are loaded on-demand when iterating.
-func (m *Materializer) Materialize(ctx context.Context, rgi int, mint, maxt int64, skipChunks bool, rr []RowRange) (prom_storage.ChunkSeriesSet, error) {
+func (m *Materializer) Materialize(ctx context.Context, rgi int, mint, maxt int64, skipChunks bool, rr []RowRange) (ChunkSeriesSetClose, error) {
 	sLbls, err := m.materializeAllLabels(ctx, rgi, rr)
 	if err != nil {
 		return nil, errors.Wrapf(err, "error materializing labels")
@@ -99,7 +115,9 @@ func (m *Materializer) Materialize(ctx context.Context, rgi int, mint, maxt int6
 				lbls: s,
 			})
 		}
-		return convert.NewChunksSeriesSet(results), nil
+		return &noopCloseChunkSeriesSet{
+			convert.NewChunksSeriesSet(results),
+		}, nil
 	}
 
 	chunkIters := m.materializeChunks(rgi, mint, maxt, rr)
@@ -321,6 +339,7 @@ func (m *Materializer) materializeColumn(ctx context.Context, file *storage.Parq
 // It is convenient for callers who don't want to stream values.
 func (m *Materializer) materializeColumnAsSlice(ctx context.Context, file *storage.ParquetFile, group parquet.RowGroup, cc parquet.ColumnChunk, rr []RowRange) ([]parquet.Value, error) {
 	iter := m.materializeColumn(ctx, file, group, cc, rr)
+	defer iter.Close()
 	values := make([]parquet.Value, 0, totalRows(rr))
 	for iter.Next() {
 		if iter.Err() != nil {
@@ -419,15 +438,14 @@ type columnIterator struct {
 	err  error
 }
 
-func (c *columnIterator) Next() bool {
-	rv := c.next()
-	if !rv && c.iter != nil {
+func (c *columnIterator) Close() {
+	if c.iter != nil {
 		c.iter.release()
+		c.iter = nil
 	}
-	return rv
 }
 
-func (c *columnIterator) next() bool {
+func (c *columnIterator) Next() bool {
 	if c.iter == nil || c.err != nil {
 		return false
 	}
@@ -659,6 +677,7 @@ type chunkIterableSet interface {
 	Next() bool
 	At() chunks.Iterator
 	Err() error
+	Close()
 }
 
 // chunksIteratorIterator iterates multiple columns at once, zipping their
@@ -722,6 +741,14 @@ func (c *chunksIteratorIterator) Err() error {
 	return c.err
 }
 
+func (c *chunksIteratorIterator) Close() {
+	for _, it := range c.colIts {
+		it.Close()
+	}
+	c.colIts = nil
+	c.current = nil
+}
+
 type repeatEmptyChunkIterableSet struct {
 	count int64
 }
@@ -740,6 +767,9 @@ func (r *repeatEmptyChunkIterableSet) At() chunks.Iterator {
 
 func (r *repeatEmptyChunkIterableSet) Err() error {
 	return nil
+}
+
+func (r *repeatEmptyChunkIterableSet) Close() {
 }
 
 // chunksIterator iterates through a values slice and lazily decodes values into
@@ -878,6 +908,10 @@ func (f *filterEmptyChunkSeriesSet) Err() error {
 
 func (f *filterEmptyChunkSeriesSet) Warnings() annotations.Annotations {
 	return nil
+}
+
+func (f *filterEmptyChunkSeriesSet) Close() {
+	f.chnkSet.Close()
 }
 
 // peekedChunksIterator wraps a chunks.Iterator with an extra value to return on

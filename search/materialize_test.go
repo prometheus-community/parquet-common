@@ -127,8 +127,9 @@ func TestMaterializeE2E(t *testing.T) {
 		m, err := NewMaterializer(ctx, s, d, shard, 10, -1)
 		require.NoError(t, err)
 		rr := []RowRange{{from: int64(0), count: shard.LabelsFile().RowGroups()[0].NumRows()}}
-		_, err = m.Materialize(ctx, 0, data.MinTime, data.MaxTime, false, rr)
+		set, err := m.Materialize(ctx, 0, data.MinTime, data.MaxTime, false, rr)
 		require.NoError(t, err)
+		set.Close()
 	})
 }
 
@@ -181,6 +182,7 @@ func query(t *testing.T, mint, maxt int64, shard storage.ParquetShard, constrain
 		series, err := m.Materialize(ctx, i, mint, maxt, false, rr)
 		require.NoError(t, err)
 		found = append(found, pullSeries(t, series)...)
+		series.Close()
 	}
 	return found
 }
@@ -293,7 +295,9 @@ func BenchmarkMaterialize(b *testing.B) {
 				b.Fatal("error creating materializer: ", err)
 			}
 			// Warm up
-			_, _ = m.Materialize(ctx, 0, data.MinTime, data.MaxTime, tc.skipChunks, tc.rr)
+			s, err := m.Materialize(ctx, 0, data.MinTime, data.MaxTime, tc.skipChunks, tc.rr)
+			require.NoError(b, err)
+			s.Close()
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
@@ -322,6 +326,7 @@ func BenchmarkMaterialize(b *testing.B) {
 				if err := series.Err(); err != nil {
 					b.Fatal("error iterating series: ", err)
 				}
+				series.Close()
 			}
 		})
 	}
