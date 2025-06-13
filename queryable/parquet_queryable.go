@@ -263,6 +263,7 @@ func (b queryableShard) Query(ctx context.Context, sorted bool, mint, maxt int64
 			if err != nil {
 				return err
 			}
+			defer set.Close()
 			for set.Next() {
 				rMtx.Lock()
 				results = append(results, set.At())
