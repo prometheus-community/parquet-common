@@ -62,3 +62,57 @@ func Test_LabelCols(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, b.metadata[DataColSizeMd], fmt.Sprintf("%v", time.Hour.Milliseconds()))
 }
+
+func Test_DataColumIdx(t *testing.T) {
+	testCases := []struct {
+		mint, maxt, dataColDuration, timestamp int64
+		expected                               int
+	}{
+		{
+			mint:            0,
+			maxt:            10 * time.Hour.Milliseconds(),
+			dataColDuration: time.Hour.Milliseconds(),
+			timestamp:       0,
+			expected:        0,
+		},
+		{
+			mint:            0,
+			maxt:            10 * time.Hour.Milliseconds(),
+			dataColDuration: time.Hour.Milliseconds(),
+			timestamp:       time.Hour.Milliseconds(),
+			expected:        1,
+		},
+		{
+			mint:            0,
+			maxt:            10 * time.Hour.Milliseconds(),
+			dataColDuration: time.Hour.Milliseconds(),
+			timestamp:       90 * time.Minute.Milliseconds(),
+			expected:        1,
+		},
+		{
+			mint:            1 * time.Hour.Milliseconds(),
+			maxt:            10 * time.Hour.Milliseconds(),
+			dataColDuration: time.Hour.Milliseconds(),
+			timestamp:       0,
+			expected:        0,
+		},
+		{
+			mint:            time.Hour.Milliseconds(),
+			maxt:            5 * time.Hour.Milliseconds(),
+			dataColDuration: time.Hour.Milliseconds(),
+			timestamp:       1000 * time.Hour.Milliseconds(),
+			expected:        999,
+		},
+	}
+
+	for i, tc := range testCases {
+		t.Run(fmt.Sprintf("case-%d", i), func(t *testing.T) {
+			b := NewBuilder(tc.mint, tc.maxt, tc.dataColDuration)
+			s, err := b.Build()
+			require.NoError(t, err)
+
+			result := s.DataColumIdx(tc.timestamp)
+			require.Equal(t, tc.expected, result)
+		})
+	}
+}
