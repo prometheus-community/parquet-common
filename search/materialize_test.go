@@ -16,7 +16,9 @@ package search
 import (
 	"context"
 	"fmt"
+	"io"
 	"math/rand"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,6 +30,7 @@ import (
 	"github.com/prometheus/prometheus/util/teststorage"
 	"github.com/stretchr/testify/require"
 
+	"github.com/thanos-io/objstore"
 	"github.com/thanos-io/objstore/providers/filesystem"
 
 	"github.com/prometheus-community/parquet-common/convert"
@@ -133,7 +136,7 @@ func TestMaterializeE2E(t *testing.T) {
 	})
 }
 
-func convertToParquet(t testing.TB, ctx context.Context, bkt *filesystem.Bucket, data util.TestData, h convert.Convertible, convOpts []convert.ConvertOption, shardOpts []storage.ShardOption) storage.ParquetShard {
+func convertToParquet(t testing.TB, ctx context.Context, bkt objstore.Bucket, data util.TestData, h convert.Convertible, convOpts []convert.ConvertOption, shardOpts []storage.ShardOption) storage.ParquetShard {
 	defaultOpts := []convert.ConvertOption{
 		convert.WithName("shard"),
 		convert.WithColDuration(time.Hour), // force more than 1 data col
@@ -224,7 +227,14 @@ func BenchmarkMaterialize(b *testing.B) {
 	cfg := util.DefaultTestConfig()
 	cfg.NumberOfSamples = 1500 // non-trivial chunks
 	data := util.GenerateTestData(b, st, ctx, cfg)
-	shard := convertToParquet(b, ctx, bkt, data, st.Head(), []convert.ConvertOption{
+	bktw := &bucketWrapper{
+		Bucket: bkt,
+		// Simulate object store latency. The Materializer
+		// can parallelize GetRange calls to help with this.
+		readLatency: time.Millisecond * 5,
+	}
+
+	shard := convertToParquet(b, ctx, bktw, data, st.Head(), []convert.ConvertOption{
 		// We are benchmarking a single row group, so let's fit it all in a single one
 		convert.WithRowGroupSize(len(data.SeriesHash)),
 	}, nil)
@@ -300,6 +310,7 @@ func BenchmarkMaterialize(b *testing.B) {
 			s.Close()
 			b.ReportAllocs()
 			b.ResetTimer()
+			bktw.getRangeCalls.Store(0)
 			for i := 0; i < b.N; i++ {
 				start := time.Now()
 				series, err := m.Materialize(ctx, 0, data.MinTime, data.MaxTime, tc.skipChunks, tc.rr)
@@ -328,6 +339,35 @@ func BenchmarkMaterialize(b *testing.B) {
 				}
 				series.Close()
 			}
+			b.ReportMetric(float64(bktw.getRangeCalls.Load())/float64(b.N), "range_calls/op")
 		})
 	}
+}
+
+type bucketWrapper struct {
+	objstore.Bucket
+	readLatency   time.Duration
+	getRangeCalls atomic.Int64
+}
+
+func (b *bucketWrapper) Get(ctx context.Context, name string) (io.ReadCloser, error) {
+	if b.readLatency > 0 {
+		time.Sleep(b.readLatency)
+	}
+	return b.Bucket.Get(ctx, name)
+}
+
+func (b *bucketWrapper) GetRange(ctx context.Context, name string, offset, length int64) (io.ReadCloser, error) {
+	b.getRangeCalls.Add(1)
+	if b.readLatency > 0 {
+		time.Sleep(b.readLatency)
+	}
+	return b.Bucket.GetRange(ctx, name, offset, length)
+}
+
+func (b *bucketWrapper) Attributes(ctx context.Context, name string) (objstore.ObjectAttributes, error) {
+	if b.readLatency > 0 {
+		time.Sleep(b.readLatency)
+	}
+	return b.Bucket.Attributes(ctx, name)
 }
