@@ -534,3 +534,7 @@ func (c concreteChunksSeries) Labels() labels.Labels {
 func (c concreteChunksSeries) Iterator(_ chunks.Iterator) chunks.Iterator {
 	return prom_storage.NewListChunkSeriesIterator(c.chks...)
 }
+
+func (c concreteChunksSeries) ChunkCount() (int, error) {
+	return len(c.chks), nil
+}
