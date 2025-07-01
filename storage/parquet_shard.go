@@ -68,11 +68,17 @@ func (f *ParquetFile) GetPages(ctx context.Context, cc parquet.ColumnChunk, page
 		}
 		minOffset := offset.Offset(pagesToRead[0])
 		maxOffset := offset.Offset(pagesToRead[len(pagesToRead)-1]) + offset.CompressedPageSize(pagesToRead[len(pagesToRead)-1])
-		reader = newOptimisticReaderAt(reader, minOffset, maxOffset)
+		reader = NewOptimisticReaderAt(reader, minOffset, maxOffset)
 	}
 
 	pages := colChunk.PagesFrom(reader)
 	return pages, nil
+}
+
+func (f *ParquetFile) DictionaryPageBounds(rgIdx, colIdx int) (uint64, uint64) {
+	colMeta := f.Metadata().RowGroups[rgIdx].Columns[colIdx].MetaData
+
+	return uint64(colMeta.DictionaryPageOffset), uint64(colMeta.DataPageOffset - colMeta.DictionaryPageOffset)
 }
 
 func Open(ctx context.Context, r ReadAtWithContextCloser, size int64, opts ...ShardOption) (*ParquetFile, error) {

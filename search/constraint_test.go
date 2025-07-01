@@ -123,8 +123,8 @@ func BenchmarkConstraints(b *testing.B) {
 				if err := Initialize(sfile, tt.c...); err != nil {
 					b.Fatal(err)
 				}
-				for _, rg := range sfile.RowGroups() {
-					rr, err := Filter(context.Background(), rg, tt.c...)
+				for i := range sfile.RowGroups() {
+					rr, err := Filter(context.Background(), sfile, i, tt.c...)
 					if err != nil {
 						b.Fatal(err)
 					}
@@ -159,10 +159,10 @@ func TestContextCancelled(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		for _, rg := range sfile.RowGroups() {
+		for i := range sfile.RowGroups() {
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
-			_, err := Filter(ctx, rg, c)
+			_, err := Filter(ctx, sfile, i, c)
 			require.ErrorContains(t, err, "context canceled")
 		}
 	}
@@ -476,8 +476,8 @@ func TestFilter(t *testing.T) {
 					if err := Initialize(sfile, expectation.constraints...); err != nil {
 						t.Fatal(err)
 					}
-					for _, rg := range sfile.RowGroups() {
-						rr, err := Filter(context.Background(), rg, expectation.constraints...)
+					for i := range sfile.RowGroups() {
+						rr, err := Filter(context.Background(), sfile, i, expectation.constraints...)
 						if err != nil {
 							t.Fatal(err)
 						}

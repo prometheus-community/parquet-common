@@ -19,10 +19,12 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"sync"
 
 	"github.com/parquet-go/parquet-go"
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/prometheus-community/parquet-common/schema"
 	"github.com/prometheus-community/parquet-common/storage"
@@ -33,7 +35,7 @@ type Constraint interface {
 	fmt.Stringer
 
 	// filter returns a set of non-overlapping increasing row indexes that may satisfy the constraint.
-	filter(ctx context.Context, rg parquet.RowGroup, primary bool, rr []RowRange) ([]RowRange, error)
+	filter(ctx context.Context, rgIdx int, primary bool, rr []RowRange) ([]RowRange, error)
 	// init initializes the constraint with respect to the file schema and projections.
 	init(f *storage.ParquetFile) error
 	// path is the path for the column that is constrained
@@ -76,7 +78,9 @@ func Initialize(f *storage.ParquetFile, cs ...Constraint) error {
 	return nil
 }
 
-func Filter(ctx context.Context, rg parquet.RowGroup, cs ...Constraint) ([]RowRange, error) {
+func Filter(ctx context.Context, f *storage.ParquetFile, rgIdx int, cs ...Constraint) ([]RowRange, error) {
+
+	rg := f.RowGroups()[rgIdx]
 	// Constraints for sorting columns are cheaper to evaluate, so we sort them first.
 	sc := rg.SortingColumns()
 
@@ -96,12 +100,25 @@ func Filter(ctx context.Context, rg parquet.RowGroup, cs ...Constraint) ([]RowRa
 	rr := []RowRange{{from: int64(0), count: rg.NumRows()}}
 	for i := range cs {
 		isPrimary := len(sc) > 0 && cs[i].path() == sc[0].Path()[0]
-		rr, err = cs[i].filter(ctx, rg, isPrimary, rr)
+		rr, err = cs[i].filter(ctx, rgIdx, isPrimary, rr)
 		if err != nil {
 			return nil, fmt.Errorf("unable to filter with constraint %d: %w", i, err)
 		}
 	}
 	return rr, nil
+}
+
+type pageToRead struct {
+	// for data pages
+	pfrom int64
+	pto   int64
+
+	// -1 for dictionary page
+	idx int
+
+	// for data and dictionary pages
+	off int
+	csz int
 }
 
 // symbolTable is a helper that can decode the i-th value of a page.
@@ -168,11 +185,13 @@ func Equal(path string, value parquet.Value) Constraint {
 	return &equalConstraint{pth: path, val: value}
 }
 
-func (ec *equalConstraint) filter(ctx context.Context, rg parquet.RowGroup, primary bool, rr []RowRange) ([]RowRange, error) {
+func (ec *equalConstraint) filter(ctx context.Context, rgIdx int, primary bool, rr []RowRange) ([]RowRange, error) {
 	if len(rr) == 0 {
 		return nil, nil
 	}
 	from, to := rr[0].from, rr[len(rr)-1].from+rr[len(rr)-1].count
+
+	rg := ec.f.RowGroups()[rgIdx]
 
 	col, ok := rg.Schema().Lookup(ec.path())
 	if !ok {
@@ -206,10 +225,15 @@ func (ec *equalConstraint) filter(ctx context.Context, rg parquet.RowGroup, prim
 		return nil, fmt.Errorf("unable to read column index: %w", err)
 	}
 	var (
-		symbols = new(symbolTable)
-		res     = make([]RowRange, 0)
+		res = make([]RowRange, 0)
 	)
+
+	dictOff, dictSz := ec.f.DictionaryPageBounds(rgIdx, col.ColumnIndex)
+	readPgs := []pageToRead{pageToRead{idx: -1, off: int(dictOff), csz: int(dictSz)}}
+
 	for i := 0; i < cidx.NumPages(); i++ {
+		poff, pcsz := uint64(oidx.Offset(i)), oidx.CompressedPageSize(i)
+
 		// If page does not intersect from, to; we can immediately discard it
 		pfrom := oidx.FirstRowIndex(i)
 		pcount := rg.NumRows() - pfrom
@@ -246,49 +270,99 @@ func (ec *equalConstraint) filter(ctx context.Context, rg parquet.RowGroup, prim
 			continue
 		}
 		// We cannot discard the page through statistics but we might need to read it to see if it has the value
-		if err := pgs.SeekToRow(pfrom); err != nil {
-			return nil, fmt.Errorf("unable to seek to row: %w", err)
-		}
-		pg, err := pgs.ReadPage()
-		if err != nil {
-			return nil, fmt.Errorf("unable to read page: %w", err)
-		}
+		readPgs = append(readPgs, pageToRead{pfrom: pfrom, pto: pto, idx: i, off: int(poff), csz: int(pcsz)})
+	}
 
-		symbols.Reset(pg)
+	if len(readPgs) == 1 {
+		return nil, nil
+	}
 
-		// The page has the value, we need to find the matching row ranges
-		n := int(pg.NumRows())
-		bl := int(max(pfrom, from) - pfrom)
-		br := n - int(pto-min(pto, to))
-		var l, r int
-		switch {
-		case cidx.IsAscending() && primary:
-			l = sort.Search(n, func(i int) bool { return ec.comp(ec.val, symbols.Get(i)) <= 0 })
-			r = sort.Search(n, func(i int) bool { return ec.comp(ec.val, symbols.Get(i)) < 0 })
+	partitioner := util.NewGapBasedPartitioner(10 * 1024)
+	parts := partitioner.Partition(len(readPgs), func(i int) (int, int) {
+		return readPgs[i].off, readPgs[i].off + readPgs[i].csz
+	})
 
-			if lv, rv := max(bl, l), min(br, r); rv > lv {
-				res = append(res, RowRange{pfrom + int64(lv), int64(rv - lv)})
-			}
-		default:
-			off, count := bl, 0
-			for j := bl; j < br; j++ {
-				if !ec.matches(symbols.Get(j)) {
+	var mu sync.Mutex
+	g, ctx := errgroup.WithContext(ctx)
+	for _, p := range parts {
+		g.Go(func() error {
+			partFrom, partTo := p.ElemRng[0], p.ElemRng[1]-1
+
+			minOffset := readPgs[partFrom].off
+			maxOffset := readPgs[partTo].off + readPgs[partTo].csz
+
+			bufRdrAt := storage.NewOptimisticReaderAt(ec.f.ReadAtWithContextCloser.WithContext(ctx), int64(minOffset), int64(maxOffset))
+
+			pgs := cc.(*parquet.FileColumnChunk).PagesFrom(bufRdrAt)
+			defer func() { _ = pgs.Close() }()
+
+			symbols := new(symbolTable)
+			for _, p := range readPgs[partFrom : partTo+1] {
+				// skip faked dictionary page again
+				if p.idx == -1 {
+					continue
+				}
+
+				pfrom := p.pfrom
+				pto := p.pto
+
+				if err := pgs.SeekToRow(pfrom); err != nil {
+					return fmt.Errorf("unable to seek to row: %w", err)
+				}
+				pg, err := pgs.ReadPage()
+				if err != nil {
+					return fmt.Errorf("unable to read page: %w", err)
+				}
+
+				symbols.Reset(pg)
+
+				// The page has the value, we need to find the matching row ranges
+				n := int(pg.NumRows())
+				bl := int(max(pfrom, from) - pfrom)
+				br := n - int(pto-min(pto, to))
+				var l, r int
+				switch {
+				case cidx.IsAscending() && primary:
+					l = sort.Search(n, func(i int) bool { return ec.comp(ec.val, symbols.Get(i)) <= 0 })
+					r = sort.Search(n, func(i int) bool { return ec.comp(ec.val, symbols.Get(i)) < 0 })
+
+					if lv, rv := max(bl, l), min(br, r); rv > lv {
+						mu.Lock()
+						res = append(res, RowRange{pfrom + int64(lv), int64(rv - lv)})
+						mu.Unlock()
+					}
+				default:
+					off, count := bl, 0
+					for j := bl; j < br; j++ {
+						if !ec.matches(symbols.Get(j)) {
+							if count != 0 {
+								mu.Lock()
+								res = append(res, RowRange{pfrom + int64(off), int64(count)})
+								mu.Unlock()
+							}
+							off, count = j, 0
+						} else {
+							if count == 0 {
+								off = j
+							}
+							count++
+						}
+					}
 					if count != 0 {
+						mu.Lock()
 						res = append(res, RowRange{pfrom + int64(off), int64(count)})
+						mu.Unlock()
 					}
-					off, count = j, 0
-				} else {
-					if count == 0 {
-						off = j
-					}
-					count++
 				}
 			}
-			if count != 0 {
-				res = append(res, RowRange{pfrom + int64(off), int64(count)})
-			}
-		}
+
+			return nil
+		})
 	}
+	if err := g.Wait(); err != nil {
+		return nil, fmt.Errorf("unable to scan pages: %w", err)
+	}
+
 	if len(res) == 0 {
 		return nil, nil
 	}
@@ -351,11 +425,13 @@ func (rc *regexConstraint) String() string {
 	return fmt.Sprintf("regex(%v,%v)", rc.pth, rc.r.GetRegexString())
 }
 
-func (rc *regexConstraint) filter(ctx context.Context, rg parquet.RowGroup, primary bool, rr []RowRange) ([]RowRange, error) {
+func (rc *regexConstraint) filter(ctx context.Context, rgIdx int, primary bool, rr []RowRange) ([]RowRange, error) {
 	if len(rr) == 0 {
 		return nil, nil
 	}
 	from, to := rr[0].from, rr[len(rr)-1].from+rr[len(rr)-1].count
+
+	rg := rc.f.RowGroups()[rgIdx]
 
 	col, ok := rg.Schema().Lookup(rc.path())
 	if !ok {
@@ -487,8 +563,8 @@ func (nc *notConstraint) String() string {
 	return fmt.Sprintf("not(%v)", nc.c.String())
 }
 
-func (nc *notConstraint) filter(ctx context.Context, rg parquet.RowGroup, primary bool, rr []RowRange) ([]RowRange, error) {
-	base, err := nc.c.filter(ctx, rg, primary, rr)
+func (nc *notConstraint) filter(ctx context.Context, rgIdx int, primary bool, rr []RowRange) ([]RowRange, error) {
+	base, err := nc.c.filter(ctx, rgIdx, primary, rr)
 	if err != nil {
 		return nil, fmt.Errorf("unable to compute child constraint: %w", err)
 	}
