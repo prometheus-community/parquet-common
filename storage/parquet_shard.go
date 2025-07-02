@@ -26,42 +26,65 @@ import (
 	"github.com/prometheus-community/parquet-common/schema"
 )
 
-var DefaultShardOptions = shardOptions{
-	optimisticReader: true,
+type ParquetFileConfigView interface {
+	SkipMagicBytes() bool
+	SkipPageIndex() bool
+	SkipBloomFilters() bool
+	OptimisticRead() bool
+	ReadBufferSize() int
+	ReadMode() parquet.ReadMode
 }
 
-type shardOptions struct {
-	fileOptions      []parquet.FileOption
-	optimisticReader bool
+type ParquetFileConfig struct {
+	config *parquet.FileConfig
+}
+
+func (p ParquetFileConfig) SkipMagicBytes() bool {
+	return p.config.SkipMagicBytes
+}
+
+func (p ParquetFileConfig) SkipPageIndex() bool {
+	return p.config.SkipPageIndex
+}
+
+func (p ParquetFileConfig) SkipBloomFilters() bool {
+	return p.config.SkipBloomFilters
+}
+
+func (p ParquetFileConfig) OptimisticRead() bool {
+	return p.config.OptimisticRead
+}
+
+func (p ParquetFileConfig) ReadBufferSize() int {
+	return p.config.ReadBufferSize
+}
+
+func (p ParquetFileConfig) ReadMode() parquet.ReadMode {
+	return p.config.ReadMode
+}
+
+type ParquetFileView interface {
+	parquet.FileView
+	ReadAtWithContextCloser
+	ParquetFileConfigView
+}
+
+var DefaultFileOptions = []parquet.FileOption{
+	parquet.OptimisticRead(true),
 }
 
 type ParquetFile struct {
 	*parquet.File
 	ReadAtWithContextCloser
-	BloomFiltersLoaded bool
 
-	optimisticReader bool
-}
-
-type ShardOption func(*shardOptions)
-
-func WithFileOptions(fileOptions ...parquet.FileOption) ShardOption {
-	return func(opts *shardOptions) {
-		opts.fileOptions = append(opts.fileOptions, fileOptions...)
-	}
-}
-
-func WithOptimisticReader(optimisticReader bool) ShardOption {
-	return func(opts *shardOptions) {
-		opts.optimisticReader = optimisticReader
-	}
+	ParquetFileConfigView
 }
 
 func (f *ParquetFile) GetPages(ctx context.Context, cc parquet.ColumnChunk, pagesToRead ...int) (*parquet.FilePages, error) {
 	colChunk := cc.(*parquet.FileColumnChunk)
 	reader := f.WithContext(ctx)
 
-	if len(pagesToRead) > 0 && f.optimisticReader {
+	if len(pagesToRead) > 0 && f.OptimisticRead() {
 		offset, err := cc.OffsetIndex()
 		if err != nil {
 			return nil, err
@@ -75,19 +98,15 @@ func (f *ParquetFile) GetPages(ctx context.Context, cc parquet.ColumnChunk, page
 	return pages, nil
 }
 
-func Open(ctx context.Context, r ReadAtWithContextCloser, size int64, opts ...ShardOption) (*ParquetFile, error) {
-	cfg := DefaultShardOptions
-
-	for _, opt := range opts {
-		opt(&cfg)
-	}
-
-	c, err := parquet.NewFileConfig(cfg.fileOptions...)
+func Open(ctx context.Context, r ReadAtWithContextCloser, size int64, opts ...parquet.FileOption) (*ParquetFile, error) {
+	// allow overriding defaults by applying opts args after defaults
+	opts = append(DefaultFileOptions, opts...)
+	cfg, err := parquet.NewFileConfig(opts...)
 	if err != nil {
 		return nil, err
 	}
 
-	file, err := parquet.OpenFile(r.WithContext(ctx), size, cfg.fileOptions...)
+	file, err := parquet.OpenFile(r.WithContext(ctx), size, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -95,12 +114,13 @@ func Open(ctx context.Context, r ReadAtWithContextCloser, size int64, opts ...Sh
 	return &ParquetFile{
 		File:                    file,
 		ReadAtWithContextCloser: r,
-		BloomFiltersLoaded:      !c.SkipBloomFilters,
-		optimisticReader:        cfg.optimisticReader,
+		//BloomFiltersLoaded:      !c.SkipBloomFilters,
+		//optimisticReader:      cfg.optimisticReader,
+		ParquetFileConfigView: ParquetFileConfig{config: cfg},
 	}, nil
 }
 
-func OpenFromBucket(ctx context.Context, bkt objstore.BucketReader, name string, opts ...ShardOption) (*ParquetFile, error) {
+func OpenFromBucket(ctx context.Context, bkt objstore.BucketReader, name string, opts ...parquet.FileOption) (*ParquetFile, error) {
 	attr, err := bkt.Attributes(ctx, name)
 	if err != nil {
 		return nil, err
@@ -110,7 +130,7 @@ func OpenFromBucket(ctx context.Context, bkt objstore.BucketReader, name string,
 	return Open(ctx, r, attr.Size, opts...)
 }
 
-func OpenFromFile(ctx context.Context, path string, opts ...ShardOption) (*ParquetFile, error) {
+func OpenFromFile(ctx context.Context, path string, opts ...parquet.FileOption) (*ParquetFile, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -137,7 +157,7 @@ type ParquetShard interface {
 }
 
 type ParquetOpener interface {
-	Open(ctx context.Context, path string, opts ...ShardOption) (*ParquetFile, error)
+	Open(ctx context.Context, path string, opts ...parquet.FileOption) (*ParquetFile, error)
 }
 
 type ParquetBucketOpener struct {
@@ -150,7 +170,7 @@ func NewParquetBucketOpener(bkt objstore.BucketReader) *ParquetBucketOpener {
 	}
 }
 
-func (o *ParquetBucketOpener) Open(ctx context.Context, name string, opts ...ShardOption) (*ParquetFile, error) {
+func (o *ParquetBucketOpener) Open(ctx context.Context, name string, opts ...parquet.FileOption) (*ParquetFile, error) {
 	return OpenFromBucket(ctx, o.bkt, name, opts...)
 }
 
@@ -160,7 +180,7 @@ func NewParquetLocalFileOpener() *ParquetLocalFileOpener {
 	return &ParquetLocalFileOpener{}
 }
 
-func (o *ParquetLocalFileOpener) Open(ctx context.Context, name string, opts ...ShardOption) (*ParquetFile, error) {
+func (o *ParquetLocalFileOpener) Open(ctx context.Context, name string, opts ...parquet.FileOption) (*ParquetFile, error) {
 	return OpenFromFile(ctx, name, opts...)
 }
 
@@ -176,7 +196,7 @@ func NewParquetShardOpener(
 	labelsFileOpener ParquetOpener,
 	chunksFileOpener ParquetOpener,
 	shard int,
-	opts ...ShardOption,
+	opts ...parquet.FileOption,
 ) (*ParquetShardOpener, error) {
 	labelsFileName := schema.LabelsPfileNameForShard(name, shard)
 	chunksFileName := schema.ChunksPfileNameForShard(name, shard)
