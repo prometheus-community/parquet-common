@@ -124,6 +124,7 @@ func TestMaterializeE2E(t *testing.T) {
 		shard, err := storage.NewParquetShardOpener(
 			ctx, "shard", bucketOpener, bucketOpener, 0, storage.WithPageMaxGapSize(-1),
 		)
+		require.NoError(t, err)
 		s, err := shard.TSDBSchema()
 		require.NoError(t, err)
 		d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())

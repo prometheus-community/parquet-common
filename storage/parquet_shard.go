@@ -197,7 +197,6 @@ func NewParquetShardOpener(
 	shard int,
 	opts ...ShardOption,
 ) (*ParquetShardOpener, error) {
-
 	cfg := DefaultShardOptions
 
 	for _, opt := range opts {

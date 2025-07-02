@@ -77,7 +77,6 @@ func Initialize(s storage.ParquetShard, cs ...Constraint) error {
 }
 
 func Filter(ctx context.Context, s storage.ParquetShard, rgIdx int, cs ...Constraint) ([]RowRange, error) {
-
 	rg := s.LabelsFile().RowGroups()[rgIdx]
 	// Constraints for sorting columns are cheaper to evaluate, so we sort them first.
 	sc := rg.SortingColumns()
@@ -215,9 +214,7 @@ func (ec *equalConstraint) filter(ctx context.Context, rgIdx int, primary bool, 
 	if err != nil {
 		return nil, fmt.Errorf("unable to read column index: %w", err)
 	}
-	var (
-		res = make([]RowRange, 0)
-	)
+	res := make([]RowRange, 0)
 
 	readPgs := make([]pageToRead, 0, 10)
 
@@ -279,7 +276,7 @@ func (ec *equalConstraint) filter(ctx context.Context, rgIdx int, primary bool, 
 		minOffset = dictOff
 	}
 
-	bufRdrAt := ec.s.LabelsFile().ReadAtWithContextCloser.WithContext(ctx)
+	bufRdrAt := ec.s.LabelsFile().WithContext(ctx)
 
 	if ec.s.Opts().OptimisticReader {
 		bufRdrAt = storage.NewOptimisticReaderAt(bufRdrAt, int64(minOffset), int64(maxOffset))

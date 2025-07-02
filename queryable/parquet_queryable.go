@@ -321,7 +321,7 @@ func (b queryableShard) LabelValues(ctx context.Context, name string, limit int6
 
 	results := make([][]string, len(b.shard.LabelsFile().RowGroups()))
 
-	for rgi, _ := range b.shard.LabelsFile().RowGroups() {
+	for rgi := range b.shard.LabelsFile().RowGroups() {
 		errGroup.Go(func() error {
 			cs, err := search.MatchersToConstraint(matchers...)
 			if err != nil {
