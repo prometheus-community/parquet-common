@@ -34,13 +34,11 @@ import (
 type ShardsFinderFunction func(ctx context.Context, mint, maxt int64) ([]storage.ParquetShard, error)
 
 type queryableOpts struct {
-	concurrency                int
-	pagePartitioningMaxGapSize int
+	concurrency int
 }
 
 var DefaultQueryableOpts = queryableOpts{
-	concurrency:                runtime.GOMAXPROCS(0),
-	pagePartitioningMaxGapSize: 10 * 1024,
+	concurrency: runtime.GOMAXPROCS(0),
 }
 
 type QueryableOpts func(*queryableOpts)
@@ -49,13 +47,6 @@ type QueryableOpts func(*queryableOpts)
 func WithConcurrency(concurrency int) QueryableOpts {
 	return func(opts *queryableOpts) {
 		opts.concurrency = concurrency
-	}
-}
-
-// WithPageMaxGapSize set the max gap size between pages that should be downloaded together in a single read call
-func WithPageMaxGapSize(pagePartitioningMaxGapSize int) QueryableOpts {
-	return func(opts *queryableOpts) {
-		opts.pagePartitioningMaxGapSize = pagePartitioningMaxGapSize
 	}
 }
 
@@ -221,7 +212,7 @@ func newQueryableShard(opts *queryableOpts, block storage.ParquetShard, d *schem
 	if err != nil {
 		return nil, err
 	}
-	m, err := search.NewMaterializer(s, d, block, opts.concurrency, opts.pagePartitioningMaxGapSize)
+	m, err := search.NewMaterializer(s, d, block, opts.concurrency)
 	if err != nil {
 		return nil, err
 	}
@@ -246,11 +237,11 @@ func (b queryableShard) Query(ctx context.Context, sorted bool, mint, maxt int64
 			if err != nil {
 				return err
 			}
-			err = search.Initialize(b.shard.LabelsFile(), cs...)
+			err = search.Initialize(b.shard, cs...)
 			if err != nil {
 				return err
 			}
-			rr, err := search.Filter(ctx, b.shard.LabelsFile(), rgi, cs...)
+			rr, err := search.Filter(ctx, b.shard, rgi, cs...)
 			if err != nil {
 				return err
 			}
@@ -296,11 +287,11 @@ func (b queryableShard) LabelNames(ctx context.Context, limit int64, matchers []
 			if err != nil {
 				return err
 			}
-			err = search.Initialize(b.shard.LabelsFile(), cs...)
+			err = search.Initialize(b.shard, cs...)
 			if err != nil {
 				return err
 			}
-			rr, err := search.Filter(ctx, b.shard.LabelsFile(), rgi, cs...)
+			rr, err := search.Filter(ctx, b.shard, rgi, cs...)
 			if err != nil {
 				return err
 			}
@@ -336,11 +327,11 @@ func (b queryableShard) LabelValues(ctx context.Context, name string, limit int6
 			if err != nil {
 				return err
 			}
-			err = search.Initialize(b.shard.LabelsFile(), cs...)
+			err = search.Initialize(b.shard, cs...)
 			if err != nil {
 				return err
 			}
-			rr, err := search.Filter(ctx, b.shard.LabelsFile(), rgi, cs...)
+			rr, err := search.Filter(ctx, b.shard, rgi, cs...)
 			if err != nil {
 				return err
 			}

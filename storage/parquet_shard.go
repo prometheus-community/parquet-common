@@ -26,13 +26,15 @@ import (
 	"github.com/prometheus-community/parquet-common/schema"
 )
 
-var DefaultShardOptions = shardOptions{
-	optimisticReader: true,
+var DefaultShardOptions = ShardOptions{
+	OptimisticReader:           true,
+	PagePartitioningMaxGapSize: 10 * 1024,
 }
 
-type shardOptions struct {
-	fileOptions      []parquet.FileOption
-	optimisticReader bool
+type ShardOptions struct {
+	FileOptions                []parquet.FileOption
+	OptimisticReader           bool
+	PagePartitioningMaxGapSize int
 }
 
 type ParquetFile struct {
@@ -40,20 +42,28 @@ type ParquetFile struct {
 	ReadAtWithContextCloser
 	BloomFiltersLoaded bool
 
-	optimisticReader bool
+	optimisticReader           bool
+	pagePartitioningMaxGapSize int
 }
 
-type ShardOption func(*shardOptions)
+type ShardOption func(*ShardOptions)
 
 func WithFileOptions(fileOptions ...parquet.FileOption) ShardOption {
-	return func(opts *shardOptions) {
-		opts.fileOptions = append(opts.fileOptions, fileOptions...)
+	return func(opts *ShardOptions) {
+		opts.FileOptions = append(opts.FileOptions, fileOptions...)
 	}
 }
 
 func WithOptimisticReader(optimisticReader bool) ShardOption {
-	return func(opts *shardOptions) {
-		opts.optimisticReader = optimisticReader
+	return func(opts *ShardOptions) {
+		opts.OptimisticReader = optimisticReader
+	}
+}
+
+// WithPageMaxGapSize set the max gap size between pages that should be downloaded together in a single read call
+func WithPageMaxGapSize(pagePartitioningMaxGapSize int) ShardOption {
+	return func(opts *ShardOptions) {
+		opts.PagePartitioningMaxGapSize = pagePartitioningMaxGapSize
 	}
 }
 
@@ -88,21 +98,22 @@ func Open(ctx context.Context, r ReadAtWithContextCloser, size int64, opts ...Sh
 		opt(&cfg)
 	}
 
-	c, err := parquet.NewFileConfig(cfg.fileOptions...)
+	c, err := parquet.NewFileConfig(cfg.FileOptions...)
 	if err != nil {
 		return nil, err
 	}
 
-	file, err := parquet.OpenFile(r.WithContext(ctx), size, cfg.fileOptions...)
+	file, err := parquet.OpenFile(r.WithContext(ctx), size, cfg.FileOptions...)
 	if err != nil {
 		return nil, err
 	}
 
 	return &ParquetFile{
-		File:                    file,
-		ReadAtWithContextCloser: r,
-		BloomFiltersLoaded:      !c.SkipBloomFilters,
-		optimisticReader:        cfg.optimisticReader,
+		File:                       file,
+		ReadAtWithContextCloser:    r,
+		BloomFiltersLoaded:         !c.SkipBloomFilters,
+		optimisticReader:           cfg.OptimisticReader,
+		pagePartitioningMaxGapSize: cfg.PagePartitioningMaxGapSize,
 	}, nil
 }
 
@@ -140,6 +151,7 @@ type ParquetShard interface {
 	LabelsFile() *ParquetFile
 	ChunksFile() *ParquetFile
 	TSDBSchema() (*schema.TSDBSchema, error)
+	Opts() ShardOptions
 }
 
 type ParquetOpener interface {
@@ -174,6 +186,7 @@ type ParquetShardOpener struct {
 	labelsFile, chunksFile *ParquetFile
 	schema                 *schema.TSDBSchema
 	o                      sync.Once
+	cfg                    ShardOptions
 }
 
 func NewParquetShardOpener(
@@ -184,6 +197,13 @@ func NewParquetShardOpener(
 	shard int,
 	opts ...ShardOption,
 ) (*ParquetShardOpener, error) {
+
+	cfg := DefaultShardOptions
+
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
 	labelsFileName := schema.LabelsPfileNameForShard(name, shard)
 	chunksFileName := schema.ChunksPfileNameForShard(name, shard)
 
@@ -208,7 +228,12 @@ func NewParquetShardOpener(
 	return &ParquetShardOpener{
 		labelsFile: labelsFile,
 		chunksFile: chunksFile,
+		cfg:        cfg,
 	}, nil
+}
+
+func (s *ParquetShardOpener) Opts() ShardOptions {
+	return s.cfg
 }
 
 func (s *ParquetShardOpener) LabelsFile() *ParquetFile {

@@ -19,12 +19,10 @@ import (
 	"fmt"
 	"slices"
 	"sort"
-	"sync"
 
 	"github.com/parquet-go/parquet-go"
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/prometheus-community/parquet-common/schema"
 	"github.com/prometheus-community/parquet-common/storage"
@@ -37,7 +35,7 @@ type Constraint interface {
 	// filter returns a set of non-overlapping increasing row indexes that may satisfy the constraint.
 	filter(ctx context.Context, rgIdx int, primary bool, rr []RowRange) ([]RowRange, error)
 	// init initializes the constraint with respect to the file schema and projections.
-	init(f *storage.ParquetFile) error
+	init(f storage.ParquetShard) error
 	// path is the path for the column that is constrained
 	path() string
 }
@@ -69,18 +67,18 @@ func MatchersToConstraint(matchers ...*labels.Matcher) ([]Constraint, error) {
 	return r, nil
 }
 
-func Initialize(f *storage.ParquetFile, cs ...Constraint) error {
+func Initialize(s storage.ParquetShard, cs ...Constraint) error {
 	for i := range cs {
-		if err := cs[i].init(f); err != nil {
+		if err := cs[i].init(s); err != nil {
 			return fmt.Errorf("unable to initialize constraint %d: %w", i, err)
 		}
 	}
 	return nil
 }
 
-func Filter(ctx context.Context, f *storage.ParquetFile, rgIdx int, cs ...Constraint) ([]RowRange, error) {
+func Filter(ctx context.Context, s storage.ParquetShard, rgIdx int, cs ...Constraint) ([]RowRange, error) {
 
-	rg := f.RowGroups()[rgIdx]
+	rg := s.LabelsFile().RowGroups()[rgIdx]
 	// Constraints for sorting columns are cheaper to evaluate, so we sort them first.
 	sc := rg.SortingColumns()
 
@@ -113,7 +111,6 @@ type pageToRead struct {
 	pfrom int64
 	pto   int64
 
-	// -1 for dictionary page
 	idx int
 
 	// for data and dictionary pages
@@ -172,7 +169,7 @@ type equalConstraint struct {
 	pth string
 
 	val parquet.Value
-	f   *storage.ParquetFile
+	s   storage.ParquetShard
 
 	comp func(l, r parquet.Value) int
 }
@@ -191,7 +188,7 @@ func (ec *equalConstraint) filter(ctx context.Context, rgIdx int, primary bool, 
 	}
 	from, to := rr[0].from, rr[len(rr)-1].from+rr[len(rr)-1].count
 
-	rg := ec.f.RowGroups()[rgIdx]
+	rg := ec.s.LabelsFile().RowGroups()[rgIdx]
 
 	col, ok := rg.Schema().Lookup(ec.path())
 	if !ok {
@@ -210,12 +207,6 @@ func (ec *equalConstraint) filter(ctx context.Context, rgIdx int, primary bool, 
 		return nil, nil
 	}
 
-	pgs, err := ec.f.GetPages(ctx, cc)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to get pages")
-	}
-	defer func() { _ = pgs.Close() }()
-
 	oidx, err := cc.OffsetIndex()
 	if err != nil {
 		return nil, fmt.Errorf("unable to read offset index: %w", err)
@@ -228,8 +219,7 @@ func (ec *equalConstraint) filter(ctx context.Context, rgIdx int, primary bool, 
 		res = make([]RowRange, 0)
 	)
 
-	dictOff, dictSz := ec.f.DictionaryPageBounds(rgIdx, col.ColumnIndex)
-	readPgs := []pageToRead{{idx: -1, off: int(dictOff), csz: int(dictSz)}}
+	readPgs := make([]pageToRead, 0, 10)
 
 	for i := 0; i < cidx.NumPages(); i++ {
 		poff, pcsz := uint64(oidx.Offset(i)), oidx.CompressedPageSize(i)
@@ -273,94 +263,78 @@ func (ec *equalConstraint) filter(ctx context.Context, rgIdx int, primary bool, 
 		readPgs = append(readPgs, pageToRead{pfrom: pfrom, pto: pto, idx: i, off: int(poff), csz: int(pcsz)})
 	}
 
-	if len(readPgs) == 1 {
+	// Did not find any pages
+	if len(readPgs) == 0 {
 		return nil, nil
 	}
 
-	partitioner := util.NewGapBasedPartitioner(10 * 1024)
-	parts := partitioner.Partition(len(readPgs), func(i int) (int, int) {
-		return readPgs[i].off, readPgs[i].off + readPgs[i].csz
-	})
+	dictOff, dictSz := ec.s.LabelsFile().DictionaryPageBounds(rgIdx, col.ColumnIndex)
 
-	var mu sync.Mutex
-	g, ctx := errgroup.WithContext(ctx)
-	for _, p := range parts {
-		g.Go(func() error {
-			partFrom, partTo := p.ElemRng[0], p.ElemRng[1]-1
+	minOffset := uint64(readPgs[0].off)
+	maxOffset := readPgs[len(readPgs)-1].off + readPgs[len(readPgs)-1].csz
 
-			minOffset := readPgs[partFrom].off
-			maxOffset := readPgs[partTo].off + readPgs[partTo].csz
+	// If the gap between the first page and the dic page is less than PagePartitioningMaxGapSize,
+	// we include the dic to be read in the single read
+	if int(minOffset-(dictOff+dictSz)) < ec.s.Opts().PagePartitioningMaxGapSize {
+		minOffset = dictOff
+	}
 
-			bufRdrAt := storage.NewOptimisticReaderAt(ec.f.ReadAtWithContextCloser.WithContext(ctx), int64(minOffset), int64(maxOffset))
+	bufRdrAt := ec.s.LabelsFile().ReadAtWithContextCloser.WithContext(ctx)
 
-			pgs := cc.(*parquet.FileColumnChunk).PagesFrom(bufRdrAt)
-			defer func() { _ = pgs.Close() }()
+	if ec.s.Opts().OptimisticReader {
+		bufRdrAt = storage.NewOptimisticReaderAt(bufRdrAt, int64(minOffset), int64(maxOffset))
+	}
 
-			symbols := new(symbolTable)
-			for _, p := range readPgs[partFrom : partTo+1] {
-				// skip faked dictionary page again
-				if p.idx == -1 {
-					continue
-				}
+	pgs := cc.(*parquet.FileColumnChunk).PagesFrom(bufRdrAt)
+	defer func() { _ = pgs.Close() }()
 
-				pfrom := p.pfrom
-				pto := p.pto
+	symbols := new(symbolTable)
+	for _, p := range readPgs {
+		pfrom := p.pfrom
+		pto := p.pto
 
-				if err := pgs.SeekToRow(pfrom); err != nil {
-					return fmt.Errorf("unable to seek to row: %w", err)
-				}
-				pg, err := pgs.ReadPage()
-				if err != nil {
-					return fmt.Errorf("unable to read page: %w", err)
-				}
+		if err := pgs.SeekToRow(pfrom); err != nil {
+			return nil, fmt.Errorf("unable to seek to row: %w", err)
+		}
+		pg, err := pgs.ReadPage()
+		if err != nil {
+			return nil, fmt.Errorf("unable to read page: %w", err)
+		}
 
-				symbols.Reset(pg)
+		symbols.Reset(pg)
 
-				// The page has the value, we need to find the matching row ranges
-				n := int(pg.NumRows())
-				bl := int(max(pfrom, from) - pfrom)
-				br := n - int(pto-min(pto, to))
-				var l, r int
-				switch {
-				case cidx.IsAscending() && primary:
-					l = sort.Search(n, func(i int) bool { return ec.comp(ec.val, symbols.Get(i)) <= 0 })
-					r = sort.Search(n, func(i int) bool { return ec.comp(ec.val, symbols.Get(i)) < 0 })
+		// The page has the value, we need to find the matching row ranges
+		n := int(pg.NumRows())
+		bl := int(max(pfrom, from) - pfrom)
+		br := n - int(pto-min(pto, to))
+		var l, r int
+		switch {
+		case cidx.IsAscending() && primary:
+			l = sort.Search(n, func(i int) bool { return ec.comp(ec.val, symbols.Get(i)) <= 0 })
+			r = sort.Search(n, func(i int) bool { return ec.comp(ec.val, symbols.Get(i)) < 0 })
 
-					if lv, rv := max(bl, l), min(br, r); rv > lv {
-						mu.Lock()
-						res = append(res, RowRange{pfrom + int64(lv), int64(rv - lv)})
-						mu.Unlock()
-					}
-				default:
-					off, count := bl, 0
-					for j := bl; j < br; j++ {
-						if !ec.matches(symbols.Get(j)) {
-							if count != 0 {
-								mu.Lock()
-								res = append(res, RowRange{pfrom + int64(off), int64(count)})
-								mu.Unlock()
-							}
-							off, count = j, 0
-						} else {
-							if count == 0 {
-								off = j
-							}
-							count++
-						}
-					}
+			if lv, rv := max(bl, l), min(br, r); rv > lv {
+				res = append(res, RowRange{pfrom + int64(lv), int64(rv - lv)})
+			}
+		default:
+			off, count := bl, 0
+			for j := bl; j < br; j++ {
+				if !ec.matches(symbols.Get(j)) {
 					if count != 0 {
-						mu.Lock()
 						res = append(res, RowRange{pfrom + int64(off), int64(count)})
-						mu.Unlock()
 					}
+					off, count = j, 0
+				} else {
+					if count == 0 {
+						off = j
+					}
+					count++
 				}
 			}
-
-			return nil
-		})
-	}
-	if err := g.Wait(); err != nil {
-		return nil, fmt.Errorf("unable to scan pages: %w", err)
+			if count != 0 {
+				res = append(res, RowRange{pfrom + int64(off), int64(count)})
+			}
+		}
 	}
 
 	if len(res) == 0 {
@@ -369,9 +343,9 @@ func (ec *equalConstraint) filter(ctx context.Context, rgIdx int, primary bool, 
 	return intersectRowRanges(simplify(res), rr), nil
 }
 
-func (ec *equalConstraint) init(f *storage.ParquetFile) error {
-	c, ok := f.Schema().Lookup(ec.path())
-	ec.f = f
+func (ec *equalConstraint) init(s storage.ParquetShard) error {
+	c, ok := s.LabelsFile().Schema().Lookup(ec.path())
+	ec.s = s
 	if !ok {
 		return nil
 	}
@@ -395,7 +369,7 @@ func (ec *equalConstraint) matches(v parquet.Value) bool {
 }
 
 func (ec *equalConstraint) skipByBloomfilter(cc parquet.ColumnChunk) (bool, error) {
-	if !ec.f.BloomFiltersLoaded {
+	if !ec.s.LabelsFile().BloomFiltersLoaded {
 		return false, nil
 	}
 
@@ -417,7 +391,7 @@ func Regex(path string, r *labels.FastRegexMatcher) Constraint {
 type regexConstraint struct {
 	pth   string
 	cache map[parquet.Value]bool
-	f     *storage.ParquetFile
+	s     storage.ParquetShard
 	r     *labels.FastRegexMatcher
 }
 
@@ -431,7 +405,7 @@ func (rc *regexConstraint) filter(ctx context.Context, rgIdx int, primary bool, 
 	}
 	from, to := rr[0].from, rr[len(rr)-1].from+rr[len(rr)-1].count
 
-	rg := rc.f.RowGroups()[rgIdx]
+	rg := rc.s.LabelsFile().RowGroups()[rgIdx]
 
 	col, ok := rg.Schema().Lookup(rc.path())
 	if !ok {
@@ -444,7 +418,7 @@ func (rc *regexConstraint) filter(ctx context.Context, rgIdx int, primary bool, 
 	}
 	cc := rg.ColumnChunks()[col.ColumnIndex]
 
-	pgs, err := rc.f.GetPages(ctx, cc)
+	pgs, err := rc.s.LabelsFile().GetPages(ctx, cc)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get pages")
 	}
@@ -525,9 +499,9 @@ func (rc *regexConstraint) filter(ctx context.Context, rgIdx int, primary bool, 
 	return intersectRowRanges(simplify(res), rr), nil
 }
 
-func (rc *regexConstraint) init(f *storage.ParquetFile) error {
-	c, ok := f.Schema().Lookup(rc.path())
-	rc.f = f
+func (rc *regexConstraint) init(s storage.ParquetShard) error {
+	c, ok := s.LabelsFile().Schema().Lookup(rc.path())
+	rc.s = s
 	if !ok {
 		return nil
 	}
@@ -572,8 +546,8 @@ func (nc *notConstraint) filter(ctx context.Context, rgIdx int, primary bool, rr
 	return complementRowRanges(base, rr), nil
 }
 
-func (nc *notConstraint) init(f *storage.ParquetFile) error {
-	return nc.c.init(f)
+func (nc *notConstraint) init(s storage.ParquetShard) error {
+	return nc.c.init(s)
 }
 
 func (nc *notConstraint) path() string {

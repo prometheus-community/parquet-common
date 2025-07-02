@@ -50,7 +50,6 @@ func NewMaterializer(s *schema.TSDBSchema,
 	d *schema.PrometheusParquetChunksDecoder,
 	block storage.ParquetShard,
 	concurrency int,
-	maxGapPartitioning int,
 ) (*Materializer, error) {
 	colIdx, ok := block.LabelsFile().Schema().Lookup(schema.ColIndexes)
 	if !ok {
@@ -73,7 +72,7 @@ func NewMaterializer(s *schema.TSDBSchema,
 		b:              block,
 		colIdx:         colIdx.ColumnIndex,
 		concurrency:    concurrency,
-		partitioner:    util.NewGapBasedPartitioner(maxGapPartitioning),
+		partitioner:    util.NewGapBasedPartitioner(block.Opts().PagePartitioningMaxGapSize),
 		dataColToIndex: dataColToIndex,
 	}, nil
 }

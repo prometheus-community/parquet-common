@@ -171,6 +171,7 @@ func TestQueryable(t *testing.T) {
 				storage.WithFileOptions(
 					parquet.SkipBloomFilters(true),
 				),
+				storage.WithOptimisticReader(true),
 			},
 		},
 	}
@@ -544,7 +545,7 @@ func convertToParquet(t *testing.T, ctx context.Context, bkt *bucket, data util.
 
 	bucketOpener := storage.NewParquetBucketOpener(bkt)
 	shard, err := storage.NewParquetShardOpener(
-		ctx, "shard", bucketOpener, bucketOpener, 0,
+		ctx, "shard", bucketOpener, bucketOpener, 0, opts...,
 	)
 	if err != nil {
 		t.Fatalf("error opening parquet shard: %v", err)

@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"slices"
 	"strconv"
 	"strings"
@@ -30,7 +31,7 @@ import (
 	"github.com/prometheus-community/parquet-common/storage"
 )
 
-func buildFile[T any](t testing.TB, rows []T) *storage.ParquetFile {
+func buildFile[T any](t testing.TB, rows []T) storage.ParquetShard {
 	buf := bytes.NewBuffer(nil)
 	w := parquet.NewGenericWriter[T](buf, parquet.PageBufferSize(10))
 	for _, row := range rows {
@@ -44,13 +45,21 @@ func buildFile[T any](t testing.TB, rows []T) *storage.ParquetFile {
 	bkt, err := filesystem.NewBucket(t.TempDir())
 	require.NoError(t, err)
 	reader := bytes.NewReader(buf.Bytes())
-	require.NoError(t, bkt.Upload(context.Background(), "pipe", reader))
+	require.NoError(t, bkt.Upload(context.Background(), "pipe/0.labels.parquet", reader))
 
-	f, err := storage.OpenFromBucket(context.Background(), bkt, "pipe", storage.WithFileOptions(parquet.ReadBufferSize(1)))
+	// Lets create a mocked chunks file
+	_, err = reader.Seek(0, io.SeekStart)
+	require.NoError(t, err)
+	require.NoError(t, bkt.Upload(context.Background(), "pipe/0.chunks.parquet", reader))
+
+	bucketOpener := storage.NewParquetBucketOpener(bkt)
+	shard, err := storage.NewParquetShardOpener(
+		context.Background(), "pipe", bucketOpener, bucketOpener, 0,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return f
+	return shard
 }
 
 func mustNewFastRegexMatcher(t testing.TB, s string) *labels.FastRegexMatcher {
@@ -80,7 +89,7 @@ func BenchmarkConstraints(b *testing.B) {
 		}
 	}
 
-	sfile := buildFile(b, rows)
+	shard := buildFile(b, rows)
 
 	tests := []struct {
 		c []Constraint
@@ -120,11 +129,11 @@ func BenchmarkConstraints(b *testing.B) {
 			b.ResetTimer()
 			b.ReportAllocs()
 			for n := 0; n < b.N; n++ {
-				if err := Initialize(sfile, tt.c...); err != nil {
+				if err := Initialize(shard, tt.c...); err != nil {
 					b.Fatal(err)
 				}
-				for i := range sfile.RowGroups() {
-					rr, err := Filter(context.Background(), sfile, i, tt.c...)
+				for i := range shard.LabelsFile().RowGroups() {
+					rr, err := Filter(context.Background(), shard, i, tt.c...)
 					if err != nil {
 						b.Fatal(err)
 					}
@@ -148,21 +157,21 @@ func TestContextCancelled(t *testing.T) {
 		})
 	}
 
-	sfile := buildFile(t, rows)
+	shard := buildFile(t, rows)
 
 	for _, c := range []Constraint{
 		Equal("A", parquet.ValueOf(rows[len(rows)-1].A)),
 		Regex("A", mustNewFastRegexMatcher(t, rows[len(rows)-1].A)),
 		Not(Equal("A", parquet.ValueOf(rows[len(rows)-1].A))),
 	} {
-		if err := Initialize(sfile, c); err != nil {
+		if err := Initialize(shard, c); err != nil {
 			t.Fatal(err)
 		}
 
-		for i := range sfile.RowGroups() {
+		for i := range shard.LabelsFile().RowGroups() {
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
-			_, err := Filter(ctx, sfile, i, c)
+			_, err := Filter(ctx, shard, i, c)
 			require.ErrorContains(t, err, "context canceled")
 		}
 	}
@@ -470,14 +479,14 @@ func TestFilter(t *testing.T) {
 			},
 		} {
 
-			sfile := buildFile(t, tt.rows)
+			shard := buildFile(t, tt.rows)
 			for _, expectation := range tt.expectations {
 				t.Run("", func(t *testing.T) {
-					if err := Initialize(sfile, expectation.constraints...); err != nil {
+					if err := Initialize(shard, expectation.constraints...); err != nil {
 						t.Fatal(err)
 					}
-					for i := range sfile.RowGroups() {
-						rr, err := Filter(context.Background(), sfile, i, expectation.constraints...)
+					for i := range shard.LabelsFile().RowGroups() {
+						rr, err := Filter(context.Background(), shard, i, expectation.constraints...)
 						if err != nil {
 							t.Fatal(err)
 						}
