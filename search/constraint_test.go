@@ -46,7 +46,7 @@ func buildFile[T any](t testing.TB, rows []T) *storage.ParquetFile {
 	reader := bytes.NewReader(buf.Bytes())
 	require.NoError(t, bkt.Upload(context.Background(), "pipe", reader))
 
-	f, err := storage.OpenFromBucket(context.Background(), bkt, "pipe", storage.WithFileOptions(parquet.ReadBufferSize(1)))
+	f, err := storage.OpenFromBucket(context.Background(), bkt, "pipe", parquet.ReadBufferSize(1))
 	if err != nil {
 		t.Fatal(err)
 	}
