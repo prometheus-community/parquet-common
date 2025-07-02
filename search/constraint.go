@@ -229,7 +229,7 @@ func (ec *equalConstraint) filter(ctx context.Context, rgIdx int, primary bool, 
 	)
 
 	dictOff, dictSz := ec.f.DictionaryPageBounds(rgIdx, col.ColumnIndex)
-	readPgs := []pageToRead{pageToRead{idx: -1, off: int(dictOff), csz: int(dictSz)}}
+	readPgs := []pageToRead{{idx: -1, off: int(dictOff), csz: int(dictSz)}}
 
 	for i := 0; i < cidx.NumPages(); i++ {
 		poff, pcsz := uint64(oidx.Offset(i)), oidx.CompressedPageSize(i)
