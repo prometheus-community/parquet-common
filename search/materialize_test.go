@@ -131,7 +131,7 @@ func TestMaterializeE2E(t *testing.T) {
 	})
 }
 
-func convertToParquet(t *testing.T, ctx context.Context, bkt *filesystem.Bucket, data util.TestData, h convert.Convertible, opts ...storage.ShardOption) storage.ParquetShard {
+func convertToParquet(t *testing.T, ctx context.Context, bkt *filesystem.Bucket, data util.TestData, h convert.Convertible, opts ...parquet.FileOption) storage.ParquetShard {
 	colDuration := time.Hour
 	shards, err := convert.ConvertTSDBBlock(
 		ctx,
@@ -149,7 +149,7 @@ func convertToParquet(t *testing.T, ctx context.Context, bkt *filesystem.Bucket,
 
 	bucketOpener := storage.NewParquetBucketOpener(bkt)
 	shard, err := storage.NewParquetShardOpener(
-		ctx, "shard", bucketOpener, bucketOpener, 0,
+		ctx, "shard", bucketOpener, bucketOpener, 0, opts...,
 	)
 	require.NoError(t, err)
 

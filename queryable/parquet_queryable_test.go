@@ -549,7 +549,7 @@ func convertToParquet(t *testing.T, ctx context.Context, bkt *bucket, data util.
 	return shard
 }
 
-func convertToParquetForBenchWithCountingBucket(tb testing.TB, ctx context.Context, bkt *bucket, cbkt *countingBucket, data util.TestData, h convert.Convertible, opts ...storage.ShardOption) storage.ParquetShard {
+func convertToParquetForBenchWithCountingBucket(tb testing.TB, ctx context.Context, bkt *bucket, cbkt *countingBucket, data util.TestData, h convert.Convertible, opts ...parquet.FileOption) storage.ParquetShard {
 	colDuration := time.Hour
 	shards, err := convert.ConvertTSDBBlock(
 		ctx,
@@ -571,7 +571,7 @@ func convertToParquetForBenchWithCountingBucket(tb testing.TB, ctx context.Conte
 
 	bucketOpener := storage.NewParquetBucketOpener(cbkt)
 	shard, err := storage.NewParquetShardOpener(
-		ctx, "shard", bucketOpener, bucketOpener, 0,
+		ctx, "shard", bucketOpener, bucketOpener, 0, opts...,
 	)
 	if err != nil {
 		tb.Fatalf("error opening parquet shard: %v", err)
