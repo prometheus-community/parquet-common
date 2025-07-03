@@ -66,6 +66,7 @@ func (p ParquetFileConfig) ReadMode() parquet.ReadMode {
 type ParquetFileView interface {
 	parquet.FileView
 	ReadAtWithContextCloser
+
 	ParquetFileConfigView
 }
 
@@ -80,17 +81,21 @@ type ParquetFile struct {
 	ParquetFileConfigView
 }
 
-func (f *ParquetFile) GetPages(ctx context.Context, cc parquet.ColumnChunk, pagesToRead ...int) (*parquet.FilePages, error) {
-	colChunk := cc.(*parquet.FileColumnChunk)
-	reader := f.WithContext(ctx)
+//func (f *ParquetFile) Size() int64 {
+//	return f.ReadAtWithContextCloser.Size()
+//}
 
-	if len(pagesToRead) > 0 && f.OptimisticRead() {
+func GetPages(ctx context.Context, fileView ParquetFileView, cc parquet.ColumnChunk, optimisticReadPages ...int) (*parquet.FilePages, error) {
+	colChunk := cc.(*parquet.FileColumnChunk)
+	reader := fileView.WithContext(ctx)
+
+	if len(optimisticReadPages) > 0 && fileView.OptimisticRead() {
 		offset, err := cc.OffsetIndex()
 		if err != nil {
 			return nil, err
 		}
-		minOffset := offset.Offset(pagesToRead[0])
-		maxOffset := offset.Offset(pagesToRead[len(pagesToRead)-1]) + offset.CompressedPageSize(pagesToRead[len(pagesToRead)-1])
+		minOffset := offset.Offset(optimisticReadPages[0])
+		maxOffset := offset.Offset(optimisticReadPages[len(optimisticReadPages)-1]) + offset.CompressedPageSize(optimisticReadPages[len(optimisticReadPages)-1])
 		reader = newOptimisticReaderAt(reader, minOffset, maxOffset)
 	}
 
@@ -114,9 +119,7 @@ func Open(ctx context.Context, r ReadAtWithContextCloser, size int64, opts ...pa
 	return &ParquetFile{
 		File:                    file,
 		ReadAtWithContextCloser: r,
-		//BloomFiltersLoaded:      !c.SkipBloomFilters,
-		//optimisticReader:      cfg.optimisticReader,
-		ParquetFileConfigView: ParquetFileConfig{config: cfg},
+		ParquetFileConfigView:   ParquetFileConfig{config: cfg},
 	}, nil
 }
 
@@ -151,13 +154,13 @@ func OpenFromFile(ctx context.Context, path string, opts ...parquet.FileOption) 
 }
 
 type ParquetShard interface {
-	LabelsFile() *ParquetFile
-	ChunksFile() *ParquetFile
+	LabelsFile() ParquetFileView
+	ChunksFile() ParquetFileView
 	TSDBSchema() (*schema.TSDBSchema, error)
 }
 
 type ParquetOpener interface {
-	Open(ctx context.Context, path string, opts ...parquet.FileOption) (*ParquetFile, error)
+	Open(ctx context.Context, path string, opts ...parquet.FileOption) (ParquetFileView, error)
 }
 
 type ParquetBucketOpener struct {
@@ -170,7 +173,7 @@ func NewParquetBucketOpener(bkt objstore.BucketReader) *ParquetBucketOpener {
 	}
 }
 
-func (o *ParquetBucketOpener) Open(ctx context.Context, name string, opts ...parquet.FileOption) (*ParquetFile, error) {
+func (o *ParquetBucketOpener) Open(ctx context.Context, name string, opts ...parquet.FileOption) (ParquetFileView, error) {
 	return OpenFromBucket(ctx, o.bkt, name, opts...)
 }
 
@@ -180,12 +183,12 @@ func NewParquetLocalFileOpener() *ParquetLocalFileOpener {
 	return &ParquetLocalFileOpener{}
 }
 
-func (o *ParquetLocalFileOpener) Open(ctx context.Context, name string, opts ...parquet.FileOption) (*ParquetFile, error) {
+func (o *ParquetLocalFileOpener) Open(ctx context.Context, name string, opts ...parquet.FileOption) (ParquetFileView, error) {
 	return OpenFromFile(ctx, name, opts...)
 }
 
 type ParquetShardOpener struct {
-	labelsFile, chunksFile *ParquetFile
+	labelsFile, chunksFile ParquetFileView
 	schema                 *schema.TSDBSchema
 	o                      sync.Once
 }
@@ -203,7 +206,7 @@ func NewParquetShardOpener(
 
 	errGroup := errgroup.Group{}
 
-	var labelsFile, chunksFile *ParquetFile
+	var labelsFile, chunksFile ParquetFileView
 
 	errGroup.Go(func() (err error) {
 		labelsFile, err = labelsFileOpener.Open(ctx, labelsFileName, opts...)
@@ -225,18 +228,18 @@ func NewParquetShardOpener(
 	}, nil
 }
 
-func (s *ParquetShardOpener) LabelsFile() *ParquetFile {
+func (s *ParquetShardOpener) LabelsFile() ParquetFileView {
 	return s.labelsFile
 }
 
-func (s *ParquetShardOpener) ChunksFile() *ParquetFile {
+func (s *ParquetShardOpener) ChunksFile() ParquetFileView {
 	return s.chunksFile
 }
 
 func (s *ParquetShardOpener) TSDBSchema() (*schema.TSDBSchema, error) {
 	var err error
 	s.o.Do(func() {
-		s.schema, err = schema.FromLabelsFile(s.labelsFile.File)
+		s.schema, err = schema.FromLabelsFile(s.labelsFile)
 	})
 	return s.schema, err
 }
