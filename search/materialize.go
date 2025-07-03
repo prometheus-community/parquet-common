@@ -189,7 +189,7 @@ func (m *Materializer) MaterializeAllLabelValues(ctx context.Context, name strin
 		return []string{}, nil
 	}
 	cc := labelsRg.ColumnChunks()[cIdx.ColumnIndex]
-	pages, err := m.b.LabelsFile().GetPages(ctx, cc)
+	pages, err := storage.GetPages(ctx, m.b.LabelsFile(), cc)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get pages")
 	}
@@ -297,7 +297,7 @@ func (m *Materializer) materializeChunks(ctx context.Context, rgi int, mint, max
 	return r, nil
 }
 
-func (m *Materializer) materializeColumn(ctx context.Context, file *storage.ParquetFile, group parquet.RowGroup, cc parquet.ColumnChunk, rr []RowRange) ([]parquet.Value, error) {
+func (m *Materializer) materializeColumn(ctx context.Context, file storage.ParquetFileView, group parquet.RowGroup, cc parquet.ColumnChunk, rr []RowRange) ([]parquet.Value, error) {
 	if len(rr) == 0 {
 		return nil, nil
 	}
@@ -346,7 +346,7 @@ func (m *Materializer) materializeColumn(ctx context.Context, file *storage.Parq
 
 	for _, p := range pageRanges {
 		errGroup.Go(func() error {
-			pgs, err := file.GetPages(ctx, cc, p.pages...)
+			pgs, err := storage.GetPages(ctx, file, cc, p.pages...)
 			if err != nil {
 				return errors.Wrap(err, "failed to get pages")
 			}
