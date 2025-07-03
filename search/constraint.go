@@ -276,13 +276,11 @@ func (ec *equalConstraint) filter(ctx context.Context, rgIdx int, primary bool, 
 		minOffset = dictOff
 	}
 
-	bufRdrAt := ec.s.LabelsFile().WithContext(ctx)
-
-	if ec.s.Opts().OptimisticReader {
-		bufRdrAt = storage.NewOptimisticReaderAt(bufRdrAt, int64(minOffset), int64(maxOffset))
+	pgs, err := ec.s.LabelsFile().GetPages(ctx, cc, int64(minOffset), int64(maxOffset))
+	if err != nil {
+		return nil, err
 	}
 
-	pgs := cc.(*parquet.FileColumnChunk).PagesFrom(bufRdrAt)
 	defer func() { _ = pgs.Close() }()
 
 	symbols := new(symbolTable)
@@ -415,7 +413,7 @@ func (rc *regexConstraint) filter(ctx context.Context, rgIdx int, primary bool, 
 	}
 	cc := rg.ColumnChunks()[col.ColumnIndex]
 
-	pgs, err := rc.s.LabelsFile().GetPages(ctx, cc)
+	pgs, err := rc.s.LabelsFile().GetPages(ctx, cc, 0, 0)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get pages")
 	}

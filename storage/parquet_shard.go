@@ -67,17 +67,11 @@ func WithPageMaxGapSize(pagePartitioningMaxGapSize int) ShardOption {
 	}
 }
 
-func (f *ParquetFile) GetPages(ctx context.Context, cc parquet.ColumnChunk, pagesToRead ...int) (*parquet.FilePages, error) {
+func (f *ParquetFile) GetPages(ctx context.Context, cc parquet.ColumnChunk, minOffset, maxOffset int64) (*parquet.FilePages, error) {
 	colChunk := cc.(*parquet.FileColumnChunk)
 	reader := f.WithContext(ctx)
 
-	if len(pagesToRead) > 0 && f.optimisticReader {
-		offset, err := cc.OffsetIndex()
-		if err != nil {
-			return nil, err
-		}
-		minOffset := offset.Offset(pagesToRead[0])
-		maxOffset := offset.Offset(pagesToRead[len(pagesToRead)-1]) + offset.CompressedPageSize(pagesToRead[len(pagesToRead)-1])
+	if f.optimisticReader {
 		reader = NewOptimisticReaderAt(reader, minOffset, maxOffset)
 	}
 
