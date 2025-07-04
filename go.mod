@@ -4,6 +4,7 @@ go 1.23.4
 
 require (
 	github.com/dennwc/varint v1.0.0
+	github.com/efficientgo/core v1.0.0-rc.3
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/parquet-go/parquet-go v0.25.1
 	github.com/pkg/errors v0.9.1
@@ -29,7 +30,6 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/edsrzf/mmap-go v1.2.0 // indirect
-	github.com/efficientgo/core v1.0.0-rc.3 // indirect
 	github.com/facette/natsort v0.0.0-20181210072756-2cd4dd1e2dcb // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-kit/log v0.2.1 // indirect
@@ -37,7 +37,7 @@ require (
 	github.com/go-logr/logr v1.4.2 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
-	github.com/golang-jwt/jwt/v5 v5.2.1 // indirect
+	github.com/golang-jwt/jwt/v5 v5.2.2 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
