@@ -16,12 +16,6 @@ jobs:
       - name: Run benchmark
         run: go test -bench=BenchmarkSelect -run=^$ ./search/... -benchtime=1s -count 5 | tee output.txt
 
-      - name: Download previous benchmark data
-        uses: actions/cache@v4
-        with:
-          path: ./cache
-          key: ${{ runner.os }}-benchmark
-
       - name: Store benchmark result
         uses: benchmark-action/github-action-benchmark@v1
         with:
@@ -29,8 +23,7 @@ jobs:
           tool: 'go'
           # Where the output from the benchmark tool is stored
           output-file-path: output.txt
-          # Where the previous data file is stored
-          external-data-json-path: ./cache/benchmark-data.json
+          auto-push: true
           # Workflow will fail when an alert happens
           fail-on-alert: true
           # GitHub API token to make a commit comment
@@ -40,4 +33,3 @@ jobs:
           summary-always: true
           alert-threshold: "200%"
           alert-comment-cc-users: "@jesusvazquez, @alanprot, @francoposa, @MichaHoffmann, @npazosmendez, @yeya24"
-      # Upload the updated cache file for the next job by actions/cache
