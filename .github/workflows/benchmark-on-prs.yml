@@ -1,7 +1,8 @@
 name: Benchmark Queryable Select
 on:
-  pull_request:
   push:
+    branches:
+      - main
 
 permissions:
   contents: write
