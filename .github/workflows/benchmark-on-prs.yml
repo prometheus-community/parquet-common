@@ -3,6 +3,10 @@ on:
   pull_request:
   push:
 
+permissions:
+  contents: write
+  deployments: write
+
 jobs:
   benchmark:
     name: Performance regression check
