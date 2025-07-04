@@ -49,7 +49,7 @@ To convert one or more TSDB block to parquet we can just use the ConvertTSDBBloc
 ```
 ### Querying Parquet File
 
-```\go
+```go
   blockDir := "/path/to/block"
   ctx := context.Background()
 
