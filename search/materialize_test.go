@@ -110,7 +110,7 @@ func TestMaterializeE2E(t *testing.T) {
 		s, err := shard.TSDBSchema()
 		require.NoError(t, err)
 		d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
-		m, err := NewMaterializer(s, d, shard, 10, 10*1024)
+		m, err := NewMaterializer(s, d, shard, 10)
 		require.NoError(t, err)
 		rr := []RowRange{{from: int64(0), count: shard.LabelsFile().RowGroups()[0].NumRows()}}
 		ctx, cancel := context.WithCancel(ctx)
@@ -120,10 +120,15 @@ func TestMaterializeE2E(t *testing.T) {
 	})
 
 	t.Run("Should not race when multiples download multiples page in parallel", func(t *testing.T) {
+		bucketOpener := storage.NewParquetBucketOpener(bkt)
+		shard, err := storage.NewParquetShardOpener(
+			ctx, "shard", bucketOpener, bucketOpener, 0, storage.WithPageMaxGapSize(-1),
+		)
+		require.NoError(t, err)
 		s, err := shard.TSDBSchema()
 		require.NoError(t, err)
 		d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
-		m, err := NewMaterializer(s, d, shard, 10, -1)
+		m, err := NewMaterializer(s, d, shard, 10)
 		require.NoError(t, err)
 		rr := []RowRange{{from: int64(0), count: shard.LabelsFile().RowGroups()[0].NumRows()}}
 		_, err = m.Materialize(ctx, 0, data.MinTime, data.MaxTime, false, rr)
@@ -159,18 +164,18 @@ func convertToParquet(t *testing.T, ctx context.Context, bkt *filesystem.Bucket,
 func query(t *testing.T, mint, maxt int64, shard storage.ParquetShard, constraints ...Constraint) []prom_storage.ChunkSeries {
 	ctx := context.Background()
 	for _, c := range constraints {
-		require.NoError(t, c.init(shard.LabelsFile()))
+		require.NoError(t, c.init(shard))
 	}
 
 	s, err := shard.TSDBSchema()
 	require.NoError(t, err)
 	d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
-	m, err := NewMaterializer(s, d, shard, 10, 10*1024)
+	m, err := NewMaterializer(s, d, shard, 10)
 	require.NoError(t, err)
 
 	found := make([]prom_storage.ChunkSeries, 0, 100)
-	for i, group := range shard.LabelsFile().RowGroups() {
-		rr, err := Filter(context.Background(), group, constraints...)
+	for i := range shard.LabelsFile().RowGroups() {
+		rr, err := Filter(context.Background(), shard, i, constraints...)
 		total := int64(0)
 		for _, r := range rr {
 			total += r.count
