@@ -26,6 +26,51 @@ Expect:
 - Incomplete or unstable features
 - Minimal documentation
 
+
+## Usage 
+
+### Converting a TSDB block to Parquet
+
+To convert one or more TSDB block to parquet we can just use the ConvertTSDBBlock as below:
+
+```go
+  blockDir := "/path/to/block"
+  bkt, _ := filesystem.NewBucket(blockDir)
+  tsdbBlock, _ := tsdb.OpenBlock(slog.Default(), blockDir, nil, tsdb.DefaultPostingsDecoderFactory)
+
+  _, err := convert.ConvertTSDBBlock(
+    context.Background(),
+    bkt,
+    tsdbBlock.MinTime(),
+    tsdbBlock.MaxTime(),
+    []convert.Convertible{tsdbBlock},
+    options.WithSortBy(labels.MetricName), // Optional: apply sorting or other options
+  )
+```
+### Querying Parquet File
+
+```\go
+  blockDir := "/path/to/block"
+  ctx := context.Background()
+
+  bkt, _ := filesystem.NewBucket(blockDir)
+  bucketOpener := storage.NewParquetBucketOpener(bkt)
+
+  shard, err := storage.NewParquetShardOpener(
+	ctx, "shard", bucketOpener, bucketOpener, 0,
+  )
+  if err != nil {
+	t.Fatalf("error opening parquet shard: %v", err)
+  }
+
+  decoder := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
+  queryable, _ := NewParquetQueryable(decoder, func(ctx context.Context, mint, maxt int64) ([]storage.ParquetShard, error) {
+	return []storage.ParquetShard{shard}, nil
+  }) // Implements prometheus/storage.Queryable
+
+  querier, _ := queryable.Querier(mint, maxt)
+  set := querier.Select(ctx, true, hints, matchers...) // storage.SeriesSet
+```
 ## Planned Features
 
 - Reusable Go types for time series + metadata
