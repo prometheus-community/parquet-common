@@ -1,5 +1,8 @@
 name: Benchmark Queryable Select
 on:
+  pull_request:
+    branches:
+      - francoposa/prom-labels-new-sort-allocs
   push:
     branches:
       - main
