@@ -19,6 +19,7 @@ import (
 	"io"
 	"maps"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/parquet-go/parquet-go"
@@ -75,6 +76,14 @@ func NewMaterializer(s *schema.TSDBSchema,
 		partitioner:    util.NewGapBasedPartitioner(maxGapPartitioning),
 		dataColToIndex: dataColToIndex,
 	}, nil
+}
+
+// NewLabelsInPlace returns a sorted Labels from the given labels.
+// The caller has to guarantee that all label names are unique.
+func NewLabelsInPlace(set labels.Labels) labels.Labels {
+	slices.SortFunc(set, func(a, b labels.Label) int { return strings.Compare(a.Name, b.Name) })
+
+	return set
 }
 
 // Materialize reconstructs the ChunkSeries that belong to the specified row ranges (rr).
