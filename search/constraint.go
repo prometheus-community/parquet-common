@@ -35,7 +35,7 @@ type Constraint interface {
 	// filter returns a set of non-overlapping increasing row indexes that may satisfy the constraint.
 	filter(ctx context.Context, rgIdx int, primary bool, rr []RowRange) ([]RowRange, error)
 	// init initializes the constraint with respect to the file schema and projections.
-	init(f storage.ParquetShard) error
+	init(f *storage.ParquetFile) error
 	// path is the path for the column that is constrained
 	path() string
 }
@@ -67,9 +67,9 @@ func MatchersToConstraint(matchers ...*labels.Matcher) ([]Constraint, error) {
 	return r, nil
 }
 
-func Initialize(s storage.ParquetShard, cs ...Constraint) error {
+func Initialize(f *storage.ParquetFile, cs ...Constraint) error {
 	for i := range cs {
-		if err := cs[i].init(s); err != nil {
+		if err := cs[i].init(f); err != nil {
 			return fmt.Errorf("unable to initialize constraint %d: %w", i, err)
 		}
 	}
@@ -168,7 +168,7 @@ type equalConstraint struct {
 	pth string
 
 	val parquet.Value
-	s   storage.ParquetShard
+	f   *storage.ParquetFile
 
 	comp func(l, r parquet.Value) int
 }
@@ -187,7 +187,7 @@ func (ec *equalConstraint) filter(ctx context.Context, rgIdx int, primary bool, 
 	}
 	from, to := rr[0].from, rr[len(rr)-1].from+rr[len(rr)-1].count
 
-	rg := ec.s.LabelsFile().RowGroups()[rgIdx]
+	rg := ec.f.RowGroups()[rgIdx]
 
 	col, ok := rg.Schema().Lookup(ec.path())
 	if !ok {
@@ -265,18 +265,18 @@ func (ec *equalConstraint) filter(ctx context.Context, rgIdx int, primary bool, 
 		return nil, nil
 	}
 
-	dictOff, dictSz := ec.s.LabelsFile().DictionaryPageBounds(rgIdx, col.ColumnIndex)
+	dictOff, dictSz := ec.f.DictionaryPageBounds(rgIdx, col.ColumnIndex)
 
 	minOffset := uint64(readPgs[0].off)
 	maxOffset := readPgs[len(readPgs)-1].off + readPgs[len(readPgs)-1].csz
 
 	// If the gap between the first page and the dic page is less than PagePartitioningMaxGapSize,
 	// we include the dic to be read in the single read
-	if int(minOffset-(dictOff+dictSz)) < ec.s.Opts().PagePartitioningMaxGapSize {
+	if int(minOffset-(dictOff+dictSz)) < ec.f.Cfg.PagePartitioningMaxGapSize {
 		minOffset = dictOff
 	}
 
-	pgs, err := ec.s.LabelsFile().GetPages(ctx, cc, int64(minOffset), int64(maxOffset))
+	pgs, err := ec.f.GetPages(ctx, cc, int64(minOffset), int64(maxOffset))
 	if err != nil {
 		return nil, err
 	}
@@ -338,9 +338,9 @@ func (ec *equalConstraint) filter(ctx context.Context, rgIdx int, primary bool, 
 	return intersectRowRanges(simplify(res), rr), nil
 }
 
-func (ec *equalConstraint) init(s storage.ParquetShard) error {
-	c, ok := s.LabelsFile().Schema().Lookup(ec.path())
-	ec.s = s
+func (ec *equalConstraint) init(f *storage.ParquetFile) error {
+	c, ok := f.Schema().Lookup(ec.path())
+	ec.f = f
 	if !ok {
 		return nil
 	}
@@ -364,7 +364,7 @@ func (ec *equalConstraint) matches(v parquet.Value) bool {
 }
 
 func (ec *equalConstraint) skipByBloomfilter(cc parquet.ColumnChunk) (bool, error) {
-	if ec.s.LabelsFile().Cfg.SkipBloomFilters {
+	if ec.f.Cfg.SkipBloomFilters {
 		return false, nil
 	}
 
@@ -386,7 +386,7 @@ func Regex(path string, r *labels.FastRegexMatcher) Constraint {
 type regexConstraint struct {
 	pth   string
 	cache map[parquet.Value]bool
-	s     storage.ParquetShard
+	f     *storage.ParquetFile
 	r     *labels.FastRegexMatcher
 }
 
@@ -400,7 +400,7 @@ func (rc *regexConstraint) filter(ctx context.Context, rgIdx int, primary bool, 
 	}
 	from, to := rr[0].from, rr[len(rr)-1].from+rr[len(rr)-1].count
 
-	rg := rc.s.LabelsFile().RowGroups()[rgIdx]
+	rg := rc.f.RowGroups()[rgIdx]
 
 	col, ok := rg.Schema().Lookup(rc.path())
 	if !ok {
@@ -413,7 +413,7 @@ func (rc *regexConstraint) filter(ctx context.Context, rgIdx int, primary bool, 
 	}
 	cc := rg.ColumnChunks()[col.ColumnIndex]
 
-	pgs, err := rc.s.LabelsFile().GetPages(ctx, cc, 0, 0)
+	pgs, err := rc.f.GetPages(ctx, cc, 0, 0)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get pages")
 	}
@@ -494,9 +494,9 @@ func (rc *regexConstraint) filter(ctx context.Context, rgIdx int, primary bool, 
 	return intersectRowRanges(simplify(res), rr), nil
 }
 
-func (rc *regexConstraint) init(s storage.ParquetShard) error {
-	c, ok := s.LabelsFile().Schema().Lookup(rc.path())
-	rc.s = s
+func (rc *regexConstraint) init(f *storage.ParquetFile) error {
+	c, ok := f.Schema().Lookup(rc.path())
+	rc.f = f
 	if !ok {
 		return nil
 	}
@@ -541,8 +541,8 @@ func (nc *notConstraint) filter(ctx context.Context, rgIdx int, primary bool, rr
 	return complementRowRanges(base, rr), nil
 }
 
-func (nc *notConstraint) init(s storage.ParquetShard) error {
-	return nc.c.init(s)
+func (nc *notConstraint) init(f *storage.ParquetFile) error {
+	return nc.c.init(f)
 }
 
 func (nc *notConstraint) path() string {

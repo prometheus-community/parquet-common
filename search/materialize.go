@@ -72,7 +72,7 @@ func NewMaterializer(s *schema.TSDBSchema,
 		b:              block,
 		colIdx:         colIdx.ColumnIndex,
 		concurrency:    concurrency,
-		partitioner:    util.NewGapBasedPartitioner(block.Opts().PagePartitioningMaxGapSize),
+		partitioner:    util.NewGapBasedPartitioner(block.ChunksFile().Cfg.PagePartitioningMaxGapSize),
 		dataColToIndex: dataColToIndex,
 	}, nil
 }
@@ -356,7 +356,7 @@ func (m *Materializer) materializeColumn(ctx context.Context, file *storage.Parq
 			maxOffset := uint64(p.off + p.csz)
 
 			// if dictOff == 0, it means that the collum is not dictionary encoded
-			if dictOff > 0 && int(minOffset-(dictOff+dictSz)) < m.b.Opts().PagePartitioningMaxGapSize {
+			if dictOff > 0 && int(minOffset-(dictOff+dictSz)) < file.Cfg.PagePartitioningMaxGapSize {
 				minOffset = dictOff
 			}
 

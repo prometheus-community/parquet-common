@@ -164,7 +164,7 @@ func convertToParquet(t *testing.T, ctx context.Context, bkt *filesystem.Bucket,
 func query(t *testing.T, mint, maxt int64, shard storage.ParquetShard, constraints ...Constraint) []prom_storage.ChunkSeries {
 	ctx := context.Background()
 	for _, c := range constraints {
-		require.NoError(t, c.init(shard))
+		require.NoError(t, c.init(shard.LabelsFile()))
 	}
 
 	s, err := shard.TSDBSchema()

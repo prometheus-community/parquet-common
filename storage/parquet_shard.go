@@ -47,8 +47,6 @@ type ParquetFile struct {
 	*parquet.File
 	ReadAtWithContextCloser
 	Cfg ExtendedFileConfig
-
-	pagePartitioningMaxGapSize int
 }
 
 type FileOption func(*ExtendedFileConfig)
@@ -99,10 +97,9 @@ func Open(ctx context.Context, r ReadAtWithContextCloser, size int64, opts ...Fi
 	}
 
 	return &ParquetFile{
-		File:                       file,
-		ReadAtWithContextCloser:    r,
-		Cfg:                        cfg,
-		pagePartitioningMaxGapSize: cfg.PagePartitioningMaxGapSize,
+		File:                    file,
+		ReadAtWithContextCloser: r,
+		Cfg:                     cfg,
 	}, nil
 }
 
@@ -140,7 +137,6 @@ type ParquetShard interface {
 	LabelsFile() *ParquetFile
 	ChunksFile() *ParquetFile
 	TSDBSchema() (*schema.TSDBSchema, error)
-	Opts() ExtendedFileConfig
 }
 
 type ParquetOpener interface {
@@ -175,7 +171,6 @@ type ParquetShardOpener struct {
 	labelsFile, chunksFile *ParquetFile
 	schema                 *schema.TSDBSchema
 	o                      sync.Once
-	cfg                    ExtendedFileConfig
 }
 
 func NewParquetShardOpener(
@@ -216,12 +211,7 @@ func NewParquetShardOpener(
 	return &ParquetShardOpener{
 		labelsFile: labelsFile,
 		chunksFile: chunksFile,
-		cfg:        cfg,
 	}, nil
-}
-
-func (s *ParquetShardOpener) Opts() ExtendedFileConfig {
-	return s.cfg
 }
 
 func (s *ParquetShardOpener) LabelsFile() *ParquetFile {

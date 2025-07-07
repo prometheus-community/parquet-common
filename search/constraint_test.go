@@ -129,7 +129,7 @@ func BenchmarkConstraints(b *testing.B) {
 			b.ResetTimer()
 			b.ReportAllocs()
 			for n := 0; n < b.N; n++ {
-				if err := Initialize(shard, tt.c...); err != nil {
+				if err := Initialize(shard.LabelsFile(), tt.c...); err != nil {
 					b.Fatal(err)
 				}
 				for i := range shard.LabelsFile().RowGroups() {
@@ -164,7 +164,7 @@ func TestContextCancelled(t *testing.T) {
 		Regex("A", mustNewFastRegexMatcher(t, rows[len(rows)-1].A)),
 		Not(Equal("A", parquet.ValueOf(rows[len(rows)-1].A))),
 	} {
-		if err := Initialize(shard, c); err != nil {
+		if err := Initialize(shard.LabelsFile(), c); err != nil {
 			t.Fatal(err)
 		}
 
@@ -482,7 +482,7 @@ func TestFilter(t *testing.T) {
 			shard := buildFile(t, tt.rows)
 			for _, expectation := range tt.expectations {
 				t.Run("", func(t *testing.T) {
-					if err := Initialize(shard, expectation.constraints...); err != nil {
+					if err := Initialize(shard.LabelsFile(), expectation.constraints...); err != nil {
 						t.Fatal(err)
 					}
 					for i := range shard.LabelsFile().RowGroups() {
