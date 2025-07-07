@@ -26,6 +26,9 @@ Expect:
 - Incomplete or unstable features
 - Minimal documentation
 
+## Benchmarks Results 
+
+* https://prometheus-community.github.io/parquet-common/dev/bench/
 
 ## Usage 
 
