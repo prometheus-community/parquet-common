@@ -161,17 +161,17 @@ func TestQueryable(t *testing.T) {
 	require.NoError(t, err)
 
 	testCases := map[string]struct {
-		ops []storage.ShardOption
+		ops []storage.FileOption
 	}{
 		"default": {
-			ops: []storage.ShardOption{},
+			ops: []storage.FileOption{},
 		},
 		"skipBloomFilters": {
-			ops: []storage.ShardOption{
+			ops: []storage.FileOption{
 				storage.WithFileOptions(
 					parquet.SkipBloomFilters(true),
+					parquet.OptimisticRead(true),
 				),
-				storage.WithOptimisticReader(true),
 			},
 		},
 	}
@@ -523,7 +523,7 @@ func BenchmarkSelect(b *testing.B) {
 	}
 }
 
-func convertToParquet(t *testing.T, ctx context.Context, bkt *bucket, data util.TestData, h convert.Convertible, opts ...storage.ShardOption) storage.ParquetShard {
+func convertToParquet(t *testing.T, ctx context.Context, bkt *bucket, data util.TestData, h convert.Convertible, opts ...storage.FileOption) storage.ParquetShard {
 	colDuration := time.Hour
 	shards, err := convert.ConvertTSDBBlock(
 		ctx,
@@ -554,7 +554,7 @@ func convertToParquet(t *testing.T, ctx context.Context, bkt *bucket, data util.
 	return shard
 }
 
-func convertToParquetForBenchWithCountingBucket(tb testing.TB, ctx context.Context, bkt *bucket, cbkt *countingBucket, data util.TestData, h convert.Convertible, opts ...storage.ShardOption) storage.ParquetShard {
+func convertToParquetForBenchWithCountingBucket(tb testing.TB, ctx context.Context, bkt *bucket, cbkt *countingBucket, data util.TestData, h convert.Convertible, opts ...storage.FileOption) storage.ParquetShard {
 	colDuration := time.Hour
 	shards, err := convert.ConvertTSDBBlock(
 		ctx,

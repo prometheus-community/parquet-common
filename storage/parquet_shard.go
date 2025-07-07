@@ -26,43 +26,44 @@ import (
 	"github.com/prometheus-community/parquet-common/schema"
 )
 
-var DefaultShardOptions = ShardOptions{
-	OptimisticReader:           true,
+var DefaultFileOptions = ExtendedFileConfig{
+	FileConfig: &parquet.FileConfig{
+		SkipPageIndex:    parquet.DefaultSkipPageIndex,
+		ReadMode:         parquet.DefaultReadMode,
+		SkipMagicBytes:   true,
+		SkipBloomFilters: true,
+		ReadBufferSize:   4096,
+		OptimisticRead:   true,
+	},
 	PagePartitioningMaxGapSize: 10 * 1024,
 }
 
-type ShardOptions struct {
-	FileOptions                []parquet.FileOption
-	OptimisticReader           bool
+type ExtendedFileConfig struct {
+	*parquet.FileConfig
 	PagePartitioningMaxGapSize int
 }
 
 type ParquetFile struct {
 	*parquet.File
 	ReadAtWithContextCloser
-	BloomFiltersLoaded bool
+	Cfg ExtendedFileConfig
 
-	optimisticReader           bool
 	pagePartitioningMaxGapSize int
 }
 
-type ShardOption func(*ShardOptions)
+type FileOption func(*ExtendedFileConfig)
 
-func WithFileOptions(fileOptions ...parquet.FileOption) ShardOption {
-	return func(opts *ShardOptions) {
-		opts.FileOptions = append(opts.FileOptions, fileOptions...)
-	}
-}
-
-func WithOptimisticReader(optimisticReader bool) ShardOption {
-	return func(opts *ShardOptions) {
-		opts.OptimisticReader = optimisticReader
+func WithFileOptions(options ...parquet.FileOption) FileOption {
+	config := parquet.DefaultFileConfig()
+	config.Apply(options...)
+	return func(opts *ExtendedFileConfig) {
+		opts.FileConfig = config
 	}
 }
 
 // WithPageMaxGapSize set the max gap size between pages that should be downloaded together in a single read call
-func WithPageMaxGapSize(pagePartitioningMaxGapSize int) ShardOption {
-	return func(opts *ShardOptions) {
+func WithPageMaxGapSize(pagePartitioningMaxGapSize int) FileOption {
+	return func(opts *ExtendedFileConfig) {
 		opts.PagePartitioningMaxGapSize = pagePartitioningMaxGapSize
 	}
 }
@@ -71,7 +72,7 @@ func (f *ParquetFile) GetPages(ctx context.Context, cc parquet.ColumnChunk, minO
 	colChunk := cc.(*parquet.FileColumnChunk)
 	reader := f.WithContext(ctx)
 
-	if f.optimisticReader {
+	if f.Cfg.OptimisticRead {
 		reader = NewOptimisticReaderAt(reader, minOffset, maxOffset)
 	}
 
@@ -85,19 +86,14 @@ func (f *ParquetFile) DictionaryPageBounds(rgIdx, colIdx int) (uint64, uint64) {
 	return uint64(colMeta.DictionaryPageOffset), uint64(colMeta.DataPageOffset - colMeta.DictionaryPageOffset)
 }
 
-func Open(ctx context.Context, r ReadAtWithContextCloser, size int64, opts ...ShardOption) (*ParquetFile, error) {
-	cfg := DefaultShardOptions
+func Open(ctx context.Context, r ReadAtWithContextCloser, size int64, opts ...FileOption) (*ParquetFile, error) {
+	cfg := DefaultFileOptions
 
 	for _, opt := range opts {
 		opt(&cfg)
 	}
 
-	c, err := parquet.NewFileConfig(cfg.FileOptions...)
-	if err != nil {
-		return nil, err
-	}
-
-	file, err := parquet.OpenFile(r.WithContext(ctx), size, cfg.FileOptions...)
+	file, err := parquet.OpenFile(r.WithContext(ctx), size, cfg.FileConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -105,13 +101,12 @@ func Open(ctx context.Context, r ReadAtWithContextCloser, size int64, opts ...Sh
 	return &ParquetFile{
 		File:                       file,
 		ReadAtWithContextCloser:    r,
-		BloomFiltersLoaded:         !c.SkipBloomFilters,
-		optimisticReader:           cfg.OptimisticReader,
+		Cfg:                        cfg,
 		pagePartitioningMaxGapSize: cfg.PagePartitioningMaxGapSize,
 	}, nil
 }
 
-func OpenFromBucket(ctx context.Context, bkt objstore.BucketReader, name string, opts ...ShardOption) (*ParquetFile, error) {
+func OpenFromBucket(ctx context.Context, bkt objstore.BucketReader, name string, opts ...FileOption) (*ParquetFile, error) {
 	attr, err := bkt.Attributes(ctx, name)
 	if err != nil {
 		return nil, err
@@ -121,7 +116,7 @@ func OpenFromBucket(ctx context.Context, bkt objstore.BucketReader, name string,
 	return Open(ctx, r, attr.Size, opts...)
 }
 
-func OpenFromFile(ctx context.Context, path string, opts ...ShardOption) (*ParquetFile, error) {
+func OpenFromFile(ctx context.Context, path string, opts ...FileOption) (*ParquetFile, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -145,11 +140,11 @@ type ParquetShard interface {
 	LabelsFile() *ParquetFile
 	ChunksFile() *ParquetFile
 	TSDBSchema() (*schema.TSDBSchema, error)
-	Opts() ShardOptions
+	Opts() ExtendedFileConfig
 }
 
 type ParquetOpener interface {
-	Open(ctx context.Context, path string, opts ...ShardOption) (*ParquetFile, error)
+	Open(ctx context.Context, path string, opts ...FileOption) (*ParquetFile, error)
 }
 
 type ParquetBucketOpener struct {
@@ -162,7 +157,7 @@ func NewParquetBucketOpener(bkt objstore.BucketReader) *ParquetBucketOpener {
 	}
 }
 
-func (o *ParquetBucketOpener) Open(ctx context.Context, name string, opts ...ShardOption) (*ParquetFile, error) {
+func (o *ParquetBucketOpener) Open(ctx context.Context, name string, opts ...FileOption) (*ParquetFile, error) {
 	return OpenFromBucket(ctx, o.bkt, name, opts...)
 }
 
@@ -172,7 +167,7 @@ func NewParquetLocalFileOpener() *ParquetLocalFileOpener {
 	return &ParquetLocalFileOpener{}
 }
 
-func (o *ParquetLocalFileOpener) Open(ctx context.Context, name string, opts ...ShardOption) (*ParquetFile, error) {
+func (o *ParquetLocalFileOpener) Open(ctx context.Context, name string, opts ...FileOption) (*ParquetFile, error) {
 	return OpenFromFile(ctx, name, opts...)
 }
 
@@ -180,7 +175,7 @@ type ParquetShardOpener struct {
 	labelsFile, chunksFile *ParquetFile
 	schema                 *schema.TSDBSchema
 	o                      sync.Once
-	cfg                    ShardOptions
+	cfg                    ExtendedFileConfig
 }
 
 func NewParquetShardOpener(
@@ -189,9 +184,9 @@ func NewParquetShardOpener(
 	labelsFileOpener ParquetOpener,
 	chunksFileOpener ParquetOpener,
 	shard int,
-	opts ...ShardOption,
+	opts ...FileOption,
 ) (*ParquetShardOpener, error) {
-	cfg := DefaultShardOptions
+	cfg := DefaultFileOptions
 
 	for _, opt := range opts {
 		opt(&cfg)
@@ -225,7 +220,7 @@ func NewParquetShardOpener(
 	}, nil
 }
 
-func (s *ParquetShardOpener) Opts() ShardOptions {
+func (s *ParquetShardOpener) Opts() ExtendedFileConfig {
 	return s.cfg
 }
 

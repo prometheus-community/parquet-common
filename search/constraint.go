@@ -364,7 +364,7 @@ func (ec *equalConstraint) matches(v parquet.Value) bool {
 }
 
 func (ec *equalConstraint) skipByBloomfilter(cc parquet.ColumnChunk) (bool, error) {
-	if !ec.s.LabelsFile().BloomFiltersLoaded {
+	if ec.s.LabelsFile().Cfg.SkipBloomFilters {
 		return false, nil
 	}
 
