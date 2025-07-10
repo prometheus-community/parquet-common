@@ -35,6 +35,7 @@ import (
 
 	"github.com/prometheus-community/parquet-common/convert"
 	"github.com/prometheus-community/parquet-common/schema"
+	"github.com/prometheus-community/parquet-common/search"
 	"github.com/prometheus-community/parquet-common/storage"
 	"github.com/prometheus-community/parquet-common/util"
 )
@@ -269,6 +270,126 @@ func TestQueryable(t *testing.T) {
 					require.Equal(t, expectedLabelValues, lValues)
 				})
 			})
+
+			t.Run("RowCountQuota", func(t *testing.T) {
+				// Test with limited row count quota
+				limitedRowQuota := func(ctx context.Context) int64 {
+					return 10 // Only allow 10 rows
+				}
+				queryable, err := createQueryable(shard, WithRowCountLimitFunc(limitedRowQuota))
+				require.NoError(t, err)
+				querier, err := queryable.Querier(data.MinTime, data.MaxTime)
+				require.NoError(t, err)
+
+				// Try to query more rows than quota allows
+				matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
+				ss := querier.Select(ctx, true, nil, matchers...)
+
+				// This should fail due to row count quota
+				for ss.Next() {
+					_ = ss.At()
+				}
+				require.Error(t, ss.Err())
+				require.Contains(t, ss.Err().Error(), "would fetch too many rows")
+				require.True(t, search.IsResourceExhausted(ss.Err()))
+
+				// Test with sufficient quota
+				sufficientRowQuota := func(ctx context.Context) int64 {
+					return 1000 // Allow 1000 rows
+				}
+				queryable, err = createQueryable(shard, WithRowCountLimitFunc(sufficientRowQuota))
+				require.NoError(t, err)
+				querier, err = queryable.Querier(data.MinTime, data.MaxTime)
+				require.NoError(t, err)
+
+				ss = querier.Select(ctx, true, nil, matchers...)
+				var series []prom_storage.Series
+				for ss.Next() {
+					series = append(series, ss.At())
+				}
+				require.NoError(t, ss.Err())
+				require.NotEmpty(t, series)
+			})
+
+			t.Run("ChunkBytesQuota", func(t *testing.T) {
+				// Test with limited chunk bytes quota
+				limitedChunkQuota := func(ctx context.Context) int64 {
+					return 100 // Only allow 100 bytes
+				}
+				queryable, err := createQueryable(shard, WithChunkBytesLimitFunc(limitedChunkQuota))
+				require.NoError(t, err)
+				querier, err := queryable.Querier(data.MinTime, data.MaxTime)
+				require.NoError(t, err)
+
+				// Try to query chunks that exceed the quota
+				matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
+				ss := querier.Select(ctx, true, nil, matchers...)
+
+				// This should fail due to chunk bytes quota
+				for ss.Next() {
+					_ = ss.At()
+				}
+				require.Error(t, ss.Err())
+				require.Contains(t, ss.Err().Error(), "would fetch too many chunk bytes")
+				require.True(t, search.IsResourceExhausted(ss.Err()))
+
+				// Test with sufficient quota
+				sufficientChunkQuota := func(ctx context.Context) int64 {
+					return 1000000 // Allow 1MB
+				}
+				queryable, err = createQueryable(shard, WithChunkBytesLimitFunc(sufficientChunkQuota))
+				require.NoError(t, err)
+				querier, err = queryable.Querier(data.MinTime, data.MaxTime)
+				require.NoError(t, err)
+
+				ss = querier.Select(ctx, true, nil, matchers...)
+				var series []prom_storage.Series
+				for ss.Next() {
+					series = append(series, ss.At())
+				}
+				require.NoError(t, ss.Err())
+				require.NotEmpty(t, series)
+			})
+
+			t.Run("DataBytesQuota", func(t *testing.T) {
+				// Test with limited data bytes quota
+				limitedDataQuota := func(ctx context.Context) int64 {
+					return 100 // Only allow 100 bytes
+				}
+				queryable, err := createQueryable(shard, WithDataBytesLimitFunc(limitedDataQuota))
+				require.NoError(t, err)
+				querier, err := queryable.Querier(data.MinTime, data.MaxTime)
+				require.NoError(t, err)
+
+				// Try to query data that exceeds the quota
+				matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
+				ss := querier.Select(ctx, true, nil, matchers...)
+
+				// This should fail due to data bytes quota
+				for ss.Next() {
+					_ = ss.At()
+				}
+				require.Error(t, ss.Err())
+				require.Contains(t, ss.Err().Error(), "would fetch too many data bytes")
+				require.True(t, search.IsResourceExhausted(ss.Err()))
+
+				// Test with sufficient quota
+				sufficientDataQuota := func(ctx context.Context) int64 {
+					return 1000000 // Allow 1MB
+				}
+				queryable, err = createQueryable(shard, WithDataBytesLimitFunc(sufficientDataQuota))
+				require.NoError(t, err)
+				querier, err = queryable.Querier(data.MinTime, data.MaxTime)
+				require.NoError(t, err)
+
+				ss = querier.Select(ctx, true, nil, matchers...)
+				var series []prom_storage.Series
+				for ss.Next() {
+					series = append(series, ss.At())
+				}
+				require.NoError(t, ss.Err())
+				require.NotEmpty(t, series)
+			})
 		})
 	}
 }
@@ -338,11 +459,11 @@ func queryWithQueryable(t *testing.T, mint, maxt int64, shard storage.ParquetSha
 	return found
 }
 
-func createQueryable(shard storage.ParquetShard) (prom_storage.Queryable, error) {
+func createQueryable(shard storage.ParquetShard, opts ...QueryableOpts) (prom_storage.Queryable, error) {
 	d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
 	return NewParquetQueryable(d, func(ctx context.Context, mint, maxt int64) ([]storage.ParquetShard, error) {
 		return []storage.ParquetShard{shard}, nil
-	})
+	}, opts...)
 }
 
 var benchmarkCases = []struct {
