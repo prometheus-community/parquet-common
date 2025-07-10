@@ -110,12 +110,12 @@ func TestMaterializeE2E(t *testing.T) {
 		s, err := shard.TSDBSchema()
 		require.NoError(t, err)
 		d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
-		m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc)
+		m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFunc)
 		require.NoError(t, err)
-		rr := []RowRange{{from: int64(0), count: shard.LabelsFile().RowGroups()[0].NumRows()}}
+		rr := []RowRange{{From: int64(0), Count: shard.LabelsFile().RowGroups()[0].NumRows()}}
 		ctx, cancel := context.WithCancel(ctx)
 		cancel()
-		_, err = m.Materialize(ctx, 0, data.MinTime, data.MaxTime, false, rr)
+		_, err = m.Materialize(ctx, nil, 0, data.MinTime, data.MaxTime, false, rr)
 		require.ErrorContains(t, err, "context canceled")
 	})
 
@@ -128,10 +128,10 @@ func TestMaterializeE2E(t *testing.T) {
 		s, err := shard.TSDBSchema()
 		require.NoError(t, err)
 		d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
-		m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc)
+		m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFunc)
 		require.NoError(t, err)
-		rr := []RowRange{{from: int64(0), count: shard.LabelsFile().RowGroups()[0].NumRows()}}
-		_, err = m.Materialize(ctx, 0, data.MinTime, data.MaxTime, false, rr)
+		rr := []RowRange{{From: int64(0), Count: shard.LabelsFile().RowGroups()[0].NumRows()}}
+		_, err = m.Materialize(ctx, nil, 0, data.MinTime, data.MaxTime, false, rr)
 		require.NoError(t, err)
 	})
 
@@ -142,23 +142,23 @@ func TestMaterializeE2E(t *testing.T) {
 
 		// Test with limited row count quota
 		limitedRowCountQuota := NewQuota(10) // Only allow 10 rows
-		m, err := NewMaterializer(s, d, shard, 10, limitedRowCountQuota, UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc)
+		m, err := NewMaterializer(s, d, shard, 10, limitedRowCountQuota, UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFunc)
 		require.NoError(t, err)
 
 		// Try to materialize more rows than quota allows
-		rr := []RowRange{{from: int64(0), count: 20}} // 20 rows
-		_, err = m.Materialize(ctx, 0, data.MinTime, data.MaxTime, false, rr)
+		rr := []RowRange{{From: int64(0), Count: 20}} // 20 rows
+		_, err = m.Materialize(ctx, nil, 0, data.MinTime, data.MaxTime, false, rr)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "would fetch too many rows")
 		require.True(t, IsResourceExhausted(err))
 
 		// Test with sufficient quota
 		sufficientRowCountQuota := NewQuota(1000) // Allow 1000 rows
-		m, err = NewMaterializer(s, d, shard, 10, sufficientRowCountQuota, UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc)
+		m, err = NewMaterializer(s, d, shard, 10, sufficientRowCountQuota, UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFunc)
 		require.NoError(t, err)
 
-		rr = []RowRange{{from: int64(0), count: 50}} // 50 rows
-		series, err := m.Materialize(ctx, 0, data.MinTime, data.MaxTime, false, rr)
+		rr = []RowRange{{From: int64(0), Count: 50}} // 50 rows
+		series, err := m.Materialize(ctx, nil, 0, data.MinTime, data.MaxTime, false, rr)
 		require.NoError(t, err)
 		require.NotEmpty(t, series)
 	})
@@ -170,23 +170,23 @@ func TestMaterializeE2E(t *testing.T) {
 
 		// Test with limited chunk bytes quota
 		limitedChunkBytesQuota := NewQuota(100) // Only allow 100 bytes
-		m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), limitedChunkBytesQuota, UnlimitedQuota(), NoopMaterializedSeriesFunc)
+		m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), limitedChunkBytesQuota, UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFunc)
 		require.NoError(t, err)
 
 		// Try to materialize chunks that exceed the quota
-		rr := []RowRange{{from: int64(0), count: 100}} // Large range to trigger chunk reading
-		_, err = m.Materialize(ctx, 0, data.MinTime, data.MaxTime, false, rr)
+		rr := []RowRange{{From: int64(0), Count: 100}} // Large range to trigger chunk reading
+		_, err = m.Materialize(ctx, nil, 0, data.MinTime, data.MaxTime, false, rr)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "would fetch too many chunk bytes")
 		require.True(t, IsResourceExhausted(err))
 
 		// Test with sufficient quota
 		sufficientChunkBytesQuota := NewQuota(1000000) // Allow 1MB
-		m, err = NewMaterializer(s, d, shard, 10, UnlimitedQuota(), sufficientChunkBytesQuota, UnlimitedQuota(), NoopMaterializedSeriesFunc)
+		m, err = NewMaterializer(s, d, shard, 10, UnlimitedQuota(), sufficientChunkBytesQuota, UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFunc)
 		require.NoError(t, err)
 
-		rr = []RowRange{{from: int64(0), count: 10}} // Small range
-		series, err := m.Materialize(ctx, 0, data.MinTime, data.MaxTime, false, rr)
+		rr = []RowRange{{From: int64(0), Count: 10}} // Small range
+		series, err := m.Materialize(ctx, nil, 0, data.MinTime, data.MaxTime, false, rr)
 		require.NoError(t, err)
 		require.NotEmpty(t, series)
 	})
@@ -198,23 +198,23 @@ func TestMaterializeE2E(t *testing.T) {
 
 		// Test with limited data bytes quota
 		limitedDataBytesQuota := NewQuota(100) // Only allow 100 bytes
-		m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), limitedDataBytesQuota, NoopMaterializedSeriesFunc)
+		m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), limitedDataBytesQuota, NoopMaterializedSeriesFunc, NoopMaterializedLabelsFunc)
 		require.NoError(t, err)
 
 		// Try to materialize data that exceeds the quota
-		rr := []RowRange{{from: int64(0), count: 100}} // Large range to trigger data reading
-		_, err = m.Materialize(ctx, 0, data.MinTime, data.MaxTime, false, rr)
+		rr := []RowRange{{From: int64(0), Count: 100}} // Large range to trigger data reading
+		_, err = m.Materialize(ctx, nil, 0, data.MinTime, data.MaxTime, false, rr)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "would fetch too many data bytes")
 		require.True(t, IsResourceExhausted(err))
 
 		// Test with sufficient quota
 		sufficientDataBytesQuota := NewQuota(1000000) // Allow 1MB
-		m, err = NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), sufficientDataBytesQuota, NoopMaterializedSeriesFunc)
+		m, err = NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), sufficientDataBytesQuota, NoopMaterializedSeriesFunc, NoopMaterializedLabelsFunc)
 		require.NoError(t, err)
 
-		rr = []RowRange{{from: int64(0), count: 10}} // Small range
-		series, err := m.Materialize(ctx, 0, data.MinTime, data.MaxTime, false, rr)
+		rr = []RowRange{{From: int64(0), Count: 10}} // Small range
+		series, err := m.Materialize(ctx, nil, 0, data.MinTime, data.MaxTime, false, rr)
 		require.NoError(t, err)
 		require.NotEmpty(t, series)
 	})
@@ -254,7 +254,7 @@ func query(t *testing.T, mint, maxt int64, shard storage.ParquetShard, constrain
 	s, err := shard.TSDBSchema()
 	require.NoError(t, err)
 	d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
-	m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc)
+	m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFunc)
 	require.NoError(t, err)
 
 	found := make([]prom_storage.ChunkSeries, 0, 100)
@@ -262,10 +262,10 @@ func query(t *testing.T, mint, maxt int64, shard storage.ParquetShard, constrain
 		rr, err := Filter(context.Background(), shard, i, constraints...)
 		total := int64(0)
 		for _, r := range rr {
-			total += r.count
+			total += r.Count
 		}
 		require.NoError(t, err)
-		series, err := m.Materialize(ctx, i, mint, maxt, false, rr)
+		series, err := m.Materialize(ctx, nil, i, mint, maxt, false, rr)
 		require.NoError(t, err)
 		found = append(found, series...)
 	}

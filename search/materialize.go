@@ -55,6 +55,7 @@ type Materializer struct {
 	dataBytesQuota  *Quota
 
 	materializedSeriesCallback MaterializedSeriesFunc
+	materializedLabelsCallback MaterializedLabelsFunc
 }
 
 // MaterializedSeriesFunc is a callback function that can be used to add limiter or statistic logics for
@@ -66,6 +67,15 @@ func NoopMaterializedSeriesFunc(_ context.Context, _ []prom_storage.ChunkSeries)
 	return nil
 }
 
+// MaterializedLabelsFunc is a callback function that processes materialized series labels before materializing chunks.
+// This can be used to filter series.
+type MaterializedLabelsFunc func(ctx context.Context, hints *prom_storage.SelectHints, series [][]labels.Label, rr []RowRange) ([][]labels.Label, []RowRange)
+
+// NoopMaterializedLabelsFunc is a noop callback function that does nothing.
+func NoopMaterializedLabelsFunc(_ context.Context, _ *prom_storage.SelectHints, lbls [][]labels.Label, rr []RowRange) ([][]labels.Label, []RowRange) {
+	return lbls, rr
+}
+
 func NewMaterializer(s *schema.TSDBSchema,
 	d *schema.PrometheusParquetChunksDecoder,
 	block storage.ParquetShard,
@@ -74,6 +84,7 @@ func NewMaterializer(s *schema.TSDBSchema,
 	chunkBytesQuota *Quota,
 	dataBytesQuota *Quota,
 	materializeSeriesCallback MaterializedSeriesFunc,
+	materializeLabelsCallback MaterializedLabelsFunc,
 ) (*Materializer, error) {
 	colIdx, ok := block.LabelsFile().Schema().Lookup(schema.ColIndexes)
 	if !ok {
@@ -102,12 +113,13 @@ func NewMaterializer(s *schema.TSDBSchema,
 		chunkBytesQuota:            chunkBytesQuota,
 		dataBytesQuota:             dataBytesQuota,
 		materializedSeriesCallback: materializeSeriesCallback,
+		materializedLabelsCallback: materializeLabelsCallback,
 	}, nil
 }
 
 // Materialize reconstructs the ChunkSeries that belong to the specified row ranges (rr).
 // It uses the row group index (rgi) and time bounds (mint, maxt) to filter and decode the series.
-func (m *Materializer) Materialize(ctx context.Context, rgi int, mint, maxt int64, skipChunks bool, rr []RowRange) (results []prom_storage.ChunkSeries, err error) {
+func (m *Materializer) Materialize(ctx context.Context, hints *prom_storage.SelectHints, rgi int, mint, maxt int64, skipChunks bool, rr []RowRange) (results []prom_storage.ChunkSeries, err error) {
 	ctx, span := tracer.Start(ctx, "Materializer.Materialize")
 	defer func() {
 		if err != nil {
@@ -133,6 +145,7 @@ func (m *Materializer) Materialize(ctx context.Context, rgi int, mint, maxt int6
 		return nil, errors.Wrapf(err, "error materializing labels")
 	}
 
+	sLbls, rr = m.materializedLabelsCallback(ctx, hints, sLbls, rr)
 	results = make([]prom_storage.ChunkSeries, len(sLbls))
 	for i, s := range sLbls {
 		results[i] = &concreteChunksSeries{
@@ -338,7 +351,7 @@ func (m *Materializer) materializeAllLabels(ctx context.Context, rgi int, rr []R
 func totalRows(rr []RowRange) int64 {
 	res := int64(0)
 	for _, r := range rr {
-		res += r.count
+		res += r.Count
 	}
 	return res
 }
@@ -411,12 +424,12 @@ func (m *Materializer) materializeColumn(ctx context.Context, file *storage.Parq
 
 	for i := 0; i < cidx.NumPages(); i++ {
 		pageRowRange := RowRange{
-			from: oidx.FirstRowIndex(i),
+			From: oidx.FirstRowIndex(i),
 		}
-		pageRowRange.count = group.NumRows()
+		pageRowRange.Count = group.NumRows()
 
 		if i < oidx.NumPages()-1 {
-			pageRowRange.count = oidx.FirstRowIndex(i+1) - pageRowRange.from
+			pageRowRange.Count = oidx.FirstRowIndex(i+1) - pageRowRange.From
 		}
 
 		for _, r := range rr {
@@ -435,7 +448,7 @@ func (m *Materializer) materializeColumn(ctx context.Context, file *storage.Parq
 	rMutex := &sync.Mutex{}
 	for _, v := range pageRanges {
 		for _, rs := range v.rows {
-			r[rs] = make([]parquet.Value, 0, rs.count)
+			r[rs] = make([]parquet.Value, 0, rs.Count)
 		}
 	}
 
@@ -460,7 +473,7 @@ func (m *Materializer) materializeColumn(ctx context.Context, file *storage.Parq
 				return errors.Wrap(err, "failed to get pages")
 			}
 			defer func() { _ = pgs.Close() }()
-			err = pgs.SeekToRow(p.rows[0].from)
+			err = pgs.SeekToRow(p.rows[0].From)
 			if err != nil {
 				return errors.Wrap(err, "could not seek to row")
 			}
@@ -468,9 +481,9 @@ func (m *Materializer) materializeColumn(ctx context.Context, file *storage.Parq
 			vi := new(valuesIterator)
 			remainingRr := p.rows
 			currentRr := remainingRr[0]
-			next := currentRr.from
-			remaining := currentRr.count
-			currentRow := currentRr.from
+			next := currentRr.From
+			remaining := currentRr.Count
+			currentRow := currentRr.From
 
 			remainingRr = remainingRr[1:]
 			for len(remainingRr) > 0 || remaining > 0 {
@@ -489,8 +502,8 @@ func (m *Materializer) materializeColumn(ctx context.Context, file *storage.Parq
 							next = next + 1
 						} else if len(remainingRr) > 0 {
 							currentRr = remainingRr[0]
-							next = currentRr.from
-							remaining = currentRr.count
+							next = currentRr.From
+							remaining = currentRr.Count
 							remainingRr = remainingRr[1:]
 						}
 					}
@@ -512,7 +525,7 @@ func (m *Materializer) materializeColumn(ctx context.Context, file *storage.Parq
 
 	ranges := slices.Collect(maps.Keys(r))
 	slices.SortFunc(ranges, func(a, b RowRange) int {
-		return int(a.from - b.from)
+		return int(a.From - b.From)
 	})
 
 	res := make([]parquet.Value, 0, totalRows(rr))
