@@ -136,7 +136,7 @@ func (ri *rowRangesValueIterator) Next() bool {
 		ri.pageIterator.Reset(page)
 		// Reset page values buffer
 		ri.currentBufferIndex = 0
-		ri.buffer = []rowValue{}
+		ri.buffer = ri.buffer[:0]
 
 		for ri.pageIterator.Next() {
 			if ri.currentRow == ri.next {
@@ -234,7 +234,11 @@ func (pi *pageValueIterator) Reset(p parquet.Page) {
 		pi.cachedSymbols = make(map[int32]parquet.Value, p.Dictionary().Len())
 	} else {
 		pi.vr = p.Values()
-		pi.buffer = make([]parquet.Value, 0, 128)
+		if pi.buffer != nil {
+			pi.buffer = pi.buffer[:0]
+		} else {
+			pi.buffer = make([]parquet.Value, 0, 128)
+		}
 		pi.currentBufferIndex = -1
 	}
 	pi.current = -1
