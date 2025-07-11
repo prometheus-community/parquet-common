@@ -408,14 +408,8 @@ func (m *Materializer) materializeColumnToSlice(ctx context.Context, file *stora
 
 	pageRanges := m.coalescePageRanges(pagesToRowsMap, oidx)
 
-	rowRangeValues := make(map[RowRange][]parquet.Value, len(pageRanges))
+	rowValues := make(map[int64]parquet.Value, len(pageRanges))
 	rMutex := &sync.Mutex{}
-	for _, v := range pageRanges {
-		for _, rr := range v.rows {
-			rowRangeValues[rr] = make([]parquet.Value, 0, rr.count)
-		}
-	}
-
 	errGroup := &errgroup.Group{}
 	errGroup.SetLimit(m.concurrency)
 
@@ -429,8 +423,8 @@ func (m *Materializer) materializeColumnToSlice(ctx context.Context, file *stora
 				return errors.Wrap(err, "failed to materialize page range")
 			}
 			rMutex.Lock()
-			for rowRange, values := range pageRangeValues {
-				rowRangeValues[rowRange] = values
+			for rowRange, value := range pageRangeValues {
+				rowValues[rowRange] = value
 			}
 			rMutex.Unlock()
 			return nil
@@ -441,14 +435,12 @@ func (m *Materializer) materializeColumnToSlice(ctx context.Context, file *stora
 		return nil, errors.Wrap(err, "failed to materialize columns")
 	}
 
-	ranges := slices.Collect(maps.Keys(rowRangeValues))
-	slices.SortFunc(ranges, func(a, b RowRange) int {
-		return int(a.from - b.from)
-	})
+	rows := slices.Collect(maps.Keys(rowValues))
+	slices.Sort(rows)
 
 	res := make([]parquet.Value, 0, totalRows(rr))
-	for _, v := range ranges {
-		res = append(res, rowRangeValues[v]...)
+	for _, v := range rows {
+		res = append(res, rowValues[v])
 	}
 	return res, nil
 }
@@ -460,7 +452,7 @@ func (m *Materializer) materializePageRangeToSlice(
 	dictOff uint64,
 	dictSz uint64,
 	cc parquet.ColumnChunk,
-) (map[RowRange][]parquet.Value, error) {
+) (map[int64]parquet.Value, error) {
 	minOffset := uint64(p.off)
 	maxOffset := uint64(p.off + p.csz)
 
@@ -479,8 +471,8 @@ func (m *Materializer) materializePageRangeToSlice(
 		return nil, errors.Wrap(err, "could not seek to row")
 	}
 
+	values := make(map[int64]parquet.Value, totalRows(p.rows))
 	remainingRr := p.rows
-	values := make(map[RowRange][]parquet.Value, totalRows(remainingRr))
 
 	currentRr := remainingRr[0]
 	next := currentRr.from
@@ -488,7 +480,7 @@ func (m *Materializer) materializePageRangeToSlice(
 	currentRow := currentRr.from
 
 	remainingRr = remainingRr[1:]
-	pagesIter := &pagesValuesIterator{
+	pagesIter := &rowRangesValuesIterator{
 		pgs:          pgs,
 		pageIterator: new(pageValueIterator),
 
@@ -500,8 +492,8 @@ func (m *Materializer) materializePageRangeToSlice(
 	}
 
 	for pagesIter.Next() {
-		rowRange, rowRangeValues := pagesIter.At()
-		values[rowRange] = append(values[rowRange], rowRangeValues...)
+		rowIdx, rowRangeValue := pagesIter.At()
+		values[rowIdx] = rowRangeValue
 	}
 	if pagesIter.Err() != nil {
 		return nil, errors.Wrap(pagesIter.Err(), "could not read pages values")

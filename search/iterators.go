@@ -29,8 +29,13 @@ func (c concreteChunksSeries) ChunkCount() (int, error) {
 	return len(c.chks), nil
 }
 
-// pagesValuesIterator yields a slice of parquet Values from each parquet Page in its FilePages.
-type pagesValuesIterator struct {
+type rowValue struct {
+	row int64
+	val parquet.Value
+}
+
+// rowRangesValuesIterator yields individual parquet Values from specified row ranges in its FilePages
+type rowRangesValuesIterator struct {
 	pgs          *parquet.FilePages
 	pageIterator *pageValueIterator
 
@@ -40,58 +45,74 @@ type pagesValuesIterator struct {
 	remaining   int64
 	currentRow  int64
 
-	currentPageValues []parquet.Value
-	err               error
+	buffer             []rowValue
+	currentBufferIndex int
+	err                error
 }
 
-func (c *pagesValuesIterator) At() (RowRange, []parquet.Value) {
-	return c.currentRr, c.currentPageValues
+func (ri *rowRangesValuesIterator) At() (int64, parquet.Value) {
+	return ri.buffer[ri.currentBufferIndex].row, ri.buffer[ri.currentBufferIndex].val
 }
 
-func (c *pagesValuesIterator) Next() bool {
-	if c.err != nil {
+func (ri *rowRangesValuesIterator) Next() bool {
+	if ri.err != nil {
 		return false
 	}
 
-	if len(c.remainingRr) == 0 && c.remaining == 0 {
+	if len(ri.buffer) > 0 && ri.currentBufferIndex < len(ri.buffer)-1 {
+		// Still have buffered values from previous page reads to yield
+		ri.currentBufferIndex++
+		return true
+	}
+
+	if len(ri.remainingRr) == 0 && ri.remaining == 0 {
+		// Done; all rows of all pages have been read
+		// and all buffered values from the row ranges have been yielded
 		return false
 	}
 
-	// prepare inner iterator
-	page, err := c.pgs.ReadPage()
-	if err != nil {
-		c.err = errors.Wrap(err, "could not read page")
-		return false
-	}
-	c.pageIterator.Reset(page)
-
-	c.currentPageValues = []parquet.Value{}
-	for c.pageIterator.Next() {
-		if c.currentRow == c.next {
-			c.currentPageValues = append(c.currentPageValues, c.pageIterator.At())
-			c.remaining--
-			if c.remaining > 0 {
-				c.next = c.next + 1
-			} else if len(c.remainingRr) > 0 {
-				c.currentRr = c.remainingRr[0]
-				c.next = c.currentRr.from
-				c.remaining = c.currentRr.count
-				c.remainingRr = c.remainingRr[1:]
-			}
+	// Read pages until we find values for the next row range.
+	found := false
+	for !found {
+		// Prepare inner iterator
+		page, err := ri.pgs.ReadPage()
+		if err != nil {
+			ri.err = errors.Wrap(err, "could not read page")
+			return false
 		}
-		c.currentRow++
-	}
-	parquet.Release(page)
-	if c.pageIterator.Err() != nil {
-		c.err = errors.Wrap(c.pageIterator.Err(), "could not read page values")
-		return false
-	}
+		ri.pageIterator.Reset(page)
+		// Reset page values buffer
+		ri.currentBufferIndex = 0
+		ri.buffer = []rowValue{}
 
-	return true
+		for ri.pageIterator.Next() {
+			if ri.currentRow == ri.next {
+				found = true
+				ri.buffer = append(ri.buffer, rowValue{ri.currentRow, ri.pageIterator.At()})
+
+				ri.remaining--
+				if ri.remaining > 0 {
+					ri.next = ri.next + 1
+				} else if len(ri.remainingRr) > 0 {
+					ri.currentRr = ri.remainingRr[0]
+					ri.next = ri.currentRr.from
+					ri.remaining = ri.currentRr.count
+					ri.remainingRr = ri.remainingRr[1:]
+				}
+			}
+			ri.currentRow++
+		}
+		parquet.Release(page)
+		if ri.pageIterator.Err() != nil {
+			ri.err = errors.Wrap(ri.pageIterator.Err(), "could not read page values")
+			return false
+		}
+	}
+	return found
 }
 
-func (c *pagesValuesIterator) Err() error {
-	return c.err
+func (ri *rowRangesValuesIterator) Err() error {
+	return ri.err
 }
 
 // pageValueIterator yields individual parquet Values from its Page.
@@ -110,58 +131,58 @@ type pageValueIterator struct {
 	err                error
 }
 
-func (vi *pageValueIterator) At() parquet.Value {
-	if vi.vr == nil {
-		dicIndex := vi.st.GetIndex(vi.current)
+func (pi *pageValueIterator) At() parquet.Value {
+	if pi.vr == nil {
+		dicIndex := pi.st.GetIndex(pi.current)
 		// Cache a clone of the current symbol table entry.
 		// This allows us to release the original page while avoiding unnecessary future clones.
-		if _, ok := vi.cachedSymbols[dicIndex]; !ok {
-			vi.cachedSymbols[dicIndex] = vi.st.Get(vi.current).Clone()
+		if _, ok := pi.cachedSymbols[dicIndex]; !ok {
+			pi.cachedSymbols[dicIndex] = pi.st.Get(pi.current).Clone()
 		}
-		return vi.cachedSymbols[dicIndex]
+		return pi.cachedSymbols[dicIndex]
 	}
 
-	return vi.buffer[vi.currentBufferIndex].Clone()
+	return pi.buffer[pi.currentBufferIndex].Clone()
 }
 
-func (vi *pageValueIterator) Next() bool {
-	if vi.err != nil {
+func (pi *pageValueIterator) Next() bool {
+	if pi.err != nil {
 		return false
 	}
 
-	vi.current++
-	if vi.current >= int(vi.p.NumRows()) {
+	pi.current++
+	if pi.current >= int(pi.p.NumRows()) {
 		return false
 	}
 
-	vi.currentBufferIndex++
+	pi.currentBufferIndex++
 
-	if vi.currentBufferIndex == len(vi.buffer) {
-		n, err := vi.vr.ReadValues(vi.buffer[:cap(vi.buffer)])
+	if pi.currentBufferIndex == len(pi.buffer) {
+		n, err := pi.vr.ReadValues(pi.buffer[:cap(pi.buffer)])
 		if err != nil && err != io.EOF {
-			vi.err = err
+			pi.err = err
 		}
-		vi.buffer = vi.buffer[:n]
-		vi.currentBufferIndex = 0
+		pi.buffer = pi.buffer[:n]
+		pi.currentBufferIndex = 0
 	}
 
 	return true
 }
 
-func (vi *pageValueIterator) Reset(p parquet.Page) {
-	vi.p = p
-	vi.vr = nil
+func (pi *pageValueIterator) Reset(p parquet.Page) {
+	pi.p = p
+	pi.vr = nil
 	if p.Dictionary() != nil {
-		vi.st.Reset(p)
-		vi.cachedSymbols = make(map[int32]parquet.Value, p.Dictionary().Len())
+		pi.st.Reset(p)
+		pi.cachedSymbols = make(map[int32]parquet.Value, p.Dictionary().Len())
 	} else {
-		vi.vr = p.Values()
-		vi.buffer = make([]parquet.Value, 0, 128)
-		vi.currentBufferIndex = -1
+		pi.vr = p.Values()
+		pi.buffer = make([]parquet.Value, 0, 128)
+		pi.currentBufferIndex = -1
 	}
-	vi.current = -1
+	pi.current = -1
 }
 
-func (vi *pageValueIterator) Err() error {
-	return vi.err
+func (pi *pageValueIterator) Err() error {
+	return pi.err
 }
