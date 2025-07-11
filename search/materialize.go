@@ -368,45 +368,10 @@ func (m *Materializer) materializeChunksSlice(ctx context.Context, rgi int, mint
 //}
 
 func (m *Materializer) materializeColumnToSlice(ctx context.Context, file *storage.ParquetFile, rgi int, cc parquet.ColumnChunk, rr []RowRange, chunkColumn bool) ([]parquet.Value, error) {
-	if len(rr) == 0 {
-		return nil, nil
-	}
-
-	oidx, err := cc.OffsetIndex()
-	if err != nil {
-		return nil, errors.Wrap(err, "could not get offset index")
-	}
-
-	cidx, err := cc.ColumnIndex()
-	if err != nil {
-		return nil, errors.Wrap(err, "could not get column index")
-	}
-
-	group := file.RowGroups()[rgi]
-
-	pagesToRowsMap := make(map[int][]RowRange, len(rr))
-
-	for i := 0; i < cidx.NumPages(); i++ {
-		pageRowRange := RowRange{
-			from: oidx.FirstRowIndex(i),
-		}
-		pageRowRange.count = group.NumRows()
-
-		if i < oidx.NumPages()-1 {
-			pageRowRange.count = oidx.FirstRowIndex(i+1) - pageRowRange.from
-		}
-
-		for _, r := range rr {
-			if pageRowRange.Overlaps(r) {
-				pagesToRowsMap[i] = append(pagesToRowsMap[i], pageRowRange.Intersection(r))
-			}
-		}
-	}
-	if err := m.checkBytesQuota(maps.Keys(pagesToRowsMap), oidx, chunkColumn); err != nil {
+	pageRanges, err := m.getPageRangesForColummn(cc, file, rgi, rr, chunkColumn)
+	if err != nil || len(pageRanges) == 0 {
 		return nil, err
 	}
-
-	pageRanges := m.coalescePageRanges(pagesToRowsMap, oidx)
 
 	rowValues := make(map[int64]parquet.Value, len(pageRanges))
 	rMutex := &sync.Mutex{}
@@ -453,50 +418,22 @@ func (m *Materializer) materializePageRangeToSlice(
 	dictSz uint64,
 	cc parquet.ColumnChunk,
 ) (map[int64]parquet.Value, error) {
-	minOffset := uint64(p.off)
-	maxOffset := uint64(p.off + p.csz)
-
-	// if dictOff == 0, it means that the collum is not dictionary encoded
-	if dictOff > 0 && int(minOffset-(dictOff+dictSz)) < file.Cfg.PagePartitioningMaxGapSize {
-		minOffset = dictOff
-	}
-
-	pgs, err := file.GetPages(ctx, cc, int64(minOffset), int64(maxOffset))
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to get pages")
-	}
-	defer func() { _ = pgs.Close() }()
-	err = pgs.SeekToRow(p.rows[0].from)
-	if err != nil {
-		return nil, errors.Wrap(err, "could not seek to row")
-	}
-
 	values := make(map[int64]parquet.Value, totalRows(p.rows))
-	remainingRr := p.rows
 
-	currentRr := remainingRr[0]
-	next := currentRr.from
-	remaining := currentRr.count
-	currentRow := currentRr.from
-
-	remainingRr = remainingRr[1:]
-	pagesIter := &rowRangesValuesIterator{
-		pgs:          pgs,
-		pageIterator: new(pageValueIterator),
-
-		remainingRr: remainingRr,
-		currentRr:   currentRr,
-		next:        next,
-		remaining:   remaining,
-		currentRow:  currentRow,
+	rowValuesIter, err := newRowRangesValueIterator(
+		ctx, file, cc, p, dictOff, dictSz,
+	)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create row values iterator for page")
 	}
+	defer func() { _ = rowValuesIter.Close() }()
 
-	for pagesIter.Next() {
-		rowIdx, rowRangeValue := pagesIter.At()
+	for rowValuesIter.Next() {
+		rowIdx, rowRangeValue := rowValuesIter.At()
 		values[rowIdx] = rowRangeValue
 	}
-	if pagesIter.Err() != nil {
-		return nil, errors.Wrap(pagesIter.Err(), "could not read pages values")
+	if rowValuesIter.Err() != nil {
+		return nil, err
 	}
 
 	return values, nil
@@ -505,6 +442,48 @@ func (m *Materializer) materializePageRangeToSlice(
 type pageToReadWithRow struct {
 	pageToRead
 	rows []RowRange
+}
+
+func (m *Materializer) getPageRangesForColummn(cc parquet.ColumnChunk, file *storage.ParquetFile, rgi int, rr []RowRange, chunkColumn bool) ([]pageToReadWithRow, error) {
+	if len(rr) == 0 {
+		return nil, nil
+	}
+
+	oidx, err := cc.OffsetIndex()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get offset index")
+	}
+
+	cidx, err := cc.ColumnIndex()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get column index")
+	}
+
+	group := file.RowGroups()[rgi]
+	pagesToRowsMap := make(map[int][]RowRange, len(rr))
+
+	for i := 0; i < cidx.NumPages(); i++ {
+		pageRowRange := RowRange{
+			from: oidx.FirstRowIndex(i),
+		}
+		pageRowRange.count = group.NumRows()
+
+		if i < oidx.NumPages()-1 {
+			pageRowRange.count = oidx.FirstRowIndex(i+1) - pageRowRange.from
+		}
+
+		for _, r := range rr {
+			if pageRowRange.Overlaps(r) {
+				pagesToRowsMap[i] = append(pagesToRowsMap[i], pageRowRange.Intersection(r))
+			}
+		}
+	}
+	if err := m.checkBytesQuota(maps.Keys(pagesToRowsMap), oidx, chunkColumn); err != nil {
+		return nil, err
+	}
+
+	pageRanges := m.coalescePageRanges(pagesToRowsMap, oidx)
+	return pageRanges, nil
 }
 
 // Merge nearby pages to enable efficient sequential reads.

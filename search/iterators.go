@@ -1,6 +1,7 @@
 package search
 
 import (
+	"context"
 	"io"
 
 	"github.com/parquet-go/parquet-go"
@@ -8,6 +9,8 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	prom_storage "github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/chunks"
+
+	"github.com/prometheus-community/parquet-common/storage"
 )
 
 var _ prom_storage.ChunkSeries = &concreteChunksSeries{}
@@ -34,8 +37,58 @@ type rowValue struct {
 	val parquet.Value
 }
 
-// rowRangesValuesIterator yields individual parquet Values from specified row ranges in its FilePages
-type rowRangesValuesIterator struct {
+func newRowRangesValueIterator(
+	ctx context.Context,
+	file *storage.ParquetFile,
+	cc parquet.ColumnChunk,
+	pageRange pageToReadWithRow,
+	dictOff uint64,
+	dictSz uint64,
+) (*rowRangesValueIterator, error) {
+	minOffset := uint64(pageRange.off)
+	maxOffset := uint64(pageRange.off + pageRange.csz)
+
+	// if dictOff == 0, it means that the collum is not dictionary encoded
+	if dictOff > 0 && int(minOffset-(dictOff+dictSz)) < file.Cfg.PagePartitioningMaxGapSize {
+		minOffset = dictOff
+	}
+
+	pgs, err := file.GetPages(ctx, cc, int64(minOffset), int64(maxOffset))
+	if err != nil {
+		if pgs != nil {
+			_ = pgs.Close()
+		}
+		return nil, errors.Wrap(err, "failed to get pages")
+	}
+
+	err = pgs.SeekToRow(pageRange.rows[0].from)
+	if err != nil {
+		_ = pgs.Close()
+		return nil, errors.Wrap(err, "failed to seek to row")
+	}
+
+	remainingRr := pageRange.rows
+
+	currentRr := remainingRr[0]
+	next := currentRr.from
+	remaining := currentRr.count
+	currentRow := currentRr.from
+
+	remainingRr = remainingRr[1:]
+	return &rowRangesValueIterator{
+		pgs:          pgs,
+		pageIterator: new(pageValueIterator),
+
+		remainingRr: remainingRr,
+		currentRr:   currentRr,
+		next:        next,
+		remaining:   remaining,
+		currentRow:  currentRow,
+	}, nil
+}
+
+// rowRangesValueIterator yields individual parquet Values from specified row ranges in its FilePages
+type rowRangesValueIterator struct {
 	pgs          *parquet.FilePages
 	pageIterator *pageValueIterator
 
@@ -50,11 +103,11 @@ type rowRangesValuesIterator struct {
 	err                error
 }
 
-func (ri *rowRangesValuesIterator) At() (int64, parquet.Value) {
+func (ri *rowRangesValueIterator) At() (int64, parquet.Value) {
 	return ri.buffer[ri.currentBufferIndex].row, ri.buffer[ri.currentBufferIndex].val
 }
 
-func (ri *rowRangesValuesIterator) Next() bool {
+func (ri *rowRangesValueIterator) Next() bool {
 	if ri.err != nil {
 		return false
 	}
@@ -77,7 +130,7 @@ func (ri *rowRangesValuesIterator) Next() bool {
 		// Prepare inner iterator
 		page, err := ri.pgs.ReadPage()
 		if err != nil {
-			ri.err = errors.Wrap(err, "could not read page")
+			ri.err = errors.Wrap(err, "failed to read page")
 			return false
 		}
 		ri.pageIterator.Reset(page)
@@ -104,15 +157,19 @@ func (ri *rowRangesValuesIterator) Next() bool {
 		}
 		parquet.Release(page)
 		if ri.pageIterator.Err() != nil {
-			ri.err = errors.Wrap(ri.pageIterator.Err(), "could not read page values")
+			ri.err = errors.Wrap(ri.pageIterator.Err(), "failed to read page values")
 			return false
 		}
 	}
 	return found
 }
 
-func (ri *rowRangesValuesIterator) Err() error {
+func (ri *rowRangesValueIterator) Err() error {
 	return ri.err
+}
+
+func (ri *rowRangesValueIterator) Close() error {
+	return ri.pgs.Close()
 }
 
 // pageValueIterator yields individual parquet Values from its Page.
