@@ -11,6 +11,7 @@ require (
 	github.com/prometheus/prometheus v0.303.0
 	github.com/stretchr/testify v1.10.0
 	github.com/thanos-io/objstore v0.0.0-20250317105316-a0136a6f898d
+	go.opentelemetry.io/otel v1.35.0
 	golang.org/x/sync v0.12.0
 )
 
@@ -63,7 +64,6 @@ require (
 	github.com/prometheus/sigv4 v0.1.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.60.0 // indirect
-	go.opentelemetry.io/otel v1.35.0 // indirect
 	go.opentelemetry.io/otel/metric v1.35.0 // indirect
 	go.opentelemetry.io/otel/trace v1.35.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
