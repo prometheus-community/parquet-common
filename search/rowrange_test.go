@@ -21,52 +21,52 @@ import (
 func TestIntersect(t *testing.T) {
 	for _, tt := range []struct{ lhs, rhs, expect []RowRange }{
 		{
-			lhs:    []RowRange{{from: 0, count: 4}},
-			rhs:    []RowRange{{from: 2, count: 6}},
-			expect: []RowRange{{from: 2, count: 2}},
+			lhs:    []RowRange{{From: 0, Count: 4}},
+			rhs:    []RowRange{{From: 2, Count: 6}},
+			expect: []RowRange{{From: 2, Count: 2}},
 		},
 		{
-			lhs:    []RowRange{{from: 0, count: 4}},
-			rhs:    []RowRange{{from: 6, count: 8}},
+			lhs:    []RowRange{{From: 0, Count: 4}},
+			rhs:    []RowRange{{From: 6, Count: 8}},
 			expect: []RowRange{},
 		},
 		{
-			lhs:    []RowRange{{from: 0, count: 4}},
-			rhs:    []RowRange{{from: 0, count: 4}},
-			expect: []RowRange{{from: 0, count: 4}},
+			lhs:    []RowRange{{From: 0, Count: 4}},
+			rhs:    []RowRange{{From: 0, Count: 4}},
+			expect: []RowRange{{From: 0, Count: 4}},
 		},
 		{
-			lhs:    []RowRange{{from: 0, count: 4}, {from: 8, count: 2}},
-			rhs:    []RowRange{{from: 2, count: 9}},
-			expect: []RowRange{{from: 2, count: 2}, {from: 8, count: 2}},
+			lhs:    []RowRange{{From: 0, Count: 4}, {From: 8, Count: 2}},
+			rhs:    []RowRange{{From: 2, Count: 9}},
+			expect: []RowRange{{From: 2, Count: 2}, {From: 8, Count: 2}},
 		},
 		{
-			lhs:    []RowRange{{from: 0, count: 1}, {from: 4, count: 1}},
-			rhs:    []RowRange{{from: 2, count: 1}, {from: 6, count: 1}},
+			lhs:    []RowRange{{From: 0, Count: 1}, {From: 4, Count: 1}},
+			rhs:    []RowRange{{From: 2, Count: 1}, {From: 6, Count: 1}},
 			expect: []RowRange{},
 		},
 		{
-			lhs:    []RowRange{{from: 0, count: 2}, {from: 2, count: 2}},
-			rhs:    []RowRange{{from: 1, count: 2}, {from: 3, count: 2}},
-			expect: []RowRange{{from: 1, count: 3}},
+			lhs:    []RowRange{{From: 0, Count: 2}, {From: 2, Count: 2}},
+			rhs:    []RowRange{{From: 1, Count: 2}, {From: 3, Count: 2}},
+			expect: []RowRange{{From: 1, Count: 3}},
 		},
 		{
-			lhs:    []RowRange{{from: 0, count: 2}, {from: 5, count: 2}},
-			rhs:    []RowRange{{from: 0, count: 10}},
-			expect: []RowRange{{from: 0, count: 2}, {from: 5, count: 2}},
+			lhs:    []RowRange{{From: 0, Count: 2}, {From: 5, Count: 2}},
+			rhs:    []RowRange{{From: 0, Count: 10}},
+			expect: []RowRange{{From: 0, Count: 2}, {From: 5, Count: 2}},
 		},
 		{
-			lhs:    []RowRange{{from: 0, count: 2}, {from: 3, count: 1}, {from: 5, count: 2}, {from: 12, count: 10}},
-			rhs:    []RowRange{{from: 0, count: 10}, {from: 15, count: 32}},
-			expect: []RowRange{{from: 0, count: 2}, {from: 3, count: 1}, {from: 5, count: 2}, {from: 15, count: 7}},
+			lhs:    []RowRange{{From: 0, Count: 2}, {From: 3, Count: 1}, {From: 5, Count: 2}, {From: 12, Count: 10}},
+			rhs:    []RowRange{{From: 0, Count: 10}, {From: 15, Count: 32}},
+			expect: []RowRange{{From: 0, Count: 2}, {From: 3, Count: 1}, {From: 5, Count: 2}, {From: 15, Count: 7}},
 		},
 		{
 			lhs:    []RowRange{},
-			rhs:    []RowRange{{from: 0, count: 10}},
+			rhs:    []RowRange{{From: 0, Count: 10}},
 			expect: []RowRange{},
 		},
 		{
-			lhs:    []RowRange{{from: 0, count: 10}},
+			lhs:    []RowRange{{From: 0, Count: 10}},
 			rhs:    []RowRange{},
 			expect: []RowRange{},
 		},
@@ -76,9 +76,9 @@ func TestIntersect(t *testing.T) {
 			expect: []RowRange{},
 		},
 		{
-			lhs:    []RowRange{{from: 0, count: 2}},
-			rhs:    []RowRange{{from: 0, count: 1}, {from: 1, count: 1}, {from: 2, count: 1}},
-			expect: []RowRange{{from: 0, count: 2}},
+			lhs:    []RowRange{{From: 0, Count: 2}},
+			rhs:    []RowRange{{From: 0, Count: 1}, {From: 1, Count: 1}, {From: 2, Count: 1}},
+			expect: []RowRange{{From: 0, Count: 2}},
 		},
 	} {
 		t.Run("", func(t *testing.T) {
@@ -92,43 +92,43 @@ func TestIntersect(t *testing.T) {
 func TestComplement(t *testing.T) {
 	for _, tt := range []struct{ lhs, rhs, expect []RowRange }{
 		{
-			lhs:    []RowRange{{from: 4, count: 3}},
-			rhs:    []RowRange{{from: 2, count: 1}, {from: 5, count: 2}},
-			expect: []RowRange{{from: 2, count: 1}},
+			lhs:    []RowRange{{From: 4, Count: 3}},
+			rhs:    []RowRange{{From: 2, Count: 1}, {From: 5, Count: 2}},
+			expect: []RowRange{{From: 2, Count: 1}},
 		},
 		{
-			lhs:    []RowRange{{from: 2, count: 4}},
-			rhs:    []RowRange{{from: 0, count: 7}},
-			expect: []RowRange{{from: 0, count: 2}, {from: 6, count: 1}},
+			lhs:    []RowRange{{From: 2, Count: 4}},
+			rhs:    []RowRange{{From: 0, Count: 7}},
+			expect: []RowRange{{From: 0, Count: 2}, {From: 6, Count: 1}},
 		},
 		{
-			lhs:    []RowRange{{from: 2, count: 4}},
-			rhs:    []RowRange{{from: 3, count: 7}},
-			expect: []RowRange{{from: 6, count: 4}},
+			lhs:    []RowRange{{From: 2, Count: 4}},
+			rhs:    []RowRange{{From: 3, Count: 7}},
+			expect: []RowRange{{From: 6, Count: 4}},
 		},
 		{
-			lhs:    []RowRange{{from: 8, count: 10}},
-			rhs:    []RowRange{{from: 3, count: 7}},
-			expect: []RowRange{{from: 3, count: 5}},
+			lhs:    []RowRange{{From: 8, Count: 10}},
+			rhs:    []RowRange{{From: 3, Count: 7}},
+			expect: []RowRange{{From: 3, Count: 5}},
 		},
 		{
-			lhs:    []RowRange{{from: 16, count: 10}},
-			rhs:    []RowRange{{from: 3, count: 7}},
-			expect: []RowRange{{from: 3, count: 7}},
+			lhs:    []RowRange{{From: 16, Count: 10}},
+			rhs:    []RowRange{{From: 3, Count: 7}},
+			expect: []RowRange{{From: 3, Count: 7}},
 		},
 		{
-			lhs:    []RowRange{{from: 1, count: 2}, {from: 4, count: 2}},
-			rhs:    []RowRange{{from: 2, count: 2}, {from: 5, count: 8}},
-			expect: []RowRange{{from: 3, count: 1}, {from: 6, count: 7}},
+			lhs:    []RowRange{{From: 1, Count: 2}, {From: 4, Count: 2}},
+			rhs:    []RowRange{{From: 2, Count: 2}, {From: 5, Count: 8}},
+			expect: []RowRange{{From: 3, Count: 1}, {From: 6, Count: 7}},
 		},
 		// Empty input cases
 		{
 			lhs:    []RowRange{},
-			rhs:    []RowRange{{from: 1, count: 5}},
-			expect: []RowRange{{from: 1, count: 5}},
+			rhs:    []RowRange{{From: 1, Count: 5}},
+			expect: []RowRange{{From: 1, Count: 5}},
 		},
 		{
-			lhs:    []RowRange{{from: 1, count: 5}},
+			lhs:    []RowRange{{From: 1, Count: 5}},
 			rhs:    []RowRange{},
 			expect: []RowRange{},
 		},
@@ -139,33 +139,33 @@ func TestComplement(t *testing.T) {
 		},
 		// Adjacent ranges
 		{
-			lhs:    []RowRange{{from: 1, count: 3}},
-			rhs:    []RowRange{{from: 1, count: 3}, {from: 4, count: 2}},
-			expect: []RowRange{{from: 4, count: 2}},
+			lhs:    []RowRange{{From: 1, Count: 3}},
+			rhs:    []RowRange{{From: 1, Count: 3}, {From: 4, Count: 2}},
+			expect: []RowRange{{From: 4, Count: 2}},
 		},
 		// Ranges with gaps
 		{
-			lhs:    []RowRange{{from: 1, count: 2}, {from: 5, count: 2}},
-			rhs:    []RowRange{{from: 0, count: 8}},
-			expect: []RowRange{{from: 0, count: 1}, {from: 3, count: 2}, {from: 7, count: 1}},
+			lhs:    []RowRange{{From: 1, Count: 2}, {From: 5, Count: 2}},
+			rhs:    []RowRange{{From: 0, Count: 8}},
+			expect: []RowRange{{From: 0, Count: 1}, {From: 3, Count: 2}, {From: 7, Count: 1}},
 		},
 		// Zero-count ranges
 		{
-			lhs:    []RowRange{{from: 1, count: 0}},
-			rhs:    []RowRange{{from: 1, count: 5}},
-			expect: []RowRange{{from: 1, count: 5}},
+			lhs:    []RowRange{{From: 1, Count: 0}},
+			rhs:    []RowRange{{From: 1, Count: 5}},
+			expect: []RowRange{{From: 1, Count: 5}},
 		},
 		// Completely disjoint ranges
 		{
-			lhs:    []RowRange{{from: 1, count: 2}},
-			rhs:    []RowRange{{from: 5, count: 2}},
-			expect: []RowRange{{from: 5, count: 2}},
+			lhs:    []RowRange{{From: 1, Count: 2}},
+			rhs:    []RowRange{{From: 5, Count: 2}},
+			expect: []RowRange{{From: 5, Count: 2}},
 		},
 		// Multiple overlapping ranges
 		{
-			lhs:    []RowRange{{from: 1, count: 3}, {from: 4, count: 3}, {from: 8, count: 2}},
-			rhs:    []RowRange{{from: 0, count: 11}},
-			expect: []RowRange{{from: 0, count: 1}, {from: 7, count: 1}, {from: 10, count: 1}},
+			lhs:    []RowRange{{From: 1, Count: 3}, {From: 4, Count: 3}, {From: 8, Count: 2}},
+			rhs:    []RowRange{{From: 0, Count: 11}},
+			expect: []RowRange{{From: 0, Count: 1}, {From: 7, Count: 1}, {From: 10, Count: 1}},
 		},
 	} {
 		t.Run("", func(t *testing.T) {
@@ -180,31 +180,31 @@ func TestSimplify(t *testing.T) {
 	for _, tt := range []struct{ in, expect []RowRange }{
 		{
 			in: []RowRange{
-				{from: 0, count: 15},
-				{from: 4, count: 4},
+				{From: 0, Count: 15},
+				{From: 4, Count: 4},
 			},
 			expect: []RowRange{
-				{from: 0, count: 15},
+				{From: 0, Count: 15},
 			},
 		},
 		{
 			in: []RowRange{
-				{from: 4, count: 4},
-				{from: 4, count: 2},
+				{From: 4, Count: 4},
+				{From: 4, Count: 2},
 			},
 			expect: []RowRange{
-				{from: 4, count: 4},
+				{From: 4, Count: 4},
 			},
 		},
 		{
 			in: []RowRange{
-				{from: 0, count: 4},
-				{from: 1, count: 5},
-				{from: 8, count: 10},
+				{From: 0, Count: 4},
+				{From: 1, Count: 5},
+				{From: 8, Count: 10},
 			},
 			expect: []RowRange{
-				{from: 0, count: 6},
-				{from: 8, count: 10},
+				{From: 0, Count: 6},
+				{From: 8, Count: 10},
 			},
 		},
 	} {
@@ -223,55 +223,55 @@ func TestOverlaps(t *testing.T) {
 	}{
 		// Identical ranges
 		{
-			a:      RowRange{from: 0, count: 5},
-			b:      RowRange{from: 0, count: 5},
+			a:      RowRange{From: 0, Count: 5},
+			b:      RowRange{From: 0, Count: 5},
 			expect: true,
 		},
 		// Completely disjoint ranges
 		{
-			a:      RowRange{from: 0, count: 3},
-			b:      RowRange{from: 5, count: 3},
+			a:      RowRange{From: 0, Count: 3},
+			b:      RowRange{From: 5, Count: 3},
 			expect: false,
 		},
 		// Adjacent ranges (should not overlap as ranges are half-open)
 		{
-			a:      RowRange{from: 0, count: 3},
-			b:      RowRange{from: 3, count: 3},
+			a:      RowRange{From: 0, Count: 3},
+			b:      RowRange{From: 3, Count: 3},
 			expect: false,
 		},
 		// One range completely contains the other
 		{
-			a:      RowRange{from: 0, count: 10},
-			b:      RowRange{from: 2, count: 5},
+			a:      RowRange{From: 0, Count: 10},
+			b:      RowRange{From: 2, Count: 5},
 			expect: true,
 		},
 		// Partial overlap from left
 		{
-			a:      RowRange{from: 0, count: 5},
-			b:      RowRange{from: 3, count: 5},
+			a:      RowRange{From: 0, Count: 5},
+			b:      RowRange{From: 3, Count: 5},
 			expect: true,
 		},
 		// Partial overlap from right
 		{
-			a:      RowRange{from: 3, count: 5},
-			b:      RowRange{from: 0, count: 5},
+			a:      RowRange{From: 3, Count: 5},
+			b:      RowRange{From: 0, Count: 5},
 			expect: true,
 		},
 		// Zero-count ranges
 		{
-			a:      RowRange{from: 0, count: 0},
-			b:      RowRange{from: 0, count: 5},
+			a:      RowRange{From: 0, Count: 0},
+			b:      RowRange{From: 0, Count: 5},
 			expect: false,
 		},
 		{
-			a:      RowRange{from: 0, count: 5},
-			b:      RowRange{from: 0, count: 0},
+			a:      RowRange{From: 0, Count: 5},
+			b:      RowRange{From: 0, Count: 0},
 			expect: false,
 		},
 		// Negative ranges (edge case)
 		{
-			a:      RowRange{from: -5, count: 5},
-			b:      RowRange{from: -3, count: 5},
+			a:      RowRange{From: -5, Count: 5},
+			b:      RowRange{From: -3, Count: 5},
 			expect: true,
 		},
 	} {
