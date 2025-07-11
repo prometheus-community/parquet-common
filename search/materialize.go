@@ -432,7 +432,7 @@ func (m *Materializer) materializePageRangeToSlice(
 		rowIdx, rowRangeValue := rowValuesIter.At()
 		values[rowIdx] = rowRangeValue
 	}
-	if rowValuesIter.Err() != nil {
+	if err = rowValuesIter.Err(); err != nil {
 		return nil, err
 	}
 
