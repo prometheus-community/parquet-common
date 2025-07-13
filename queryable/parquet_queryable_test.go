@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -389,6 +390,58 @@ func TestQueryable(t *testing.T) {
 				}
 				require.NoError(t, ss.Err())
 				require.NotEmpty(t, series)
+			})
+
+			t.Run("MaterializedSeriesCallback", func(t *testing.T) {
+				// Test callback that counts materialized series
+				var seriesCount int
+				mtx := sync.Mutex{}
+				seriesCallback := func(ctx context.Context, series []prom_storage.ChunkSeries) error {
+					mtx.Lock()
+					seriesCount += len(series)
+					mtx.Unlock()
+					return nil
+				}
+
+				queryable, err := createQueryable(shard, WithMaterializedSeriesCallback(seriesCallback))
+				require.NoError(t, err)
+				querier, err := queryable.Querier(data.MinTime, data.MaxTime)
+				require.NoError(t, err)
+
+				// Query some series to trigger the callback
+				matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
+				ss := querier.Select(ctx, true, nil, matchers...)
+
+				var foundSeries []prom_storage.Series
+				for ss.Next() {
+					foundSeries = append(foundSeries, ss.At())
+				}
+				require.NoError(t, ss.Err())
+				require.NotEmpty(t, foundSeries)
+				require.Equal(t, len(foundSeries), seriesCount, "Callback should receive the same number of series")
+			})
+
+			t.Run("MaterializedLabelsCallback", func(t *testing.T) {
+				// Query series that should be filtered by the callback
+				matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
+
+				// Test callback that returns empty results
+				emptyCallback := func(ctx context.Context, hints *prom_storage.SelectHints, series [][]labels.Label, rr []search.RowRange) ([][]labels.Label, []search.RowRange) {
+					return nil, nil
+				}
+
+				queryable, err := createQueryable(shard, WithMaterializedLabelsCallback(emptyCallback))
+				require.NoError(t, err)
+				querier, err := queryable.Querier(data.MinTime, data.MaxTime)
+				require.NoError(t, err)
+
+				ss := querier.Select(ctx, true, nil, matchers...)
+				var emptySeries []prom_storage.Series
+				for ss.Next() {
+					emptySeries = append(emptySeries, ss.At())
+				}
+				require.NoError(t, ss.Err())
+				require.Empty(t, emptySeries, "Callback should filter out all series")
 			})
 		})
 	}
