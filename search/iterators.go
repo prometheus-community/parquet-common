@@ -98,13 +98,13 @@ type rowRangesValueIterator struct {
 	remaining   int64
 	currentRow  int64
 
-	buffer             []rowValue
+	buffer             []parquet.Value
 	currentBufferIndex int
 	err                error
 }
 
-func (ri *rowRangesValueIterator) At() (int64, parquet.Value) {
-	return ri.buffer[ri.currentBufferIndex].row, ri.buffer[ri.currentBufferIndex].val
+func (ri *rowRangesValueIterator) At() parquet.Value {
+	return ri.buffer[ri.currentBufferIndex]
 }
 
 func (ri *rowRangesValueIterator) Next() bool {
@@ -141,7 +141,7 @@ func (ri *rowRangesValueIterator) Next() bool {
 		for ri.pageIterator.Next() {
 			if ri.currentRow == ri.next {
 				found = true
-				ri.buffer = append(ri.buffer, rowValue{ri.currentRow, ri.pageIterator.At()})
+				ri.buffer = append(ri.buffer, ri.pageIterator.At())
 
 				ri.remaining--
 				if ri.remaining > 0 {

@@ -19,7 +19,6 @@ import (
 	"iter"
 	"maps"
 	"slices"
-	"sync"
 
 	"github.com/parquet-go/parquet-go"
 	"github.com/pkg/errors"
@@ -373,25 +372,19 @@ func (m *Materializer) materializeColumnToSlice(ctx context.Context, file *stora
 		return nil, err
 	}
 
-	rowValues := make(map[int64]parquet.Value, len(pageRanges))
-	rMutex := &sync.Mutex{}
-	errGroup := &errgroup.Group{}
-	errGroup.SetLimit(m.concurrency)
+	pageRangesValues := make([][]parquet.Value, len(pageRanges))
 
 	dictOff, dictSz := file.DictionaryPageBounds(rgi, cc.Column())
-	cc.Type()
+	errGroup := &errgroup.Group{}
+	errGroup.SetLimit(m.concurrency)
+	for i, pageRange := range pageRanges {
 
-	for _, p := range pageRanges {
 		errGroup.Go(func() error {
-			pageRangeValues, err := m.materializePageRangeToSlice(ctx, file, p, dictOff, dictSz, cc)
+			values, err := m.materializePageRangeToSlice(ctx, file, pageRange, dictOff, dictSz, cc)
 			if err != nil {
 				return errors.Wrap(err, "failed to materialize page range")
 			}
-			rMutex.Lock()
-			for rowRange, value := range pageRangeValues {
-				rowValues[rowRange] = value
-			}
-			rMutex.Unlock()
+			pageRangesValues[i] = values
 			return nil
 		})
 	}
@@ -400,13 +393,7 @@ func (m *Materializer) materializeColumnToSlice(ctx context.Context, file *stora
 		return nil, errors.Wrap(err, "failed to materialize columns")
 	}
 
-	rows := slices.Collect(maps.Keys(rowValues))
-	slices.Sort(rows)
-
-	res := make([]parquet.Value, 0, totalRows(rr))
-	for _, v := range rows {
-		res = append(res, rowValues[v])
-	}
+	res := slices.Concat(pageRangesValues...)
 	return res, nil
 }
 
@@ -417,8 +404,8 @@ func (m *Materializer) materializePageRangeToSlice(
 	dictOff uint64,
 	dictSz uint64,
 	cc parquet.ColumnChunk,
-) (map[int64]parquet.Value, error) {
-	values := make(map[int64]parquet.Value, totalRows(p.rows))
+) ([]parquet.Value, error) {
+	values := make([]parquet.Value, totalRows(p.rows))
 
 	rowValuesIter, err := newRowRangesValueIterator(
 		ctx, file, cc, p, dictOff, dictSz,
@@ -428,9 +415,10 @@ func (m *Materializer) materializePageRangeToSlice(
 	}
 	defer func() { _ = rowValuesIter.Close() }()
 
+	i := 0
 	for rowValuesIter.Next() {
-		rowIdx, rowRangeValue := rowValuesIter.At()
-		values[rowIdx] = rowRangeValue
+		values[i] = rowValuesIter.At()
+		i++
 	}
 	if err = rowValuesIter.Err(); err != nil {
 		return nil, err
