@@ -32,11 +32,6 @@ func (c concreteChunksSeries) ChunkCount() (int, error) {
 	return len(c.chks), nil
 }
 
-type rowValue struct {
-	row int64
-	val parquet.Value
-}
-
 func newRowRangesValueIterator(
 	ctx context.Context,
 	file *storage.ParquetFile,

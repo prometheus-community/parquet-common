@@ -378,7 +378,6 @@ func (m *Materializer) materializeColumnToSlice(ctx context.Context, file *stora
 	errGroup := &errgroup.Group{}
 	errGroup.SetLimit(m.concurrency)
 	for i, pageRange := range pageRanges {
-
 		errGroup.Go(func() error {
 			values, err := m.materializePageRangeToSlice(ctx, file, pageRange, dictOff, dictSz, cc)
 			if err != nil {
@@ -393,7 +392,33 @@ func (m *Materializer) materializeColumnToSlice(ctx context.Context, file *stora
 		return nil, errors.Wrap(err, "failed to materialize columns")
 	}
 
-	res := slices.Concat(pageRangesValues...)
+	type sortablePageRange struct {
+		pageRange           pageToReadWithRow
+		pageRangesValuesIdx int
+	}
+
+	// Do not assume the page ranges are in order; partitions may not prioritize sequential reads.
+	pageRangesSorted := make([]sortablePageRange, len(pageRanges))
+	for i, pageRange := range pageRanges {
+		pageRangesSorted[i] = sortablePageRange{
+			pageRange:           pageRange,
+			pageRangesValuesIdx: i,
+		}
+	}
+	slices.SortFunc(pageRangesSorted, func(a, b sortablePageRange) int {
+		if a.pageRange.pfrom < b.pageRange.pfrom {
+			return -1
+		} else if a.pageRange.pfrom > b.pageRange.pfrom {
+			return 1
+		}
+		return 0
+	})
+
+	res := make([]parquet.Value, 0, totalRows(rr))
+	for _, sortedPageRange := range pageRangesSorted {
+		// Within a page range, the values are in order
+		res = append(res, pageRangesValues[sortedPageRange.pageRangesValuesIdx]...)
+	}
 	return res, nil
 }
 
