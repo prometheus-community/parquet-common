@@ -377,6 +377,10 @@ func (b queryableShard) Query(ctx context.Context, sorted bool, sp *prom_storage
 			if err != nil {
 				return err
 			}
+			if len(series) == 0 {
+				return nil
+			}
+
 			rMtx.Lock()
 			results = append(results, series...)
 			rMtx.Unlock()

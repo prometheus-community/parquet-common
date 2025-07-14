@@ -146,6 +146,11 @@ func (m *Materializer) Materialize(ctx context.Context, hints *prom_storage.Sele
 	}
 
 	sLbls, rr = m.materializedLabelsCallback(ctx, hints, sLbls, rr)
+	// Series and rows might be filtered out so check again if we need to materialize chunks.
+	if len(sLbls) == 0 || len(rr) == 0 {
+		return nil, nil
+	}
+
 	results = make([]prom_storage.ChunkSeries, len(sLbls))
 	for i, s := range sLbls {
 		results[i] = &concreteChunksSeries{
