@@ -54,8 +54,8 @@ type Materializer struct {
 	chunkBytesQuota *Quota
 	dataBytesQuota  *Quota
 
-	materializedSeriesCallback MaterializedSeriesFunc
-	materializedLabelsCallback MaterializedLabelsFunc
+	materializedSeriesCallback       MaterializedSeriesFunc
+	materializedLabelsFilterCallback MaterializedLabelsFilterCallback
 }
 
 // MaterializedSeriesFunc is a callback function that can be used to add limiter or statistic logics for
@@ -67,13 +67,23 @@ func NoopMaterializedSeriesFunc(_ context.Context, _ []prom_storage.ChunkSeries)
 	return nil
 }
 
-// MaterializedLabelsFunc is a callback function that processes materialized series labels before materializing chunks.
-// This can be used to filter series.
-type MaterializedLabelsFunc func(ctx context.Context, hints *prom_storage.SelectHints, series [][]labels.Label, rr []RowRange) ([][]labels.Label, []RowRange)
+// MaterializedLabelsFilterCallback returns a filter and a boolean indicating if the filter is enabled or not.
+// The filter is used to filter series based on their labels.
+// The boolean if set to false then it means that the filter is a noop and we can take shortcut to include all series.
+// Otherwise, the filter is used to filter series based on their labels.
+type MaterializedLabelsFilterCallback func(ctx context.Context, hints *prom_storage.SelectHints) (MaterializedLabelsFilter, bool)
 
-// NoopMaterializedLabelsFunc is a noop callback function that does nothing.
-func NoopMaterializedLabelsFunc(_ context.Context, _ *prom_storage.SelectHints, lbls [][]labels.Label, rr []RowRange) ([][]labels.Label, []RowRange) {
-	return lbls, rr
+// MaterializedLabelsFilter is a filter that can be used to filter series based on their labels.
+type MaterializedLabelsFilter interface {
+	// Filter returns true if the labels should be included in the result.
+	Filter(ls labels.Labels) bool
+	// Close is used to close the filter and do some cleanup.
+	Close()
+}
+
+// NoopMaterializedLabelsFilterCallback is a noop MaterializedLabelsFilterCallback function that filters nothing.
+func NoopMaterializedLabelsFilterCallback(ctx context.Context, hints *prom_storage.SelectHints) (MaterializedLabelsFilter, bool) {
+	return nil, false
 }
 
 func NewMaterializer(s *schema.TSDBSchema,
@@ -84,7 +94,7 @@ func NewMaterializer(s *schema.TSDBSchema,
 	chunkBytesQuota *Quota,
 	dataBytesQuota *Quota,
 	materializeSeriesCallback MaterializedSeriesFunc,
-	materializeLabelsCallback MaterializedLabelsFunc,
+	materializeLabelsFilterCallback MaterializedLabelsFilterCallback,
 ) (*Materializer, error) {
 	colIdx, ok := block.LabelsFile().Schema().Lookup(schema.ColIndexes)
 	if !ok {
@@ -102,18 +112,18 @@ func NewMaterializer(s *schema.TSDBSchema,
 	}
 
 	return &Materializer{
-		s:                          s,
-		d:                          d,
-		b:                          block,
-		colIdx:                     colIdx.ColumnIndex,
-		concurrency:                concurrency,
-		partitioner:                util.NewGapBasedPartitioner(block.ChunksFile().Cfg.PagePartitioningMaxGapSize),
-		dataColToIndex:             dataColToIndex,
-		rowCountQuota:              rowCountQuota,
-		chunkBytesQuota:            chunkBytesQuota,
-		dataBytesQuota:             dataBytesQuota,
-		materializedSeriesCallback: materializeSeriesCallback,
-		materializedLabelsCallback: materializeLabelsCallback,
+		s:                                s,
+		d:                                d,
+		b:                                block,
+		colIdx:                           colIdx.ColumnIndex,
+		concurrency:                      concurrency,
+		partitioner:                      util.NewGapBasedPartitioner(block.ChunksFile().Cfg.PagePartitioningMaxGapSize),
+		dataColToIndex:                   dataColToIndex,
+		rowCountQuota:                    rowCountQuota,
+		chunkBytesQuota:                  chunkBytesQuota,
+		dataBytesQuota:                   dataBytesQuota,
+		materializedSeriesCallback:       materializeSeriesCallback,
+		materializedLabelsFilterCallback: materializeLabelsFilterCallback,
 	}, nil
 }
 
@@ -145,19 +155,7 @@ func (m *Materializer) Materialize(ctx context.Context, hints *prom_storage.Sele
 		return nil, errors.Wrapf(err, "error materializing labels")
 	}
 
-	sLbls, rr = m.materializedLabelsCallback(ctx, hints, sLbls, rr)
-	// Series and rows might be filtered out so check again if we need to materialize chunks.
-	if len(sLbls) == 0 || len(rr) == 0 {
-		return nil, nil
-	}
-
-	results = make([]prom_storage.ChunkSeries, len(sLbls))
-	for i, s := range sLbls {
-		results[i] = &concreteChunksSeries{
-			lbls: labels.New(s...),
-		}
-	}
-
+	results, rr = m.filterSeries(ctx, hints, sLbls, rr)
 	if !skipChunks {
 		chks, err := m.materializeChunks(ctx, rgi, mint, maxt, rr)
 		if err != nil {
@@ -180,6 +178,56 @@ func (m *Materializer) Materialize(ctx context.Context, hints *prom_storage.Sele
 
 	span.SetAttributes(attribute.Int("materialized_series_count", len(results)))
 	return results, err
+}
+
+func (m *Materializer) filterSeries(ctx context.Context, hints *prom_storage.SelectHints, sLbls [][]labels.Label, rr []RowRange) ([]prom_storage.ChunkSeries, []RowRange) {
+	results := make([]prom_storage.ChunkSeries, 0, len(sLbls))
+	labelsFilter, ok := m.materializedLabelsFilterCallback(ctx, hints)
+	if !ok {
+		for _, s := range sLbls {
+			results = append(results, &concreteChunksSeries{
+				lbls: labels.New(s...),
+			})
+		}
+		return results, rr
+	}
+
+	defer labelsFilter.Close()
+
+	// Convert matching rows back into row ranges
+	currentRange := RowRange{}
+	inRange := false
+	filteredRR := make([]RowRange, 0, len(rr))
+	for i, s := range sLbls {
+		lbls := labels.New(s...)
+		if labelsFilter.Filter(lbls) {
+			results = append(results, &concreteChunksSeries{
+				lbls: lbls,
+			})
+			if !inRange {
+				// Start a new range
+				currentRange.From = int64(i)
+				currentRange.Count = 1
+				inRange = true
+			} else {
+				// Extend the current range
+				currentRange.Count++
+			}
+		} else {
+			if inRange {
+				// End the current range
+				filteredRR = append(filteredRR, currentRange)
+				inRange = false
+			}
+		}
+	}
+
+	if inRange {
+		// End the current range
+		filteredRR = append(filteredRR, currentRange)
+	}
+
+	return results, filteredRR
 }
 
 func (m *Materializer) MaterializeAllLabelNames() []string {

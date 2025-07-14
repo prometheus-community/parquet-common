@@ -40,21 +40,21 @@ var tracer = otel.Tracer("parquet-common")
 type ShardsFinderFunction func(ctx context.Context, mint, maxt int64) ([]storage.ParquetShard, error)
 
 type queryableOpts struct {
-	concurrency                int
-	rowCountLimitFunc          search.QuotaLimitFunc
-	chunkBytesLimitFunc        search.QuotaLimitFunc
-	dataBytesLimitFunc         search.QuotaLimitFunc
-	materializedSeriesCallback search.MaterializedSeriesFunc
-	materializedLabelsCallback search.MaterializedLabelsFunc
+	concurrency                      int
+	rowCountLimitFunc                search.QuotaLimitFunc
+	chunkBytesLimitFunc              search.QuotaLimitFunc
+	dataBytesLimitFunc               search.QuotaLimitFunc
+	materializedSeriesCallback       search.MaterializedSeriesFunc
+	materializedLabelsFilterCallback search.MaterializedLabelsFilterCallback
 }
 
 var DefaultQueryableOpts = queryableOpts{
-	concurrency:                runtime.GOMAXPROCS(0),
-	rowCountLimitFunc:          search.NoopQuotaLimitFunc,
-	chunkBytesLimitFunc:        search.NoopQuotaLimitFunc,
-	dataBytesLimitFunc:         search.NoopQuotaLimitFunc,
-	materializedSeriesCallback: search.NoopMaterializedSeriesFunc,
-	materializedLabelsCallback: search.NoopMaterializedLabelsFunc,
+	concurrency:                      runtime.GOMAXPROCS(0),
+	rowCountLimitFunc:                search.NoopQuotaLimitFunc,
+	chunkBytesLimitFunc:              search.NoopQuotaLimitFunc,
+	dataBytesLimitFunc:               search.NoopQuotaLimitFunc,
+	materializedSeriesCallback:       search.NoopMaterializedSeriesFunc,
+	materializedLabelsFilterCallback: search.NoopMaterializedLabelsFilterCallback,
 }
 
 type QueryableOpts func(*queryableOpts)
@@ -95,10 +95,11 @@ func WithMaterializedSeriesCallback(fn search.MaterializedSeriesFunc) QueryableO
 	}
 }
 
-// WithMaterializedLabelsCallback sets a callback function to process the series labels for filtering before materializing chunks.
-func WithMaterializedLabelsCallback(fn search.MaterializedLabelsFunc) QueryableOpts {
+// WithMaterializedLabelsFilterCallback sets a callback function to create a filter that can be used
+// to filter series based on their labels before materializing chunks.
+func WithMaterializedLabelsFilterCallback(cb search.MaterializedLabelsFilterCallback) QueryableOpts {
 	return func(opts *queryableOpts) {
-		opts.materializedLabelsCallback = fn
+		opts.materializedLabelsFilterCallback = cb
 	}
 }
 
@@ -335,7 +336,7 @@ func newQueryableShard(opts *queryableOpts, block storage.ParquetShard, d *schem
 	if err != nil {
 		return nil, err
 	}
-	m, err := search.NewMaterializer(s, d, block, opts.concurrency, rowCountQuota, chunkBytesQuota, dataBytesQuota, opts.materializedSeriesCallback, opts.materializedLabelsCallback)
+	m, err := search.NewMaterializer(s, d, block, opts.concurrency, rowCountQuota, chunkBytesQuota, dataBytesQuota, opts.materializedSeriesCallback, opts.materializedLabelsFilterCallback)
 	if err != nil {
 		return nil, err
 	}

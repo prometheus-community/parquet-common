@@ -110,7 +110,7 @@ func TestMaterializeE2E(t *testing.T) {
 		s, err := shard.TSDBSchema()
 		require.NoError(t, err)
 		d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
-		m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFunc)
+		m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback)
 		require.NoError(t, err)
 		rr := []RowRange{{From: int64(0), Count: shard.LabelsFile().RowGroups()[0].NumRows()}}
 		ctx, cancel := context.WithCancel(ctx)
@@ -128,7 +128,7 @@ func TestMaterializeE2E(t *testing.T) {
 		s, err := shard.TSDBSchema()
 		require.NoError(t, err)
 		d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
-		m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFunc)
+		m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback)
 		require.NoError(t, err)
 		rr := []RowRange{{From: int64(0), Count: shard.LabelsFile().RowGroups()[0].NumRows()}}
 		_, err = m.Materialize(ctx, nil, 0, data.MinTime, data.MaxTime, false, rr)
@@ -142,7 +142,7 @@ func TestMaterializeE2E(t *testing.T) {
 
 		// Test with limited row count quota
 		limitedRowCountQuota := NewQuota(10) // Only allow 10 rows
-		m, err := NewMaterializer(s, d, shard, 10, limitedRowCountQuota, UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFunc)
+		m, err := NewMaterializer(s, d, shard, 10, limitedRowCountQuota, UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback)
 		require.NoError(t, err)
 
 		// Try to materialize more rows than quota allows
@@ -154,7 +154,7 @@ func TestMaterializeE2E(t *testing.T) {
 
 		// Test with sufficient quota
 		sufficientRowCountQuota := NewQuota(1000) // Allow 1000 rows
-		m, err = NewMaterializer(s, d, shard, 10, sufficientRowCountQuota, UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFunc)
+		m, err = NewMaterializer(s, d, shard, 10, sufficientRowCountQuota, UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback)
 		require.NoError(t, err)
 
 		rr = []RowRange{{From: int64(0), Count: 50}} // 50 rows
@@ -170,7 +170,7 @@ func TestMaterializeE2E(t *testing.T) {
 
 		// Test with limited chunk bytes quota
 		limitedChunkBytesQuota := NewQuota(100) // Only allow 100 bytes
-		m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), limitedChunkBytesQuota, UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFunc)
+		m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), limitedChunkBytesQuota, UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback)
 		require.NoError(t, err)
 
 		// Try to materialize chunks that exceed the quota
@@ -182,7 +182,7 @@ func TestMaterializeE2E(t *testing.T) {
 
 		// Test with sufficient quota
 		sufficientChunkBytesQuota := NewQuota(1000000) // Allow 1MB
-		m, err = NewMaterializer(s, d, shard, 10, UnlimitedQuota(), sufficientChunkBytesQuota, UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFunc)
+		m, err = NewMaterializer(s, d, shard, 10, UnlimitedQuota(), sufficientChunkBytesQuota, UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback)
 		require.NoError(t, err)
 
 		rr = []RowRange{{From: int64(0), Count: 10}} // Small range
@@ -198,7 +198,7 @@ func TestMaterializeE2E(t *testing.T) {
 
 		// Test with limited data bytes quota
 		limitedDataBytesQuota := NewQuota(100) // Only allow 100 bytes
-		m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), limitedDataBytesQuota, NoopMaterializedSeriesFunc, NoopMaterializedLabelsFunc)
+		m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), limitedDataBytesQuota, NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback)
 		require.NoError(t, err)
 
 		// Try to materialize data that exceeds the quota
@@ -210,7 +210,7 @@ func TestMaterializeE2E(t *testing.T) {
 
 		// Test with sufficient quota
 		sufficientDataBytesQuota := NewQuota(1000000) // Allow 1MB
-		m, err = NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), sufficientDataBytesQuota, NoopMaterializedSeriesFunc, NoopMaterializedLabelsFunc)
+		m, err = NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), sufficientDataBytesQuota, NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback)
 		require.NoError(t, err)
 
 		rr = []RowRange{{From: int64(0), Count: 10}} // Small range
@@ -254,7 +254,7 @@ func query(t *testing.T, mint, maxt int64, shard storage.ParquetShard, constrain
 	s, err := shard.TSDBSchema()
 	require.NoError(t, err)
 	d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
-	m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFunc)
+	m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback)
 	require.NoError(t, err)
 
 	found := make([]prom_storage.ChunkSeries, 0, 100)
@@ -270,4 +270,216 @@ func query(t *testing.T, mint, maxt int64, shard storage.ParquetShard, constrain
 		found = append(found, series...)
 	}
 	return found
+}
+
+func TestFilterSeries(t *testing.T) {
+	ctx := context.Background()
+
+	// Create sample labels for testing
+	sampleLabels := [][]labels.Label{
+		{
+			{Name: "__name__", Value: "metric_1"},
+			{Name: "instance", Value: "server1"},
+			{Name: "job", Value: "web"},
+		},
+		{
+			{Name: "__name__", Value: "metric_2"},
+			{Name: "instance", Value: "server2"},
+			{Name: "job", Value: "db"},
+		},
+		{
+			{Name: "__name__", Value: "metric_3"},
+			{Name: "instance", Value: "server1"},
+			{Name: "job", Value: "web"},
+		},
+		{
+			{Name: "__name__", Value: "metric_4"},
+			{Name: "instance", Value: "server3"},
+			{Name: "job", Value: "cache"},
+		},
+	}
+
+	sampleRowRanges := []RowRange{
+		{From: 0, Count: 4},
+	}
+
+	// Create a mock materializer
+	materializer := &Materializer{}
+
+	t.Run("NoFilteringEnabled", func(t *testing.T) {
+		// Test when filtering is disabled (callback returns false)
+		materializer.materializedLabelsFilterCallback = func(ctx context.Context, hints *prom_storage.SelectHints) (MaterializedLabelsFilter, bool) {
+			return nil, false
+		}
+
+		results, filteredRR := materializer.filterSeries(ctx, nil, sampleLabels, sampleRowRanges)
+
+		// Should return all series without filtering
+		require.Len(t, results, len(sampleLabels))
+		require.Equal(t, sampleRowRanges, filteredRR)
+
+		// Verify all labels are preserved
+		for i, result := range results {
+			expectedLabels := labels.New(sampleLabels[i]...)
+			require.Equal(t, expectedLabels, result.Labels())
+		}
+	})
+
+	t.Run("AcceptAllFilter", func(t *testing.T) {
+		// Test filter that accepts all series
+		materializer.materializedLabelsFilterCallback = func(ctx context.Context, hints *prom_storage.SelectHints) (MaterializedLabelsFilter, bool) {
+			return &acceptAllFilter{}, true
+		}
+
+		results, filteredRR := materializer.filterSeries(ctx, nil, sampleLabels, sampleRowRanges)
+
+		// Should return all series
+		require.Len(t, results, len(sampleLabels))
+		require.Equal(t, sampleRowRanges, filteredRR)
+
+		// Verify all labels are preserved
+		for i, result := range results {
+			expectedLabels := labels.New(sampleLabels[i]...)
+			require.Equal(t, expectedLabels, result.Labels())
+		}
+	})
+
+	t.Run("RejectAllFilter", func(t *testing.T) {
+		// Test filter that rejects all series
+		materializer.materializedLabelsFilterCallback = func(ctx context.Context, hints *prom_storage.SelectHints) (MaterializedLabelsFilter, bool) {
+			return &rejectAllFilter{}, true
+		}
+
+		results, filteredRR := materializer.filterSeries(ctx, nil, sampleLabels, sampleRowRanges)
+
+		// Should return no series
+		require.Len(t, results, 0)
+		require.Len(t, filteredRR, 0)
+	})
+
+	t.Run("SelectiveFilter", func(t *testing.T) {
+		// Test filter that only accepts series with job="web"
+		materializer.materializedLabelsFilterCallback = func(ctx context.Context, hints *prom_storage.SelectHints) (MaterializedLabelsFilter, bool) {
+			return &jobWebFilter{}, true
+		}
+
+		results, filteredRR := materializer.filterSeries(ctx, nil, sampleLabels, sampleRowRanges)
+
+		// Should return only series with job="web" (indices 0 and 2)
+		require.Len(t, results, 2)
+		require.Len(t, filteredRR, 2)
+
+		// Verify correct series are returned
+		require.Equal(t, "metric_1", results[0].Labels().Get("__name__"))
+		require.Equal(t, "web", results[0].Labels().Get("job"))
+		require.Equal(t, "metric_3", results[1].Labels().Get("__name__"))
+		require.Equal(t, "web", results[1].Labels().Get("job"))
+
+		// Verify row ranges are correct
+		expectedRR := []RowRange{
+			{From: 0, Count: 1}, // First series (metric_1)
+			{From: 2, Count: 1}, // Third series (metric_3)
+		}
+		require.Equal(t, expectedRR, filteredRR)
+	})
+
+	t.Run("FilterWithContiguousRanges", func(t *testing.T) {
+		// Test filter that accepts first two series (creates contiguous range)
+		materializer.materializedLabelsFilterCallback = func(ctx context.Context, hints *prom_storage.SelectHints) (MaterializedLabelsFilter, bool) {
+			return &firstTwoFilter{}, true
+		}
+
+		results, filteredRR := materializer.filterSeries(ctx, nil, sampleLabels, sampleRowRanges)
+
+		// Should return first two series
+		require.Len(t, results, 2)
+		require.Len(t, filteredRR, 1) // Should be merged into one contiguous range
+
+		// Verify correct series are returned
+		require.Equal(t, "metric_1", results[0].Labels().Get("__name__"))
+		require.Equal(t, "metric_2", results[1].Labels().Get("__name__"))
+
+		// Verify row range is contiguous
+		expectedRR := []RowRange{
+			{From: 0, Count: 2}, // Merged range covering first two series
+		}
+		require.Equal(t, expectedRR, filteredRR)
+	})
+
+	t.Run("EmptyInput", func(t *testing.T) {
+		// Test with empty input
+		materializer.materializedLabelsFilterCallback = func(ctx context.Context, hints *prom_storage.SelectHints) (MaterializedLabelsFilter, bool) {
+			return &acceptAllFilter{}, true
+		}
+
+		results, filteredRR := materializer.filterSeries(ctx, nil, nil, nil)
+
+		require.Len(t, results, 0)
+		require.Len(t, filteredRR, 0)
+	})
+
+	t.Run("FilterCloseIsCalled", func(t *testing.T) {
+		// Test that Close() is called on the filter
+		closeCalled := false
+		filter := &trackingFilter{
+			acceptAll:   true,
+			closeCalled: &closeCalled,
+		}
+
+		materializer.materializedLabelsFilterCallback = func(ctx context.Context, hints *prom_storage.SelectHints) (MaterializedLabelsFilter, bool) {
+			return filter, true
+		}
+
+		_, _ = materializer.filterSeries(ctx, nil, sampleLabels, sampleRowRanges)
+
+		require.True(t, closeCalled, "Filter Close() should have been called")
+	})
+}
+
+// Test filter implementations
+
+type acceptAllFilter struct{}
+
+func (f *acceptAllFilter) Filter(ls labels.Labels) bool {
+	return true
+}
+
+func (f *acceptAllFilter) Close() {}
+
+type rejectAllFilter struct{}
+
+func (f *rejectAllFilter) Filter(ls labels.Labels) bool {
+	return false
+}
+
+func (f *rejectAllFilter) Close() {}
+
+type jobWebFilter struct{}
+
+func (f *jobWebFilter) Filter(ls labels.Labels) bool {
+	return ls.Get("job") == "web"
+}
+
+func (f *jobWebFilter) Close() {}
+
+type firstTwoFilter struct{}
+
+func (f *firstTwoFilter) Filter(ls labels.Labels) bool {
+	name := ls.Get("__name__")
+	return name == "metric_1" || name == "metric_2"
+}
+
+func (f *firstTwoFilter) Close() {}
+
+type trackingFilter struct {
+	acceptAll   bool
+	closeCalled *bool
+}
+
+func (f *trackingFilter) Filter(ls labels.Labels) bool {
+	return f.acceptAll
+}
+
+func (f *trackingFilter) Close() {
+	*f.closeCalled = true
 }
