@@ -32,6 +32,69 @@ func (c concreteChunksSeries) ChunkCount() (int, error) {
 	return len(c.chks), nil
 }
 
+type columnValueIterator struct {
+	currentIteratorIndex int
+	rowRangesIterators   []*rowRangesValueIterator
+
+	current parquet.Value
+	err     error
+}
+
+func (ci *columnValueIterator) At() parquet.Value {
+	return ci.current
+}
+
+func (ci *columnValueIterator) Next() bool {
+	if ci.err != nil {
+		return false
+	}
+
+	found := false
+	for !found {
+		if ci.currentIteratorIndex >= len(ci.rowRangesIterators) {
+			return false
+		}
+
+		currentIterator := ci.rowRangesIterators[ci.currentIteratorIndex]
+		hasNext := currentIterator.Next()
+
+		if !hasNext {
+			if err := currentIterator.Err(); err != nil {
+				ci.err = err
+				_ = currentIterator.Close()
+				return false
+			}
+			// Iterator exhausted without error; close and move on to the next one
+			_ = currentIterator.Close()
+			ci.currentIteratorIndex++
+			continue
+		}
+		ci.current = currentIterator.At()
+		found = true
+	}
+	return found
+}
+
+func (ci *columnValueIterator) Err() error {
+	return ci.err
+}
+
+// rowRangesValueIterator yields individual parquet Values from specified row ranges in its FilePages
+type rowRangesValueIterator struct {
+	pgs          *parquet.FilePages
+	pageIterator *pageValueIterator
+
+	remainingRr []RowRange
+	currentRr   RowRange
+	next        int64
+	remaining   int64
+	currentRow  int64
+
+	buffer             []parquet.Value
+	currentBufferIndex int
+	err                error
+}
+
 func newRowRangesValueIterator(
 	ctx context.Context,
 	file *storage.ParquetFile,
@@ -80,22 +143,6 @@ func newRowRangesValueIterator(
 		remaining:   remaining,
 		currentRow:  currentRow,
 	}, nil
-}
-
-// rowRangesValueIterator yields individual parquet Values from specified row ranges in its FilePages
-type rowRangesValueIterator struct {
-	pgs          *parquet.FilePages
-	pageIterator *pageValueIterator
-
-	remainingRr []RowRange
-	currentRr   RowRange
-	next        int64
-	remaining   int64
-	currentRow  int64
-
-	buffer             []parquet.Value
-	currentBufferIndex int
-	err                error
 }
 
 func (ri *rowRangesValueIterator) At() parquet.Value {
