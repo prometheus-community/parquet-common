@@ -483,15 +483,6 @@ func (f *firstTwoFilter) Filter(ls labels.Labels) bool {
 
 func (f *firstTwoFilter) Close() {}
 
-type firstAndThirdFilter struct{}
-
-func (f *firstAndThirdFilter) Filter(ls labels.Labels) bool {
-	name := ls.Get("__name__")
-	return name == "metric_1" || name == "metric_3"
-}
-
-func (f *firstAndThirdFilter) Close() {}
-
 type trackingFilter struct {
 	acceptAll   bool
 	closeCalled *bool
