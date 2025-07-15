@@ -117,14 +117,43 @@ func (m *Materializer) Materialize(ctx context.Context, rgi int, mint, maxt int6
 	}
 
 	if !skipChunks {
-		chks, err := m.materializeChunksSlice(ctx, rgi, mint, maxt, rr)
+		_, err := m.materializeChunksSlice(ctx, rgi, mint, maxt, rr)
 		if err != nil {
 			return nil, errors.Wrap(err, "materializer failed to materialize chunks")
 		}
-
-		for i, result := range results {
-			result.(*concreteChunksSeries).chks = chks[i]
+		chksIter, err := m.materializeChunksIter(ctx, rgi, mint, maxt, rr)
+		if err != nil {
+			return nil, errors.Wrap(err, "materializer failed to create chunks iterator")
 		}
+		i := 0
+		for chksIter.Next() {
+			j := 0
+			chkIter := chksIter.At()
+			var iterChks []chunks.Meta
+			for chkIter.Next() {
+				iterChk := chkIter.At()
+				iterChks = append(iterChks, iterChk)
+				//chk := chks[i][j]
+				//if chk.Ref != iterChk.Ref {
+				//	panic("ahhh")
+				//}
+				//chkBytes := chk.Chunk.Bytes()
+				//iterChkBytes := iterChk.Chunk.Bytes()
+				//
+				//for l := 0; l < len(chkBytes); l++ {
+				//	if chkBytes[l] != iterChkBytes[l] {
+				//		panic("ahhh")
+				//	}
+				//}
+				j++
+			}
+			results[i].(*concreteChunksSeries).chks = iterChks
+			i++
+		}
+
+		//for i, result := range results {
+		//	result.(*concreteChunksSeries).chks = chks[i]
+		//}
 
 		// If we are not skipping chunks and there is no chunks for the time range queried, lets remove the series
 		results = slices.DeleteFunc(results, func(cs prom_storage.ChunkSeries) bool {
@@ -364,29 +393,27 @@ func (m *Materializer) materializeChunksSlice(ctx context.Context, rgi int, mint
 	return r, nil
 }
 
-//func (m *Materializer) materializeChunksIter(ctx context.Context, rgi int, mint, maxt int64, rr []RowRange) (chunkIterableSet, error) {
-//	minDataCol := m.s.DataColumIdx(mint)
-//	maxDataCol := m.s.DataColumIdx(maxt)
-//	rg := m.b.ChunksFile().RowGroups()[rgi]
-//
-//	columnCount := min(maxDataCol, len(m.dataColToIndex)-1)
-//	columnValueIterators := make([]*columnValueIterator, columnCount)
-//
-//	for i := minDataCol; i < minDataCol+columnCount; i++ {
-//		cc := rg.ColumnChunks()[m.dataColToIndex[i]]
-//		columnValueIter, err := m.materializeColumnIter(ctx, m.b.ChunksFile(), rgi, cc, rr)
-//		if err != nil {
-//			return nil, errors.Wrap(err, "failed to create column value iterator")
-//		}
-//		columnValueIterators[i-minDataCol] = columnValueIter
-//	}
-//	return &multiColumnChunksDecodingIterator{
-//		mint:                 mint,
-//		maxt:                 maxt,
-//		columnValueIterators: columnValueIterators,
-//		d:                    m.d,
-//	}, nil
-//}
+func (m *Materializer) materializeChunksIter(ctx context.Context, rgi int, mint, maxt int64, rr []RowRange) (chunkIterableSet, error) {
+	minDataCol := m.s.DataColumIdx(mint)
+	maxDataCol := m.s.DataColumIdx(maxt)
+	rg := m.b.ChunksFile().RowGroups()[rgi]
+
+	var columnValueIterators []*columnValueIterator
+	for i := minDataCol; i <= min(maxDataCol, len(m.dataColToIndex)-1); i++ {
+		cc := rg.ColumnChunks()[m.dataColToIndex[i]]
+		columnValueIter, err := m.materializeColumnIter(ctx, m.b.ChunksFile(), rgi, rr, cc, true)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to create column value iterator")
+		}
+		columnValueIterators = append(columnValueIterators, columnValueIter)
+	}
+	return &multiColumnChunksDecodingIterator{
+		mint:                 mint,
+		maxt:                 maxt,
+		columnValueIterators: columnValueIterators,
+		d:                    m.d,
+	}, nil
+}
 
 func (m *Materializer) materializeColumnIter(
 	ctx context.Context,
@@ -397,7 +424,7 @@ func (m *Materializer) materializeColumnIter(
 	chunkColumn bool,
 ) (*columnValueIterator, error) {
 	pageRanges, err := m.getPageRangesForColummn(cc, file, rgi, rr, chunkColumn)
-	if err != nil || len(pageRanges) == 0 {
+	if err != nil {
 		return nil, err
 	}
 

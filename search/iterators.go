@@ -10,6 +10,7 @@ import (
 	prom_storage "github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/chunks"
 
+	"github.com/prometheus-community/parquet-common/schema"
 	"github.com/prometheus-community/parquet-common/storage"
 )
 
@@ -26,6 +27,116 @@ func (c concreteChunksSeries) Labels() labels.Labels {
 
 func (c concreteChunksSeries) Iterator(_ chunks.Iterator) chunks.Iterator {
 	return prom_storage.NewListChunkSeriesIterator(c.chks...)
+}
+
+type chunkIterableSet interface {
+	Next() bool
+	At() chunks.Iterator
+	Err() error
+	Close()
+}
+
+// multiColumnChunksDecodingIterator yields a prometheus chunks.Iterator from multiple parquet Columns.
+// The column iterators are called in order for each column and zipped together,
+// yielding a single iterator that in turn can yield all chunks for the same row.
+//
+// The "column iterators" are pagesRowValueIterator which are expected to be:
+// 1. in order of the columns in the parquet file
+// 2. initialized with the same set of pages and row ranges
+// An error is returned if the iterators have different lengths.
+type multiColumnChunksDecodingIterator struct {
+	mint int64
+	maxt int64
+
+	columnValueIterators []*columnValueIterator
+	d                    *schema.PrometheusParquetChunksDecoder
+
+	// current is a chunk-decoding iterator for the materialized parquet Values
+	// combined by calling and zipping all column iterators in order
+	current *valueDecodingChunkIterator
+	err     error
+}
+
+func (c *multiColumnChunksDecodingIterator) At() chunks.Iterator {
+	return c.current
+}
+
+func (c *multiColumnChunksDecodingIterator) Next() bool {
+	if c.err != nil || len(c.columnValueIterators) == 0 {
+		return false
+	}
+
+	multiColumnValues := make([]parquet.Value, 0, len(c.columnValueIterators))
+	for _, columnValueIter := range c.columnValueIterators {
+		if !columnValueIter.Next() {
+			c.err = columnValueIter.Err()
+			if c.err != nil {
+				return false
+			}
+			continue
+		}
+		at := columnValueIter.At()
+		multiColumnValues = append(multiColumnValues, at)
+	}
+	if len(multiColumnValues) == 0 {
+		return false
+	}
+
+	c.current = &valueDecodingChunkIterator{
+		mint:   c.mint,
+		maxt:   c.maxt,
+		values: multiColumnValues,
+		d:      c.d,
+	}
+	return true
+}
+
+func (c *multiColumnChunksDecodingIterator) Err() error {
+	return c.err
+}
+
+func (c *multiColumnChunksDecodingIterator) Close() {
+}
+
+// valueDecodingChunkIterator decodes and yields chunks from a parquet Values slice.
+type valueDecodingChunkIterator struct {
+	// TODO: why do we need these for decoding? can't we discard out of range chunks in advance?
+	mint   int64
+	maxt   int64
+	values []parquet.Value
+	d      *schema.PrometheusParquetChunksDecoder
+
+	decoded []chunks.Meta
+	current chunks.Meta
+	err     error
+}
+
+func (c *valueDecodingChunkIterator) At() chunks.Meta {
+	return c.current
+}
+
+func (c *valueDecodingChunkIterator) Next() bool {
+	if c.err != nil {
+		return false
+	}
+	if len(c.values) == 0 && len(c.decoded) == 0 {
+		return false
+	}
+	if len(c.decoded) > 0 {
+		c.current = c.decoded[0]
+		c.decoded = c.decoded[1:]
+		return true
+	}
+	value := c.values[0]
+	c.values = c.values[1:]
+
+	// TODO: we can do better at pooling here.
+	c.decoded, c.err = c.d.Decode(value.ByteArray(), c.mint, c.maxt)
+	return c.Next()
+}
+
+func (c *valueDecodingChunkIterator) Err() error {
+	return c.err
 }
 
 func (c concreteChunksSeries) ChunkCount() (int, error) {
