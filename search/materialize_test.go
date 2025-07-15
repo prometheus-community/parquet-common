@@ -299,8 +299,12 @@ func TestFilterSeries(t *testing.T) {
 		},
 	}
 
+	// Use non-sequential row ranges to test proper row mapping
 	sampleRowRanges := []RowRange{
-		{From: 0, Count: 4},
+		{From: 10, Count: 1},
+		{From: 25, Count: 1},
+		{From: 50, Count: 1},
+		{From: 100, Count: 1},
 	}
 
 	// Create a mock materializer
@@ -375,21 +379,29 @@ func TestFilterSeries(t *testing.T) {
 		require.Equal(t, "metric_3", results[1].Labels().Get("__name__"))
 		require.Equal(t, "web", results[1].Labels().Get("job"))
 
-		// Verify row ranges are correct
+		// Verify row ranges map to the actual row positions from input
 		expectedRR := []RowRange{
-			{From: 0, Count: 1}, // First series (metric_1)
-			{From: 2, Count: 1}, // Third series (metric_3)
+			{From: 10, Count: 1},
+			{From: 50, Count: 1},
 		}
 		require.Equal(t, expectedRR, filteredRR)
 	})
 
-	t.Run("FilterWithContiguousRanges", func(t *testing.T) {
-		// Test filter that accepts first two series (creates contiguous range)
+	t.Run("ContiguousRangeMerging", func(t *testing.T) {
+		// Test with contiguous row ranges that should be merged
+		contiguousRowRanges := []RowRange{
+			{From: 100, Count: 1},
+			{From: 101, Count: 1},
+			{From: 102, Count: 1},
+			{From: 200, Count: 1},
+		}
+
+		// Filter that accepts first two series (should create contiguous range)
 		materializer.materializedLabelsFilterCallback = func(ctx context.Context, hints *prom_storage.SelectHints) (MaterializedLabelsFilter, bool) {
 			return &firstTwoFilter{}, true
 		}
 
-		results, filteredRR := materializer.filterSeries(ctx, nil, sampleLabels, sampleRowRanges)
+		results, filteredRR := materializer.filterSeries(ctx, nil, sampleLabels, contiguousRowRanges)
 
 		// Should return first two series
 		require.Len(t, results, 2)
@@ -399,9 +411,9 @@ func TestFilterSeries(t *testing.T) {
 		require.Equal(t, "metric_1", results[0].Labels().Get("__name__"))
 		require.Equal(t, "metric_2", results[1].Labels().Get("__name__"))
 
-		// Verify row range is contiguous
+		// Verify contiguous ranges are merged
 		expectedRR := []RowRange{
-			{From: 0, Count: 2}, // Merged range covering first two series
+			{From: 100, Count: 2}, // Merged range covering rows 100-101
 		}
 		require.Equal(t, expectedRR, filteredRR)
 	})
@@ -470,6 +482,15 @@ func (f *firstTwoFilter) Filter(ls labels.Labels) bool {
 }
 
 func (f *firstTwoFilter) Close() {}
+
+type firstAndThirdFilter struct{}
+
+func (f *firstAndThirdFilter) Filter(ls labels.Labels) bool {
+	name := ls.Get("__name__")
+	return name == "metric_1" || name == "metric_3"
+}
+
+func (f *firstAndThirdFilter) Close() {}
 
 type trackingFilter struct {
 	acceptAll   bool

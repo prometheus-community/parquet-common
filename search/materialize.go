@@ -194,36 +194,55 @@ func (m *Materializer) filterSeries(ctx context.Context, hints *prom_storage.Sel
 
 	defer labelsFilter.Close()
 
-	// Convert matching rows back into row ranges
-	currentRange := RowRange{}
-	inRange := false
 	filteredRR := make([]RowRange, 0, len(rr))
-	for i, s := range sLbls {
-		lbls := labels.New(s...)
-		if labelsFilter.Filter(lbls) {
-			results = append(results, &concreteChunksSeries{
-				lbls: lbls,
-			})
-			if !inRange {
-				// Start a new range
-				currentRange.From = int64(i)
-				currentRange.Count = 1
-				inRange = true
-			} else {
-				// Extend the current range
-				currentRange.Count++
-			}
-		} else {
-			if inRange {
-				// End the current range
-				filteredRR = append(filteredRR, currentRange)
-				inRange = false
+	var currentRange RowRange
+	inRange := false
+	seriesIdx := 0
+
+	for _, rowRange := range rr {
+		for i := int64(0); i < rowRange.Count; i++ {
+			if seriesIdx < len(sLbls) {
+				actualRowID := rowRange.From + i
+				lbls := labels.New(sLbls[seriesIdx]...)
+
+				if labelsFilter.Filter(lbls) {
+					results = append(results, &concreteChunksSeries{
+						lbls: lbls,
+					})
+
+					// Handle row range collection
+					if !inRange {
+						// Start new range
+						currentRange = RowRange{
+							From:  actualRowID,
+							Count: 1,
+						}
+						inRange = true
+					} else if actualRowID == currentRange.From+currentRange.Count {
+						// Extend current range
+						currentRange.Count++
+					} else {
+						// Save current range and start new range (non-contiguous)
+						filteredRR = append(filteredRR, currentRange)
+						currentRange = RowRange{
+							From:  actualRowID,
+							Count: 1,
+						}
+					}
+				} else {
+					// Save current range and reset when we hit a non-matching series
+					if inRange {
+						filteredRR = append(filteredRR, currentRange)
+						inRange = false
+					}
+				}
+				seriesIdx++
 			}
 		}
 	}
 
+	// Save the final range if we have one
 	if inRange {
-		// End the current range
 		filteredRR = append(filteredRR, currentRange)
 	}
 
