@@ -109,58 +109,36 @@ func (m *Materializer) Materialize(ctx context.Context, rgi int, mint, maxt int6
 		return nil, errors.Wrapf(err, "error materializing labels")
 	}
 
-	results := make([]prom_storage.ChunkSeries, len(sLbls))
+	chunkSeries := make([]prom_storage.ChunkSeries, len(sLbls))
 	for i, s := range sLbls {
-		results[i] = &concreteChunksSeries{
+		chunkSeries[i] = &concreteChunksSeries{
 			lbls: labels.New(s...),
 		}
 	}
 
 	if !skipChunks {
-		_, err := m.materializeChunksSlice(ctx, rgi, mint, maxt, rr)
-		if err != nil {
-			return nil, errors.Wrap(err, "materializer failed to materialize chunks")
-		}
 		chksIter, err := m.materializeChunksIter(ctx, rgi, mint, maxt, rr)
 		if err != nil {
 			return nil, errors.Wrap(err, "materializer failed to create chunks iterator")
 		}
-		i := 0
+		seriesIdx := 0
 		for chksIter.Next() {
-			j := 0
 			chkIter := chksIter.At()
 			var iterChks []chunks.Meta
 			for chkIter.Next() {
 				iterChk := chkIter.At()
 				iterChks = append(iterChks, iterChk)
-				//chk := chks[i][j]
-				//if chk.Ref != iterChk.Ref {
-				//	panic("ahhh")
-				//}
-				//chkBytes := chk.Chunk.Bytes()
-				//iterChkBytes := iterChk.Chunk.Bytes()
-				//
-				//for l := 0; l < len(chkBytes); l++ {
-				//	if chkBytes[l] != iterChkBytes[l] {
-				//		panic("ahhh")
-				//	}
-				//}
-				j++
 			}
-			results[i].(*concreteChunksSeries).chks = iterChks
-			i++
+			chunkSeries[seriesIdx].(*concreteChunksSeries).chks = iterChks
+			seriesIdx++
 		}
 
-		//for i, result := range results {
-		//	result.(*concreteChunksSeries).chks = chks[i]
-		//}
-
 		// If we are not skipping chunks and there is no chunks for the time range queried, lets remove the series
-		results = slices.DeleteFunc(results, func(cs prom_storage.ChunkSeries) bool {
+		chunkSeries = slices.DeleteFunc(chunkSeries, func(cs prom_storage.ChunkSeries) bool {
 			return len(cs.(*concreteChunksSeries).chks) == 0
 		})
 	}
-	return results, err
+	return chunkSeries, err
 }
 
 // MaterializeIter provides an iterator to lazily reconstruct the ChunkSeries that belong to the specified row ranges (rr).
@@ -329,70 +307,6 @@ func totalRows(rr []RowRange) int64 {
 	return res
 }
 
-func (m *Materializer) materializeChunksSlice(ctx context.Context, rgi int, mint, maxt int64, rr []RowRange) ([][]chunks.Meta, error) {
-	minDataCol := m.s.DataColumIdx(mint)
-	maxDataCol := m.s.DataColumIdx(maxt)
-	rg := m.b.ChunksFile().RowGroups()[rgi]
-	r := make([][]chunks.Meta, totalRows(rr))
-
-	for i := minDataCol; i <= min(maxDataCol, len(m.dataColToIndex)-1); i++ {
-		cc := rg.ColumnChunks()[m.dataColToIndex[i]]
-		values, err := m.materializeColumnSlice(ctx, m.b.ChunksFile(), rgi, rr, cc, true)
-		if err != nil || len(values) == 0 {
-			return r, err
-		}
-
-		valuesIter, err := m.materializeColumnIter(ctx, m.b.ChunksFile(), rgi, rr, cc, true)
-		if err != nil {
-			return r, err
-		}
-
-		j := 0
-		for valuesIter.Next() {
-			chks, err := m.d.Decode(values[j].ByteArray(), mint, maxt)
-			if err != nil {
-				return r, errors.Wrap(err, "failed to decode chunks")
-			}
-			iterChks, err := m.d.Decode(valuesIter.At().ByteArray(), mint, maxt)
-			if err != nil {
-				return r, errors.Wrap(err, "failed to decode chunks from iterator")
-			}
-			if len(chks) != len(iterChks) {
-				panic("ahhh")
-			}
-			for k := 0; k < len(chks); k++ {
-				chk := chks[k]
-				iterChk := iterChks[k]
-
-				if chk.Ref != iterChk.Ref {
-					panic("ahhh")
-				}
-				chkBytes := chk.Chunk.Bytes()
-				iterChkBytes := iterChk.Chunk.Bytes()
-
-				for l := 0; l < len(chkBytes); l++ {
-					if chkBytes[l] != iterChkBytes[l] {
-						panic("ahhh")
-					}
-				}
-			}
-			r[j] = append(r[j], iterChks...)
-			j++
-		}
-
-		//for vi, value := range values {
-		//	chks, err := m.d.Decode(value.ByteArray(), mint, maxt)
-		//	if err != nil {
-		//		return r, errors.Wrap(err, "failed to decode chunks")
-		//	}
-		//	r[vi] = append(r[vi], chks...)
-		//}
-
-	}
-
-	return r, nil
-}
-
 func (m *Materializer) materializeChunksIter(ctx context.Context, rgi int, mint, maxt int64, rr []RowRange) (chunkIterableSet, error) {
 	minDataCol := m.s.DataColumIdx(mint)
 	maxDataCol := m.s.DataColumIdx(maxt)
@@ -413,6 +327,33 @@ func (m *Materializer) materializeChunksIter(ctx context.Context, rgi int, mint,
 		columnValueIterators: columnValueIterators,
 		d:                    m.d,
 	}, nil
+}
+
+func (m *Materializer) materializeChunksSlice(ctx context.Context, rgi int, mint, maxt int64, rr []RowRange) ([][]chunks.Meta, error) {
+	minDataCol := m.s.DataColumIdx(mint)
+	maxDataCol := m.s.DataColumIdx(maxt)
+	rg := m.b.ChunksFile().RowGroups()[rgi]
+	rowChunks := make([][]chunks.Meta, totalRows(rr))
+
+	for dataColIdx := minDataCol; dataColIdx <= min(maxDataCol, len(m.dataColToIndex)-1); dataColIdx++ {
+		cc := rg.ColumnChunks()[m.dataColToIndex[dataColIdx]]
+		valuesIter, err := m.materializeColumnIter(ctx, m.b.ChunksFile(), rgi, rr, cc, true)
+		if err != nil {
+			return rowChunks, err
+		}
+
+		i := 0
+		for valuesIter.Next() {
+			iterChks, err := m.d.Decode(valuesIter.At().ByteArray(), mint, maxt)
+			if err != nil {
+				return rowChunks, errors.Wrap(err, "failed to decode chunks from iterator")
+			}
+			rowChunks[i] = append(rowChunks[i], iterChks...)
+			i++
+		}
+	}
+
+	return rowChunks, nil
 }
 
 func (m *Materializer) materializeColumnIter(
@@ -465,27 +406,18 @@ func (m *Materializer) materializeColumnSlice(
 	errGroup.SetLimit(m.concurrency)
 	for i, pageRange := range pageRanges {
 		errGroup.Go(func() error {
-			values, err := m.materializePageRangeSlice(ctx, file, pageRange, dictOff, dictSz, cc)
-			if err != nil {
-				return errors.Wrap(err, "failed to materialize page range")
-			}
-
 			valuesIter, err := m.materializePageRangeIter(ctx, file, pageRange, dictOff, dictSz, cc)
 			if err != nil {
 				return errors.Wrap(err, "failed to materialize page range iterator")
 			}
 			defer func() { _ = valuesIter.Close() }()
 
-			j := 0
-			iterValues := make([]parquet.Value, len(values))
+			iterValues := make([]parquet.Value, 0, totalRows(pageRange.rows))
 			for valuesIter.Next() {
-				iterValue := valuesIter.At()
-				expectedValue := values[j]
-				if !equalValues(expectedValue, iterValue) {
-					panic("ahhhhh")
-				}
-				iterValues[j] = iterValue
-				j++
+				iterValues = append(iterValues, valuesIter.At())
+			}
+			if err = valuesIter.Err(); err != nil {
+				return err
 			}
 
 			pageRangesValues[i] = iterValues
