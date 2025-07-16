@@ -192,6 +192,7 @@ func TestFilter(t *testing.T) {
 			A string `parquet:",optional,dict"`
 			B string `parquet:",optional,dict"`
 			C string `parquet:",optional,dict"`
+			D string `parquet:",optional,dict"`
 		}
 		for _, tt := range []testcase[s]{
 			{
@@ -214,6 +215,13 @@ func TestFilter(t *testing.T) {
 						expect: []RowRange{
 							{From: 6, Count: 1},
 						},
+					},
+					{
+						constraints: []Constraint{
+							Equal("A", parquet.ValueOf("7")),
+							Not(Equal("D", parquet.ValueOf(""))),
+						},
+						expect: []RowRange{},
 					},
 					{
 						constraints: []Constraint{
