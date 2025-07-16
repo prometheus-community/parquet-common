@@ -351,7 +351,7 @@ func (pi *pageValueIterator) At() parquet.Value {
 		}
 		return pi.cachedSymbols[dicIndex]
 	}
-
+	// TODO: can we reduce the number of allocations caused by the clone here?
 	return pi.buffer[pi.currentBufferIndex].Clone()
 }
 
