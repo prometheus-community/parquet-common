@@ -25,12 +25,17 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	prom_storage "github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/chunks"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/prometheus-community/parquet-common/schema"
 	"github.com/prometheus-community/parquet-common/storage"
 	"github.com/prometheus-community/parquet-common/util"
 )
+
+var tracer = otel.Tracer("parquet-common")
 
 type Materializer struct {
 	b           storage.ParquetShard
@@ -47,7 +52,8 @@ type Materializer struct {
 	chunkBytesQuota *Quota
 	dataBytesQuota  *Quota
 
-	materializedSeriesCallback MaterializedSeriesFunc
+	materializedSeriesCallback       MaterializedSeriesFunc
+	materializedLabelsFilterCallback MaterializedLabelsFilterCallback
 }
 
 // MaterializedSeriesFunc is a callback function that can be used to add limiter or statistic logics for
@@ -59,6 +65,25 @@ func NoopMaterializedSeriesFunc(_ context.Context, _ []prom_storage.ChunkSeries)
 	return nil
 }
 
+// MaterializedLabelsFilterCallback returns a filter and a boolean indicating if the filter is enabled or not.
+// The filter is used to filter series based on their labels.
+// The boolean if set to false then it means that the filter is a noop and we can take shortcut to include all series.
+// Otherwise, the filter is used to filter series based on their labels.
+type MaterializedLabelsFilterCallback func(ctx context.Context, hints *prom_storage.SelectHints) (MaterializedLabelsFilter, bool)
+
+// MaterializedLabelsFilter is a filter that can be used to filter series based on their labels.
+type MaterializedLabelsFilter interface {
+	// Filter returns true if the labels should be included in the result.
+	Filter(ls labels.Labels) bool
+	// Close is used to close the filter and do some cleanup.
+	Close()
+}
+
+// NoopMaterializedLabelsFilterCallback is a noop MaterializedLabelsFilterCallback function that filters nothing.
+func NoopMaterializedLabelsFilterCallback(ctx context.Context, hints *prom_storage.SelectHints) (MaterializedLabelsFilter, bool) {
+	return nil, false
+}
+
 func NewMaterializer(s *schema.TSDBSchema,
 	d *schema.PrometheusParquetChunksDecoder,
 	block storage.ParquetShard,
@@ -67,6 +92,7 @@ func NewMaterializer(s *schema.TSDBSchema,
 	chunkBytesQuota *Quota,
 	dataBytesQuota *Quota,
 	materializeSeriesCallback MaterializedSeriesFunc,
+	materializeLabelsFilterCallback MaterializedLabelsFilterCallback,
 ) (*Materializer, error) {
 	colIdx, ok := block.LabelsFile().Schema().Lookup(schema.ColIndexes)
 	if !ok {
@@ -84,23 +110,41 @@ func NewMaterializer(s *schema.TSDBSchema,
 	}
 
 	return &Materializer{
-		s:                          s,
-		d:                          d,
-		b:                          block,
-		colIdx:                     colIdx.ColumnIndex,
-		concurrency:                concurrency,
-		partitioner:                util.NewGapBasedPartitioner(block.ChunksFile().Cfg.PagePartitioningMaxGapSize),
-		dataColToIndex:             dataColToIndex,
-		rowCountQuota:              rowCountQuota,
-		chunkBytesQuota:            chunkBytesQuota,
-		dataBytesQuota:             dataBytesQuota,
-		materializedSeriesCallback: materializeSeriesCallback,
+		s:                                s,
+		d:                                d,
+		b:                                block,
+		colIdx:                           colIdx.ColumnIndex,
+		concurrency:                      concurrency,
+		partitioner:                      util.NewGapBasedPartitioner(block.ChunksFile().Cfg.PagePartitioningMaxGapSize),
+		dataColToIndex:                   dataColToIndex,
+		rowCountQuota:                    rowCountQuota,
+		chunkBytesQuota:                  chunkBytesQuota,
+		dataBytesQuota:                   dataBytesQuota,
+		materializedSeriesCallback:       materializeSeriesCallback,
+		materializedLabelsFilterCallback: materializeLabelsFilterCallback,
 	}, nil
 }
 
 // Materialize reconstructs the ChunkSeries that belong to the specified row ranges (rr).
 // It uses the row group index (rgi) and time bounds (mint, maxt) to filter and decode the series.
-func (m *Materializer) Materialize(ctx context.Context, rgi int, mint, maxt int64, skipChunks bool, rr []RowRange) ([]prom_storage.ChunkSeries, error) {
+func (m *Materializer) Materialize(ctx context.Context, hints *prom_storage.SelectHints, rgi int, mint, maxt int64, skipChunks bool, rr []RowRange) (chunkSeries []prom_storage.ChunkSeries, err error) {
+	ctx, span := tracer.Start(ctx, "Materializer.Materialize")
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
+	}()
+
+	span.SetAttributes(
+		attribute.Int("row_group_index", rgi),
+		attribute.Int64("mint", mint),
+		attribute.Int64("maxt", maxt),
+		attribute.Bool("skip_chunks", skipChunks),
+		attribute.Int("row_ranges_count", len(rr)),
+	)
+
 	if err := m.checkRowCountQuota(rr); err != nil {
 		return nil, err
 	}
@@ -109,13 +153,7 @@ func (m *Materializer) Materialize(ctx context.Context, rgi int, mint, maxt int6
 		return nil, errors.Wrapf(err, "error materializing labels")
 	}
 
-	chunkSeries := make([]prom_storage.ChunkSeries, len(sLbls))
-	for i, s := range sLbls {
-		chunkSeries[i] = &concreteChunksSeries{
-			lbls: labels.New(s...),
-		}
-	}
-
+	chunkSeries, rr = m.filterSeries(ctx, hints, sLbls, rr)
 	if !skipChunks {
 		chksIter, err := m.materializeChunksIter(ctx, rgi, mint, maxt, rr)
 		if err != nil {
@@ -138,7 +176,80 @@ func (m *Materializer) Materialize(ctx context.Context, rgi int, mint, maxt int6
 			return len(cs.(*concreteChunksSeries).chks) == 0
 		})
 	}
+
+	if err := m.materializedSeriesCallback(ctx, chunkSeries); err != nil {
+		return nil, err
+	}
+
+	span.SetAttributes(attribute.Int("materialized_series_count", len(chunkSeries)))
 	return chunkSeries, err
+}
+
+func (m *Materializer) filterSeries(ctx context.Context, hints *prom_storage.SelectHints, sLbls [][]labels.Label, rr []RowRange) ([]prom_storage.ChunkSeries, []RowRange) {
+	results := make([]prom_storage.ChunkSeries, 0, len(sLbls))
+	labelsFilter, ok := m.materializedLabelsFilterCallback(ctx, hints)
+	if !ok {
+		for _, s := range sLbls {
+			results = append(results, &concreteChunksSeries{
+				lbls: labels.New(s...),
+			})
+		}
+		return results, rr
+	}
+
+	defer labelsFilter.Close()
+
+	filteredRR := make([]RowRange, 0, len(rr))
+	var currentRange RowRange
+	inRange := false
+	seriesIdx := 0
+
+	for _, rowRange := range rr {
+		for i := int64(0); i < rowRange.Count; i++ {
+			actualRowID := rowRange.From + i
+			lbls := labels.New(sLbls[seriesIdx]...)
+
+			if labelsFilter.Filter(lbls) {
+				results = append(results, &concreteChunksSeries{
+					lbls: lbls,
+				})
+
+				// Handle row range collection
+				if !inRange {
+					// Start new range
+					currentRange = RowRange{
+						From:  actualRowID,
+						Count: 1,
+					}
+					inRange = true
+				} else if actualRowID == currentRange.From+currentRange.Count {
+					// Extend current range
+					currentRange.Count++
+				} else {
+					// Save current range and start new range (non-contiguous)
+					filteredRR = append(filteredRR, currentRange)
+					currentRange = RowRange{
+						From:  actualRowID,
+						Count: 1,
+					}
+				}
+			} else {
+				// Save current range and reset when we hit a non-matching series
+				if inRange {
+					filteredRR = append(filteredRR, currentRange)
+					inRange = false
+				}
+			}
+			seriesIdx++
+		}
+	}
+
+	// Save the final range if we have one
+	if inRange {
+		filteredRR = append(filteredRR, currentRange)
+	}
+
+	return results, filteredRR
 }
 
 // MaterializeIter provides an iterator to lazily reconstruct the ChunkSeries that belong to the specified row ranges (rr).
@@ -185,7 +296,7 @@ func (m *Materializer) MaterializeLabelNames(ctx context.Context, rgi int, rr []
 	for col := range colsMap {
 		l, ok := schema.ExtractLabelFromColumn(col)
 		if !ok {
-			return nil, errors.New(fmt.Sprintf("error extracting label name from col %v", col))
+			return nil, errors.New(fmt.Sprintf("error extracting label name From col %v", col))
 		}
 		lbls = append(lbls, l)
 	}
@@ -302,7 +413,7 @@ func (m *Materializer) materializeAllLabels(ctx context.Context, rgi int, rr []R
 func totalRows(rr []RowRange) int64 {
 	res := int64(0)
 	for _, r := range rr {
-		res += r.count
+		res += r.Count
 	}
 	return res
 }
@@ -346,7 +457,7 @@ func (m *Materializer) materializeChunksSlice(ctx context.Context, rgi int, mint
 		for valuesIter.Next() {
 			iterChks, err := m.d.Decode(valuesIter.At().ByteArray(), mint, maxt)
 			if err != nil {
-				return rowChunks, errors.Wrap(err, "failed to decode chunks from iterator")
+				return rowChunks, errors.Wrap(err, "failed to decode chunks From iterator")
 			}
 			rowChunks[i] = append(rowChunks[i], iterChks...)
 			i++
@@ -542,12 +653,12 @@ func (m *Materializer) getPageRangesForColummn(cc parquet.ColumnChunk, file *sto
 
 	for i := 0; i < cidx.NumPages(); i++ {
 		pageRowRange := RowRange{
-			from: oidx.FirstRowIndex(i),
+			From: oidx.FirstRowIndex(i),
 		}
-		pageRowRange.count = group.NumRows()
+		pageRowRange.Count = group.NumRows()
 
 		if i < oidx.NumPages()-1 {
-			pageRowRange.count = oidx.FirstRowIndex(i+1) - pageRowRange.from
+			pageRowRange.Count = oidx.FirstRowIndex(i+1) - pageRowRange.From
 		}
 
 		for _, r := range rr {

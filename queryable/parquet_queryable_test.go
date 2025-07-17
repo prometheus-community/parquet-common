@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -390,6 +391,115 @@ func TestQueryable(t *testing.T) {
 				require.NoError(t, ss.Err())
 				require.NotEmpty(t, series)
 			})
+
+			t.Run("MaterializedSeriesCallback", func(t *testing.T) {
+				// Test callback that counts materialized series
+				var seriesCount int
+				mtx := sync.Mutex{}
+				seriesCallback := func(ctx context.Context, series []prom_storage.ChunkSeries) error {
+					mtx.Lock()
+					seriesCount += len(series)
+					mtx.Unlock()
+					return nil
+				}
+
+				queryable, err := createQueryable(shard, WithMaterializedSeriesCallback(seriesCallback))
+				require.NoError(t, err)
+				querier, err := queryable.Querier(data.MinTime, data.MaxTime)
+				require.NoError(t, err)
+
+				// Query some series to trigger the callback
+				matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
+				ss := querier.Select(ctx, true, nil, matchers...)
+
+				var foundSeries []prom_storage.Series
+				for ss.Next() {
+					foundSeries = append(foundSeries, ss.At())
+				}
+				require.NoError(t, ss.Err())
+				require.NotEmpty(t, foundSeries)
+				require.Equal(t, len(foundSeries), seriesCount, "Callback should receive the same number of series")
+
+				// Test callback that returns an error
+				errorCallback := func(ctx context.Context, series []prom_storage.ChunkSeries) error {
+					return fmt.Errorf("callback error")
+				}
+
+				queryable, err = createQueryable(shard, WithMaterializedSeriesCallback(errorCallback))
+				require.NoError(t, err)
+				querier, err = queryable.Querier(data.MinTime, data.MaxTime)
+				require.NoError(t, err)
+
+				ss = querier.Select(ctx, true, nil, matchers...)
+				for ss.Next() {
+					_ = ss.At()
+				}
+				require.Error(t, ss.Err())
+				require.Contains(t, ss.Err().Error(), "callback error")
+			})
+
+			t.Run("MaterializedLabelsFilterCallback", func(t *testing.T) {
+				// Query series that should be filtered by the callback
+				matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
+
+				// Test callback that returns empty results by filtering out all series
+				emptyFilter := func(ctx context.Context, hints *prom_storage.SelectHints) (search.MaterializedLabelsFilter, bool) {
+					return &allRejectingFilter{}, true
+				}
+
+				queryable, err := createQueryable(shard, WithMaterializedLabelsFilterCallback(emptyFilter))
+				require.NoError(t, err)
+				querier, err := queryable.Querier(data.MinTime, data.MaxTime)
+				require.NoError(t, err)
+
+				ss := querier.Select(ctx, true, nil, matchers...)
+				var emptySeries []prom_storage.Series
+				for ss.Next() {
+					emptySeries = append(emptySeries, ss.At())
+				}
+				require.NoError(t, ss.Err())
+				require.Empty(t, emptySeries, "Callback should filter out all series")
+
+				// Test callback that filters out series with specific labels
+				specificFilter := func(ctx context.Context, hints *prom_storage.SelectHints) (search.MaterializedLabelsFilter, bool) {
+					return &randomName0RejectingFilter{}, true
+				}
+
+				queryable, err = createQueryable(shard, WithMaterializedLabelsFilterCallback(specificFilter))
+				require.NoError(t, err)
+				querier, err = queryable.Querier(data.MinTime, data.MaxTime)
+				require.NoError(t, err)
+
+				ss = querier.Select(ctx, true, nil, matchers...)
+				var filteredSeries []prom_storage.Series
+				for ss.Next() {
+					filteredSeries = append(filteredSeries, ss.At())
+				}
+				require.NoError(t, ss.Err())
+
+				// Verify that series with "random_name_0" label were filtered out
+				for _, series := range filteredSeries {
+					require.Empty(t, series.Labels().Get("random_name_0"), "Series with random_name_0 should be filtered out")
+				}
+
+				// Test callback that returns false (no filtering)
+				noopFilter := func(ctx context.Context, hints *prom_storage.SelectHints) (search.MaterializedLabelsFilter, bool) {
+					return nil, false
+				}
+
+				queryable, err = createQueryable(shard, WithMaterializedLabelsFilterCallback(noopFilter))
+				require.NoError(t, err)
+				querier, err = queryable.Querier(data.MinTime, data.MaxTime)
+				require.NoError(t, err)
+
+				ss = querier.Select(ctx, true, nil, matchers...)
+				var allSeries []prom_storage.Series
+				for ss.Next() {
+					allSeries = append(allSeries, ss.At())
+				}
+				require.NoError(t, ss.Err())
+				require.NotEmpty(t, allSeries, "No filtering should return all series")
+			})
 		})
 	}
 }
@@ -704,4 +814,27 @@ func convertToParquetForBenchWithCountingBucket(tb testing.TB, ctx context.Conte
 	}
 
 	return shard
+}
+
+// allRejectingFilter is a MaterializedLabelsFilter that rejects all series
+type allRejectingFilter struct{}
+
+func (f *allRejectingFilter) Filter(ls labels.Labels) bool {
+	return false // Reject all series
+}
+
+func (f *allRejectingFilter) Close() {
+	// No cleanup needed
+}
+
+// randomName0RejectingFilter is a MaterializedLabelsFilter that rejects series with random_name_0 label
+type randomName0RejectingFilter struct{}
+
+func (f *randomName0RejectingFilter) Filter(ls labels.Labels) bool {
+	// Reject series that doesn't have "random_name_0" label
+	return ls.Get("random_name_0") == ""
+}
+
+func (f *randomName0RejectingFilter) Close() {
+	// No cleanup needed
 }

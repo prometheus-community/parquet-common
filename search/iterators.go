@@ -230,7 +230,7 @@ func newRowRangesValueIterator(
 		return nil, errors.Wrap(err, "failed to get pages")
 	}
 
-	err = pgs.SeekToRow(pageRange.rows[0].from)
+	err = pgs.SeekToRow(pageRange.rows[0].From)
 	if err != nil {
 		_ = pgs.Close()
 		return nil, errors.Wrap(err, "failed to seek to row")
@@ -239,9 +239,9 @@ func newRowRangesValueIterator(
 	remainingRr := pageRange.rows
 
 	currentRr := remainingRr[0]
-	next := currentRr.from
-	remaining := currentRr.count
-	currentRow := currentRr.from
+	next := currentRr.From
+	remaining := currentRr.Count
+	currentRow := currentRr.From
 
 	remainingRr = remainingRr[1:]
 	return &rowRangesValueIterator{
@@ -301,8 +301,8 @@ func (ri *rowRangesValueIterator) Next() bool {
 					ri.next = ri.next + 1
 				} else if len(ri.remainingRr) > 0 {
 					ri.currentRr = ri.remainingRr[0]
-					ri.next = ri.currentRr.from
-					ri.remaining = ri.currentRr.count
+					ri.next = ri.currentRr.From
+					ri.remaining = ri.currentRr.Count
 					ri.remainingRr = ri.remainingRr[1:]
 				}
 			}
