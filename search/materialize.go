@@ -403,6 +403,10 @@ func (m *Materializer) materializeAllLabels(ctx context.Context, rgi int, rr []R
 		return nil, err
 	}
 
+	for i := range results {
+		// pre-allocate slice to avoid multiple allocations on append
+		results[i] = make([]labels.Label, 0, len(colsMap))
+	}
 	for cIdx, values := range colsMap {
 		labelName, ok := schema.ExtractLabelFromColumn(m.b.LabelsFile().Schema().Columns()[cIdx][0])
 		if !ok {
