@@ -127,7 +127,7 @@ func NewMaterializer(s *schema.TSDBSchema,
 
 // Materialize reconstructs the ChunkSeries that belong to the specified row ranges (rr).
 // It uses the row group index (rgi) and time bounds (mint, maxt) to filter and decode the series.
-func (m *Materializer) Materialize(ctx context.Context, hints *prom_storage.SelectHints, rgi int, mint, maxt int64, skipChunks bool, rr []RowRange) (chunkSeries []prom_storage.ChunkSeries, err error) {
+func (m *Materializer) Materialize(ctx context.Context, hints *prom_storage.SelectHints, rgi int, mint, maxt int64, skipChunks bool, rr []RowRange) (results []prom_storage.ChunkSeries, err error) {
 	ctx, span := tracer.Start(ctx, "Materializer.Materialize")
 	defer func() {
 		if err != nil {
@@ -153,7 +153,7 @@ func (m *Materializer) Materialize(ctx context.Context, hints *prom_storage.Sele
 		return nil, errors.Wrapf(err, "error materializing labels")
 	}
 
-	chunkSeries, rr = m.filterSeries(ctx, hints, sLbls, rr)
+	results, rr = m.filterSeries(ctx, hints, sLbls, rr)
 	if !skipChunks {
 		chksIter, err := m.materializeChunksIter(ctx, rgi, mint, maxt, rr)
 		if err != nil {
@@ -167,22 +167,22 @@ func (m *Materializer) Materialize(ctx context.Context, hints *prom_storage.Sele
 				iterChk := chkIter.At()
 				iterChks = append(iterChks, iterChk)
 			}
-			chunkSeries[seriesIdx].(*concreteChunksSeries).chks = iterChks
+			results[seriesIdx].(*concreteChunksSeries).chks = iterChks
 			seriesIdx++
 		}
 
 		// If we are not skipping chunks and there is no chunks for the time range queried, lets remove the series
-		chunkSeries = slices.DeleteFunc(chunkSeries, func(cs prom_storage.ChunkSeries) bool {
+		results = slices.DeleteFunc(results, func(cs prom_storage.ChunkSeries) bool {
 			return len(cs.(*concreteChunksSeries).chks) == 0
 		})
 	}
 
-	if err := m.materializedSeriesCallback(ctx, chunkSeries); err != nil {
+	if err := m.materializedSeriesCallback(ctx, results); err != nil {
 		return nil, err
 	}
 
-	span.SetAttributes(attribute.Int("materialized_series_count", len(chunkSeries)))
-	return chunkSeries, err
+	span.SetAttributes(attribute.Int("materialized_series_count", len(results)))
+	return results, err
 }
 
 func (m *Materializer) filterSeries(ctx context.Context, hints *prom_storage.SelectHints, sLbls [][]labels.Label, rr []RowRange) ([]prom_storage.ChunkSeries, []RowRange) {
