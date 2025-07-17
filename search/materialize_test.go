@@ -52,7 +52,7 @@ func TestMaterializeE2E(t *testing.T) {
 
 	t.Run("QueryByUniqueLabel", func(t *testing.T) {
 		eq := Equal(schema.LabelToColumn("unique"), parquet.ValueOf("unique_0"))
-		found := query(t, data.MinTime, data.MaxTime, shard, eq)
+		found := queryWithIterCheck(t, data.MinTime, data.MaxTime, shard, eq)
 		require.Len(t, found, cfg.TotalMetricNames)
 
 		for _, series := range found {
@@ -66,7 +66,7 @@ func TestMaterializeE2E(t *testing.T) {
 			name := fmt.Sprintf("metric_%d", rand.Int()%cfg.TotalMetricNames)
 			eq := Equal(schema.LabelToColumn(labels.MetricName), parquet.ValueOf(name))
 
-			found := query(t, data.MinTime, data.MaxTime, shard, eq)
+			found := queryWithIterCheck(t, data.MinTime, data.MaxTime, shard, eq)
 			require.Len(t, found, cfg.MetricsPerMetricName, fmt.Sprintf("metric_%d", i))
 
 			for _, series := range found {
@@ -92,17 +92,17 @@ func TestMaterializeE2E(t *testing.T) {
 		c2 := Equal(schema.LabelToColumn("unique"), parquet.ValueOf("unique_0"))
 
 		// Test first column only
-		found := query(t, data.MinTime, data.MinTime+colDuration.Milliseconds()-1, shard, c1, c2)
+		found := queryWithIterCheck(t, data.MinTime, data.MinTime+colDuration.Milliseconds()-1, shard, c1, c2)
 		require.Len(t, found, 1)
 		require.Len(t, found[0].(*concreteChunksSeries).chks, 1)
 
 		// Test first two columns
-		found = query(t, data.MinTime, data.MinTime+(2*colDuration).Milliseconds()-1, shard, c1, c2)
+		found = queryWithIterCheck(t, data.MinTime, data.MinTime+(2*colDuration).Milliseconds()-1, shard, c1, c2)
 		require.Len(t, found, 1)
 		require.Len(t, found[0].(*concreteChunksSeries).chks, 2)
 
 		// Query outside the range
-		found = query(t, data.MinTime+(9*colDuration).Milliseconds(), data.MinTime+(10*colDuration).Milliseconds()-1, shard, c1, c2)
+		found = queryWithIterCheck(t, data.MinTime+(9*colDuration).Milliseconds(), data.MinTime+(10*colDuration).Milliseconds()-1, shard, c1, c2)
 		require.Len(t, found, 0)
 	})
 
@@ -245,7 +245,7 @@ func convertToParquet(t *testing.T, ctx context.Context, bkt *filesystem.Bucket,
 	return shard
 }
 
-func query(t *testing.T, mint, maxt int64, shard storage.ParquetShard, constraints ...Constraint) []prom_storage.ChunkSeries {
+func queryWithIterCheck(t *testing.T, mint, maxt int64, shard storage.ParquetShard, constraints ...Constraint) []prom_storage.ChunkSeries {
 	ctx := context.Background()
 	for _, c := range constraints {
 		require.NoError(t, c.init(shard.LabelsFile()))
@@ -267,6 +267,23 @@ func query(t *testing.T, mint, maxt int64, shard storage.ParquetShard, constrain
 		require.NoError(t, err)
 		series, err := m.Materialize(ctx, nil, i, mint, maxt, false, rr)
 		require.NoError(t, err)
+		seriesSetIter, err := m.MaterializeIter(ctx, nil, i, mint, maxt, false, rr)
+		require.NoError(t, err)
+
+		seriesIdx := 0
+		for seriesSetIter.Next() {
+			seriesIter := seriesSetIter.At()
+			concreteSeriesFromIter := &concreteChunksSeries{
+				lbls: seriesIter.Labels(),
+			}
+			seriesChunksIter := seriesIter.Iterator(nil)
+			for seriesChunksIter.Next() {
+				concreteSeriesFromIter.chks = append(concreteSeriesFromIter.chks, seriesChunksIter.At())
+			}
+			require.Equal(t, series[seriesIdx], concreteSeriesFromIter)
+			seriesIdx++
+		}
+
 		found = append(found, series...)
 	}
 	return found

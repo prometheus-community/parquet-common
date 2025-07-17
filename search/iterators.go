@@ -22,6 +22,7 @@ import (
 	"github.com/prometheus/prometheus/model/labels"
 	prom_storage "github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/chunks"
+	"github.com/prometheus/prometheus/util/annotations"
 
 	"github.com/prometheus-community/parquet-common/schema"
 	"github.com/prometheus-community/parquet-common/storage"
@@ -42,7 +43,172 @@ func (c concreteChunksSeries) Iterator(_ chunks.Iterator) chunks.Iterator {
 	return prom_storage.NewListChunkSeriesIterator(c.chks...)
 }
 
-type chunkIterableSet interface {
+type iteratorChunksSeries struct {
+	lbls   labels.Labels
+	chunks chunks.Iterator
+}
+
+func (i *iteratorChunksSeries) Labels() labels.Labels {
+	return i.lbls
+}
+
+func (i *iteratorChunksSeries) Iterator(_ chunks.Iterator) chunks.Iterator {
+	return i.chunks
+}
+
+type ChunkSeriesSetCloser interface {
+	prom_storage.ChunkSeriesSet
+
+	// Close releases any memory buffers held by the ChunkSeriesSet or the
+	// underlying ChunkSeries. It is not safe to use the ChunkSeriesSet
+	// or any of its ChunkSeries after calling Close.
+	Close()
+}
+
+type noChunksConcreteLabelsSeriesSet struct {
+	seriesSet        []*concreteChunksSeries
+	currentSeriesIdx int
+}
+
+func newNoChunksConcreteLabelsSeriesSet(sLbls [][]labels.Label) *noChunksConcreteLabelsSeriesSet {
+	seriesSet := make([]*concreteChunksSeries, len(sLbls))
+	for i, lbls := range sLbls {
+		seriesSet[i] = &concreteChunksSeries{lbls: lbls}
+	}
+	return &noChunksConcreteLabelsSeriesSet{
+		seriesSet:        seriesSet,
+		currentSeriesIdx: -1,
+	}
+}
+
+func (s *noChunksConcreteLabelsSeriesSet) At() prom_storage.ChunkSeries {
+	return s.seriesSet[s.currentSeriesIdx]
+}
+
+func (s *noChunksConcreteLabelsSeriesSet) Next() bool {
+	if s.currentSeriesIdx+1 == len(s.seriesSet) {
+		return false
+	}
+	s.currentSeriesIdx++
+	return true
+}
+
+func (s *noChunksConcreteLabelsSeriesSet) Err() error {
+	return nil
+}
+
+func (s *noChunksConcreteLabelsSeriesSet) Warnings() annotations.Annotations {
+	return nil
+}
+
+func (s *noChunksConcreteLabelsSeriesSet) Close() {
+}
+
+// filterEmptyChunkSeriesSet is a ChunkSeriesSet that lazily filters out series with no chunks.
+type filterEmptyChunkSeriesSet struct {
+	lblsSet [][]labels.Label
+	chnkSet ChunksIteratorIterator
+
+	currentSeries *iteratorChunksSeries
+	err           error
+}
+
+func newFilterEmptyChunkSeriesSet(lblsSet [][]labels.Label, chnkSet ChunksIteratorIterator) *filterEmptyChunkSeriesSet {
+	return &filterEmptyChunkSeriesSet{
+		lblsSet: lblsSet,
+		chnkSet: chnkSet,
+	}
+}
+
+func (s *filterEmptyChunkSeriesSet) At() prom_storage.ChunkSeries {
+	return s.currentSeries
+}
+
+func (s *filterEmptyChunkSeriesSet) Next() bool {
+	for s.chnkSet.Next() {
+		if len(s.lblsSet) == 0 {
+			s.err = errors.New("less labels than chunks, this should not happen")
+			return false
+		}
+		lbls := s.lblsSet[0]
+		s.lblsSet = s.lblsSet[1:]
+		iter := s.chnkSet.At()
+		if iter.Next() {
+			// The series has chunks, keep it
+			meta := iter.At()
+			s.currentSeries = &iteratorChunksSeries{
+				lbls: lbls,
+				chunks: &peekedChunksIterator{
+					inner:       iter,
+					peekedValue: &meta,
+				},
+			}
+			return true
+		}
+
+		if iter.Err() != nil {
+			s.err = iter.Err()
+			return false
+		}
+		// This series has no chunks, skip it and continue to the next
+	}
+	if s.chnkSet.Err() != nil {
+		s.err = s.chnkSet.Err()
+	}
+	if len(s.lblsSet) > 0 {
+		s.err = errors.New("more labels than chunks, this should not happen")
+	}
+	return false
+}
+
+func (s *filterEmptyChunkSeriesSet) Err() error {
+	if s.err != nil {
+		return s.err
+	}
+	return s.chnkSet.Err()
+}
+
+func (s *filterEmptyChunkSeriesSet) Warnings() annotations.Annotations {
+	return nil
+}
+
+func (s *filterEmptyChunkSeriesSet) Close() {
+	s.chnkSet.Close()
+}
+
+// peekedChunksIterator wraps a chunks.Iterator with an extra value to return on
+// the first iteration. It is useful to allow peeking the first chunk without
+// consuming it.
+type peekedChunksIterator struct {
+	inner       chunks.Iterator
+	peekedValue *chunks.Meta
+	nextCalled  bool
+}
+
+func (p *peekedChunksIterator) Next() bool {
+	if !p.nextCalled {
+		p.nextCalled = true
+		return true
+	}
+	if p.peekedValue != nil {
+		// This is the second call to Next, discard the peeked value
+		p.peekedValue = nil
+	}
+	return p.inner.Next()
+}
+
+func (p *peekedChunksIterator) At() chunks.Meta {
+	if p.peekedValue != nil {
+		return *p.peekedValue
+	}
+	return p.inner.At()
+}
+
+func (p *peekedChunksIterator) Err() error {
+	return p.inner.Err()
+}
+
+type ChunksIteratorIterator interface {
 	Next() bool
 	At() chunks.Iterator
 	Err() error
