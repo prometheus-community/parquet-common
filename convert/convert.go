@@ -69,6 +69,7 @@ type convertOpts struct {
 	columnPageBuffers  parquet.BufferPool
 	concurrency        int
 	maxSamplesPerChunk int
+	compressionOpts    []schema.CompressionOpts
 }
 
 func (cfg convertOpts) buildBloomfilterColumns() []parquet.BloomFilterColumn {
@@ -152,6 +153,12 @@ func WithColumnPageBuffers(buffers parquet.BufferPool) ConvertOption {
 	}
 }
 
+func WithCompression(compressionOpts ...schema.CompressionOpts) ConvertOption {
+	return func(opts *convertOpts) {
+		opts.compressionOpts = compressionOpts
+	}
+}
+
 func ConvertTSDBBlock(
 	ctx context.Context,
 	bkt objstore.Bucket,
@@ -171,11 +178,11 @@ func ConvertTSDBBlock(
 	}
 	defer func() { _ = rr.Close() }()
 
-	labelsProjection, err := rr.Schema().LabelsProjection()
+	labelsProjection, err := rr.Schema().LabelsProjection(cfg.compressionOpts...)
 	if err != nil {
 		return 0, errors.Wrap(err, "error getting labels projection from tsdb schema")
 	}
-	chunksProjection, err := rr.Schema().ChunksProjection()
+	chunksProjection, err := rr.Schema().ChunksProjection(cfg.compressionOpts...)
 	if err != nil {
 		return 0, errors.Wrap(err, "error getting chunks projection from tsdb schema")
 	}
