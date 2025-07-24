@@ -109,7 +109,7 @@ type parquetQueryable struct {
 	opts         *queryableOpts
 }
 
-func NewParquetQueryable(d *schema.PrometheusParquetChunksDecoder, shardFinder ShardsFinderFunction, opts ...QueryableOpts) (prom_storage.Queryable, error) {
+func NewParquetQueryable(d *schema.PrometheusParquetChunksDecoder, shardFinder ShardsFinderFunction, opts ...QueryableOpts) (*parquetQueryable, error) {
 	cfg := DefaultQueryableOpts
 
 	for _, opt := range opts {
@@ -123,7 +123,7 @@ func NewParquetQueryable(d *schema.PrometheusParquetChunksDecoder, shardFinder S
 	}, nil
 }
 
-func (p parquetQueryable) Querier(mint, maxt int64) (prom_storage.Querier, error) {
+func (p parquetQueryable) Querier(mint, maxt int64) (*parquetQuerier, error) {
 	return &parquetQuerier{
 		mint:         mint,
 		maxt:         maxt,
@@ -245,7 +245,7 @@ func (p parquetQuerier) Close() error {
 	return nil
 }
 
-func (p parquetQuerier) Select(ctx context.Context, sorted bool, sp *prom_storage.SelectHints, matchers ...*labels.Matcher) prom_storage.SeriesSet {
+func (p parquetQuerier) Select(ctx context.Context, sorted bool, iter bool, sp *prom_storage.SelectHints, matchers ...*labels.Matcher) prom_storage.SeriesSet {
 	ctx, span := tracer.Start(ctx, "parquetQuerier.Select")
 	var err error
 	defer func() {
@@ -286,7 +286,7 @@ func (p parquetQuerier) Select(ctx context.Context, sorted bool, sp *prom_storag
 
 	for i, shard := range shards {
 		errGroup.Go(func() error {
-			ss, err := shard.Query(ctx, sorted, sp, minT, maxT, skipChunks, matchers)
+			ss, err := shard.Query(ctx, sorted, sp, minT, maxT, skipChunks, matchers, iter)
 			seriesSet[i] = ss
 			return err
 		})
@@ -348,7 +348,91 @@ func newQueryableShard(opts *queryableOpts, block storage.ParquetShard, d *schem
 	}, nil
 }
 
-func (b queryableShard) Query(ctx context.Context, sorted bool, sp *prom_storage.SelectHints, mint, maxt int64, skipChunks bool, matchers []*labels.Matcher) (prom_storage.ChunkSeriesSet, error) {
+func (b queryableShard) Query(ctx context.Context, sorted bool, sp *prom_storage.SelectHints, mint, maxt int64, skipChunks bool, matchers []*labels.Matcher, iter bool) (prom_storage.ChunkSeriesSet, error) {
+	errGroup, ctx := errgroup.WithContext(ctx)
+	errGroup.SetLimit(b.concurrency)
+
+	rowGroupCount := len(b.shard.LabelsFile().RowGroups())
+	results := make([][]prom_storage.ChunkSeries, rowGroupCount)
+	for i := range results {
+		results[i] = make([]prom_storage.ChunkSeries, 0, 1024/rowGroupCount)
+	}
+	//rMtx := sync.Mutex{}
+
+	for rgi := range rowGroupCount {
+		errGroup.Go(func() error {
+			cs, err := search.MatchersToConstraint(matchers...)
+			if err != nil {
+				return err
+			}
+			err = search.Initialize(b.shard.LabelsFile(), cs...)
+			if err != nil {
+				return err
+			}
+			rr, err := search.Filter(ctx, b.shard, rgi, cs...)
+			if err != nil {
+				return err
+			}
+
+			if len(rr) == 0 {
+				return nil
+			}
+
+			if !iter {
+				series, err := b.m.Materialize(ctx, sp, rgi, mint, maxt, skipChunks, rr)
+				if err != nil {
+					return err
+				}
+				if len(series) == 0 {
+					return nil
+				}
+
+				//rMtx.Lock()
+				results[rgi] = append(results[rgi], series...)
+				//rMtx.Unlock()
+				if sorted {
+					sort.Sort(byLabels(results[rgi]))
+				}
+				return nil
+			} else {
+				set, err := b.m.MaterializeIter(ctx, sp, rgi, mint, maxt, skipChunks, rr)
+				if err != nil {
+					return err
+				}
+				defer set.Close()
+				for set.Next() {
+					//rMtx.Lock()
+					results[rgi] = append(results[rgi], set.At())
+					//rMtx.Unlock()
+				}
+				if sorted {
+					sort.Sort(byLabels(results[rgi]))
+				}
+				return set.Err()
+			}
+		})
+	}
+
+	if err := errGroup.Wait(); err != nil {
+		return nil, err
+	}
+
+	//if sorted {
+	//	sort.Sort(byLabels(results))
+	//}
+	totalResults := 0
+	for _, res := range results {
+		totalResults += len(res)
+	}
+	resultsFlattened := make([]prom_storage.ChunkSeries, 0, totalResults)
+	for _, res := range results {
+		resultsFlattened = append(resultsFlattened, res...)
+	}
+
+	return convert.NewChunksSeriesSet(resultsFlattened), nil
+}
+
+func (b queryableShard) QueryIter(ctx context.Context, sorted bool, sp *prom_storage.SelectHints, mint, maxt int64, skipChunks bool, matchers []*labels.Matcher) (prom_storage.ChunkSeriesSet, error) {
 	errGroup, ctx := errgroup.WithContext(ctx)
 	errGroup.SetLimit(b.concurrency)
 
@@ -374,18 +458,6 @@ func (b queryableShard) Query(ctx context.Context, sorted bool, sp *prom_storage
 				return nil
 			}
 
-			//series, err := b.m.Materialize(ctx, sp, rgi, mint, maxt, skipChunks, rr)
-			//if err != nil {
-			//	return err
-			//}
-			//if len(series) == 0 {
-			//	return nil
-			//}
-			//
-			//rMtx.Lock()
-			//results = append(results, series...)
-			//rMtx.Unlock()
-			//return nil
 			set, err := b.m.MaterializeIter(ctx, sp, rgi, mint, maxt, skipChunks, rr)
 			if err != nil {
 				return err

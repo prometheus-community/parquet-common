@@ -26,6 +26,7 @@ import (
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/prometheus/util/teststorage"
 	"github.com/stretchr/testify/require"
+	"github.com/thanos-io/objstore"
 
 	"github.com/thanos-io/objstore/providers/filesystem"
 
@@ -220,7 +221,7 @@ func TestMaterializeE2E(t *testing.T) {
 	})
 }
 
-func convertToParquet(t *testing.T, ctx context.Context, bkt *filesystem.Bucket, data util.TestData, h convert.Convertible, opts ...storage.FileOption) storage.ParquetShard {
+func convertToParquet(t testing.TB, ctx context.Context, bkt objstore.Bucket, data util.TestData, h convert.Convertible, opts ...storage.FileOption) storage.ParquetShard {
 	colDuration := time.Hour
 	shards, err := convert.ConvertTSDBBlock(
 		ctx,

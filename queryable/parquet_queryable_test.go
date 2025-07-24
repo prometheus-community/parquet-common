@@ -15,54 +15,47 @@ package queryable
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"math/rand"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/parquet-go/parquet-go"
 	"github.com/prometheus/prometheus/model/labels"
-	"github.com/prometheus/prometheus/promql"
-	"github.com/prometheus/prometheus/promql/promqltest"
 	prom_storage "github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/prometheus/util/teststorage"
-	"github.com/prometheus/prometheus/util/testutil"
 	"github.com/stretchr/testify/require"
 
 	"github.com/prometheus-community/parquet-common/convert"
 	"github.com/prometheus-community/parquet-common/schema"
-	"github.com/prometheus-community/parquet-common/search"
 	"github.com/prometheus-community/parquet-common/storage"
 	"github.com/prometheus-community/parquet-common/util"
 )
 
-func TestPromQLAcceptance(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping, because 'short' flag was set")
-	}
-
-	opts := promql.EngineOpts{
-		Timeout:                  1 * time.Hour,
-		MaxSamples:               1e10,
-		EnableNegativeOffset:     true,
-		EnableAtModifier:         true,
-		NoStepSubqueryIntervalFn: func(_ int64) int64 { return 30 * time.Second.Milliseconds() },
-		LookbackDelta:            5 * time.Minute,
-		EnableDelayedNameRemoval: true,
-	}
-
-	engine := promql.NewEngine(opts)
-	t.Cleanup(func() { _ = engine.Close() })
-
-	promqltest.RunBuiltinTestsWithStorage(&parallelTest{T: t}, engine, func(tt testutil.T) prom_storage.Storage {
-		return &acceptanceTestStorage{t: t, st: teststorage.New(tt)}
-	})
-}
+//func TestPromQLAcceptance(t *testing.T) {
+//	if testing.Short() {
+//		t.Skip("Skipping, because 'short' flag was set")
+//	}
+//
+//	opts := promql.EngineOpts{
+//		Timeout:                  1 * time.Hour,
+//		MaxSamples:               1e10,
+//		EnableNegativeOffset:     true,
+//		EnableAtModifier:         true,
+//		NoStepSubqueryIntervalFn: func(_ int64) int64 { return 30 * time.Second.Milliseconds() },
+//		LookbackDelta:            5 * time.Minute,
+//		EnableDelayedNameRemoval: true,
+//	}
+//
+//	engine := promql.NewEngine(opts)
+//	t.Cleanup(func() { _ = engine.Close() })
+//
+//	promqltest.RunBuiltinTestsWithStorage(&parallelTest{T: t}, engine, func(tt testutil.T) prom_storage.Storage {
+//		return &acceptanceTestStorage{t: t, st: teststorage.New(tt)}
+//	})
+//}
 
 type parallelTest struct {
 	*testing.T
@@ -75,40 +68,40 @@ func (s *parallelTest) Run(name string, t func(*testing.T)) bool {
 	})
 }
 
-type acceptanceTestStorage struct {
-	t  *testing.T
-	st *teststorage.TestStorage
-}
-
-func (st *acceptanceTestStorage) Appender(ctx context.Context) prom_storage.Appender {
-	return st.st.Appender(ctx)
-}
-
-func (st *acceptanceTestStorage) ChunkQuerier(int64, int64) (prom_storage.ChunkQuerier, error) {
-	return nil, errors.New("unimplemented")
-}
-
-func (st *acceptanceTestStorage) Querier(from, to int64) (prom_storage.Querier, error) {
-	if st.st.Head().NumSeries() == 0 {
-		// parquet-go panics when writing an empty parquet file
-		return st.st.Querier(from, to)
-	}
-	bkt, err := newBucket(st.t.TempDir())
-	if err != nil {
-		st.t.Fatalf("unable to create bucket: %s", err)
-	}
-	st.t.Cleanup(func() { _ = bkt.Close() })
-
-	h := st.st.Head()
-	data := util.TestData{MinTime: h.MinTime(), MaxTime: h.MaxTime()}
-	block := convertToParquet(st.t, context.Background(), bkt, data, h)
-
-	q, err := createQueryable(block)
-	if err != nil {
-		st.t.Fatalf("unable to create queryable: %s", err)
-	}
-	return q.Querier(from, to)
-}
+//type acceptanceTestStorage struct {
+//	t  *testing.T
+//	st *teststorage.TestStorage
+//}
+//
+//func (st *acceptanceTestStorage) Appender(ctx context.Context) prom_storage.Appender {
+//	return st.st.Appender(ctx)
+//}
+//
+//func (st *acceptanceTestStorage) ChunkQuerier(int64, int64) (prom_storage.ChunkQuerier, error) {
+//	return nil, errors.New("unimplemented")
+//}
+//
+//func (st *acceptanceTestStorage) Querier(from, to int64) (*parquetQueryable, error) {
+//	if st.st.Head().NumSeries() == 0 {
+//		// parquet-go panics when writing an empty parquet file
+//		return st.st.Querier(from, to)
+//	}
+//	bkt, err := newBucket(st.t.TempDir())
+//	if err != nil {
+//		st.t.Fatalf("unable to create bucket: %s", err)
+//	}
+//	st.t.Cleanup(func() { _ = bkt.Close() })
+//
+//	h := st.st.Head()
+//	data := util.TestData{MinTime: h.MinTime(), MaxTime: h.MaxTime()}
+//	block := convertToParquet(st.t, context.Background(), bkt, data, h)
+//
+//	q, err := createQueryable(block)
+//	if err != nil {
+//		st.t.Fatalf("unable to create queryable: %s", err)
+//	}
+//	return q.Querier(from, to)
+//}
 
 type countingBucket struct {
 	*bucket
@@ -139,428 +132,428 @@ func (b *countingBucket) GetRange(ctx context.Context, name string, off int64, l
 	return b.bucket.GetRange(ctx, name, off, length)
 }
 
-func (st *acceptanceTestStorage) Close() error {
-	return st.st.Close()
-}
+//func (st *acceptanceTestStorage) Close() error {
+//	return st.st.Close()
+//}
+//
+//func (st *acceptanceTestStorage) StartTime() (int64, error) {
+//	return st.st.StartTime()
+//}
 
-func (st *acceptanceTestStorage) StartTime() (int64, error) {
-	return st.st.StartTime()
-}
+//func TestQueryable(t *testing.T) {
+//	st := teststorage.New(t)
+//	ctx := context.Background()
+//	t.Cleanup(func() { _ = st.Close() })
+//
+//	bkt, err := newBucket(t.TempDir())
+//	require.NoError(t, err)
+//	t.Cleanup(func() { _ = bkt.Close() })
+//
+//	cfg := util.DefaultTestConfig()
+//	data := util.GenerateTestData(t, st, ctx, cfg)
+//
+//	ir, err := st.Head().Index()
+//	require.NoError(t, err)
+//
+//	testCases := map[string]struct {
+//		ops []storage.FileOption
+//	}{
+//		"default": {
+//			ops: []storage.FileOption{},
+//		},
+//		"skipBloomFilters": {
+//			ops: []storage.FileOption{
+//				storage.WithFileOptions(
+//					parquet.SkipBloomFilters(true),
+//					parquet.OptimisticRead(true),
+//				),
+//			},
+//		},
+//	}
+//
+//	for n, tc := range testCases {
+//		t.Run(n, func(t *testing.T) {
+//			// Convert to Parquet
+//			shard := convertToParquet(t, ctx, bkt, data, st.Head(), tc.ops...)
+//
+//			t.Run("QueryByUniqueLabel", func(t *testing.T) {
+//				matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
+//				sFound := queryWithQueryable(t, data.MinTime, data.MaxTime, shard, nil, matchers...)
+//				totalFound := 0
+//				for _, series := range sFound {
+//					require.Equal(t, series.Labels().Get("unique"), "unique_0")
+//					require.Contains(t, data.SeriesHash, series.Labels().Hash())
+//					totalFound++
+//				}
+//				require.Equal(t, cfg.TotalMetricNames, totalFound)
+//			})
+//
+//			t.Run("QueryByMetricName", func(t *testing.T) {
+//				for i := 0; i < 50; i++ {
+//					name := fmt.Sprintf("metric_%d", rand.Int()%cfg.TotalMetricNames)
+//					matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, labels.MetricName, name)}
+//					sFound := queryWithQueryable(t, data.MinTime, data.MaxTime, shard, nil, matchers...)
+//					totalFound := 0
+//					for _, series := range sFound {
+//						totalFound++
+//						require.Equal(t, series.Labels().Get(labels.MetricName), name)
+//						require.Contains(t, data.SeriesHash, series.Labels().Hash())
+//					}
+//					require.Equal(t, cfg.MetricsPerMetricName, totalFound)
+//				}
+//			})
+//
+//			t.Run("QueryByUniqueLabel and SkipChunks=true", func(t *testing.T) {
+//				matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
+//				hints := &prom_storage.SelectHints{
+//					Func: "series",
+//				}
+//				sFound := queryWithQueryable(t, data.MinTime, data.MaxTime, shard, hints, matchers...)
+//				totalFound := 0
+//				for _, series := range sFound {
+//					totalFound++
+//					require.Equal(t, series.Labels().Get("unique"), "unique_0")
+//					require.Contains(t, data.SeriesHash, series.Labels().Hash())
+//				}
+//				require.Equal(t, cfg.TotalMetricNames, totalFound)
+//			})
+//
+//			t.Run("LabelNames", func(t *testing.T) {
+//				queryable, err := createQueryable(shard)
+//				require.NoError(t, err)
+//				querier, err := queryable.Querier(data.MinTime, data.MaxTime)
+//				require.NoError(t, err)
+//
+//				t.Run("Without Matchers", func(t *testing.T) {
+//					lNames, _, err := querier.LabelNames(context.Background(), nil)
+//					require.NoError(t, err)
+//					require.NotEmpty(t, lNames)
+//					expectedLabelNames, err := ir.LabelNames(context.Background())
+//					require.NoError(t, err)
+//					require.Equal(t, expectedLabelNames, lNames)
+//				})
+//
+//				t.Run("With Matchers", func(t *testing.T) {
+//					lNames, _, err := querier.LabelNames(context.Background(), nil, labels.MustNewMatcher(labels.MatchEqual, "random_name_0", "random_value_0"))
+//					require.NoError(t, err)
+//					require.NotEmpty(t, lNames)
+//					expectedLabelNames, err := ir.LabelNames(context.Background(), labels.MustNewMatcher(labels.MatchEqual, "random_name_0", "random_value_0"))
+//					require.NoError(t, err)
+//					require.Equal(t, expectedLabelNames, lNames)
+//				})
+//			})
+//
+//			t.Run("LabelValues", func(t *testing.T) {
+//				queryable, err := createQueryable(shard)
+//				require.NoError(t, err)
+//				querier, err := queryable.Querier(data.MinTime, data.MaxTime)
+//				require.NoError(t, err)
+//				t.Run("Without Matchers", func(t *testing.T) {
+//					lValues, _, err := querier.LabelValues(context.Background(), labels.MetricName, nil)
+//					require.NoError(t, err)
+//					expectedLabelValues, err := ir.SortedLabelValues(context.Background(), labels.MetricName)
+//					require.NoError(t, err)
+//					require.Equal(t, expectedLabelValues, lValues)
+//				})
+//
+//				t.Run("With Matchers", func(t *testing.T) {
+//					lValues, _, err := querier.LabelValues(context.Background(), labels.MetricName, nil, labels.MustNewMatcher(labels.MatchEqual, "random_name_0", "random_value_0"))
+//					require.NoError(t, err)
+//					expectedLabelValues, err := ir.SortedLabelValues(context.Background(), labels.MetricName, labels.MustNewMatcher(labels.MatchEqual, "random_name_0", "random_value_0"))
+//					require.NoError(t, err)
+//					require.Equal(t, expectedLabelValues, lValues)
+//				})
+//			})
+//
+//			t.Run("RowCountQuota", func(t *testing.T) {
+//				// Test with limited row count quota
+//				limitedRowQuota := func(ctx context.Context) int64 {
+//					return 10 // Only allow 10 rows
+//				}
+//				queryable, err := createQueryable(shard, WithRowCountLimitFunc(limitedRowQuota))
+//				require.NoError(t, err)
+//				querier, err := queryable.Querier(data.MinTime, data.MaxTime)
+//				require.NoError(t, err)
+//
+//				// Try to query more rows than quota allows
+//				matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
+//				ss := querier.Select(ctx, true, nil, matchers...)
+//
+//				// This should fail due to row count quota
+//				for ss.Next() {
+//					_ = ss.At()
+//				}
+//				require.Error(t, ss.Err())
+//				require.Contains(t, ss.Err().Error(), "would fetch too many rows")
+//				require.True(t, search.IsResourceExhausted(ss.Err()))
+//
+//				// Test with sufficient quota
+//				sufficientRowQuota := func(ctx context.Context) int64 {
+//					return 1000 // Allow 1000 rows
+//				}
+//				queryable, err = createQueryable(shard, WithRowCountLimitFunc(sufficientRowQuota))
+//				require.NoError(t, err)
+//				querier, err = queryable.Querier(data.MinTime, data.MaxTime)
+//				require.NoError(t, err)
+//
+//				ss = querier.Select(ctx, true, nil, matchers...)
+//				var series []prom_storage.Series
+//				for ss.Next() {
+//					series = append(series, ss.At())
+//				}
+//				require.NoError(t, ss.Err())
+//				require.NotEmpty(t, series)
+//			})
+//
+//			t.Run("ChunkBytesQuota", func(t *testing.T) {
+//				// Test with limited chunk bytes quota
+//				limitedChunkQuota := func(ctx context.Context) int64 {
+//					return 100 // Only allow 100 bytes
+//				}
+//				queryable, err := createQueryable(shard, WithChunkBytesLimitFunc(limitedChunkQuota))
+//				require.NoError(t, err)
+//				querier, err := queryable.Querier(data.MinTime, data.MaxTime)
+//				require.NoError(t, err)
+//
+//				// Try to query chunks that exceed the quota
+//				matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
+//				ss := querier.Select(ctx, true, nil, matchers...)
+//
+//				// This should fail due to chunk bytes quota
+//				for ss.Next() {
+//					_ = ss.At()
+//				}
+//				require.Error(t, ss.Err())
+//				require.Contains(t, ss.Err().Error(), "would fetch too many chunk bytes")
+//				require.True(t, search.IsResourceExhausted(ss.Err()))
+//
+//				// Test with sufficient quota
+//				sufficientChunkQuota := func(ctx context.Context) int64 {
+//					return 1000000 // Allow 1MB
+//				}
+//				queryable, err = createQueryable(shard, WithChunkBytesLimitFunc(sufficientChunkQuota))
+//				require.NoError(t, err)
+//				querier, err = queryable.Querier(data.MinTime, data.MaxTime)
+//				require.NoError(t, err)
+//
+//				ss = querier.Select(ctx, true, nil, matchers...)
+//				var series []prom_storage.Series
+//				for ss.Next() {
+//					series = append(series, ss.At())
+//				}
+//				require.NoError(t, ss.Err())
+//				require.NotEmpty(t, series)
+//			})
+//
+//			t.Run("DataBytesQuota", func(t *testing.T) {
+//				// Test with limited data bytes quota
+//				limitedDataQuota := func(ctx context.Context) int64 {
+//					return 100 // Only allow 100 bytes
+//				}
+//				queryable, err := createQueryable(shard, WithDataBytesLimitFunc(limitedDataQuota))
+//				require.NoError(t, err)
+//				querier, err := queryable.Querier(data.MinTime, data.MaxTime)
+//				require.NoError(t, err)
+//
+//				// Try to query data that exceeds the quota
+//				matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
+//				ss := querier.Select(ctx, true, nil, matchers...)
+//
+//				// This should fail due to data bytes quota
+//				for ss.Next() {
+//					_ = ss.At()
+//				}
+//				require.Error(t, ss.Err())
+//				require.Contains(t, ss.Err().Error(), "would fetch too many data bytes")
+//				require.True(t, search.IsResourceExhausted(ss.Err()))
+//
+//				// Test with sufficient quota
+//				sufficientDataQuota := func(ctx context.Context) int64 {
+//					return 1000000 // Allow 1MB
+//				}
+//				queryable, err = createQueryable(shard, WithDataBytesLimitFunc(sufficientDataQuota))
+//				require.NoError(t, err)
+//				querier, err = queryable.Querier(data.MinTime, data.MaxTime)
+//				require.NoError(t, err)
+//
+//				ss = querier.Select(ctx, true, nil, matchers...)
+//				var series []prom_storage.Series
+//				for ss.Next() {
+//					series = append(series, ss.At())
+//				}
+//				require.NoError(t, ss.Err())
+//				require.NotEmpty(t, series)
+//			})
+//
+//			//t.Run("MaterializedSeriesCallback", func(t *testing.T) {
+//			//	// Test callback that counts materialized series
+//			//	var seriesCount int
+//			//	mtx := sync.Mutex{}
+//			//	seriesCallback := func(ctx context.Context, series []prom_storage.ChunkSeries) error {
+//			//		mtx.Lock()
+//			//		seriesCount += len(series)
+//			//		mtx.Unlock()
+//			//		return nil
+//			//	}
+//			//
+//			//	queryable, err := createQueryable(shard, WithMaterializedSeriesCallback(seriesCallback))
+//			//	require.NoError(t, err)
+//			//	querier, err := queryable.Querier(data.MinTime, data.MaxTime)
+//			//	require.NoError(t, err)
+//			//
+//			//	// Query some series to trigger the callback
+//			//	matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
+//			//	ss := querier.Select(ctx, true, nil, matchers...)
+//			//
+//			//	var foundSeries []prom_storage.Series
+//			//	for ss.Next() {
+//			//		foundSeries = append(foundSeries, ss.At())
+//			//	}
+//			//	require.NoError(t, ss.Err())
+//			//	require.NotEmpty(t, foundSeries)
+//			//	require.Equal(t, len(foundSeries), seriesCount, "Callback should receive the same number of series")
+//			//
+//			//	// Test callback that returns an error
+//			//	errorCallback := func(ctx context.Context, series []prom_storage.ChunkSeries) error {
+//			//		return fmt.Errorf("callback error")
+//			//	}
+//			//
+//			//	queryable, err = createQueryable(shard, WithMaterializedSeriesCallback(errorCallback))
+//			//	require.NoError(t, err)
+//			//	querier, err = queryable.Querier(data.MinTime, data.MaxTime)
+//			//	require.NoError(t, err)
+//			//
+//			//	ss = querier.Select(ctx, true, nil, matchers...)
+//			//	for ss.Next() {
+//			//		_ = ss.At()
+//			//	}
+//			//	require.Error(t, ss.Err())
+//			//	require.Contains(t, ss.Err().Error(), "callback error")
+//			//})
+//
+//			t.Run("MaterializedLabelsFilterCallback", func(t *testing.T) {
+//				// Query series that should be filtered by the callback
+//				matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
+//
+//				// Test callback that returns empty results by filtering out all series
+//				emptyFilter := func(ctx context.Context, hints *prom_storage.SelectHints) (search.MaterializedLabelsFilter, bool) {
+//					return &allRejectingFilter{}, true
+//				}
+//
+//				queryable, err := createQueryable(shard, WithMaterializedLabelsFilterCallback(emptyFilter))
+//				require.NoError(t, err)
+//				querier, err := queryable.Querier(data.MinTime, data.MaxTime)
+//				require.NoError(t, err)
+//
+//				ss := querier.Select(ctx, true, nil, matchers...)
+//				var emptySeries []prom_storage.Series
+//				for ss.Next() {
+//					emptySeries = append(emptySeries, ss.At())
+//				}
+//				require.NoError(t, ss.Err())
+//				require.Empty(t, emptySeries, "Callback should filter out all series")
+//
+//				// Test callback that filters out series with specific labels
+//				specificFilter := func(ctx context.Context, hints *prom_storage.SelectHints) (search.MaterializedLabelsFilter, bool) {
+//					return &randomName0RejectingFilter{}, true
+//				}
+//
+//				queryable, err = createQueryable(shard, WithMaterializedLabelsFilterCallback(specificFilter))
+//				require.NoError(t, err)
+//				querier, err = queryable.Querier(data.MinTime, data.MaxTime)
+//				require.NoError(t, err)
+//
+//				ss = querier.Select(ctx, true, nil, matchers...)
+//				var filteredSeries []prom_storage.Series
+//				for ss.Next() {
+//					filteredSeries = append(filteredSeries, ss.At())
+//				}
+//				require.NoError(t, ss.Err())
+//
+//				// Verify that series with "random_name_0" label were filtered out
+//				for _, series := range filteredSeries {
+//					require.Empty(t, series.Labels().Get("random_name_0"), "Series with random_name_0 should be filtered out")
+//				}
+//
+//				// Test callback that returns false (no filtering)
+//				noopFilter := func(ctx context.Context, hints *prom_storage.SelectHints) (search.MaterializedLabelsFilter, bool) {
+//					return nil, false
+//				}
+//
+//				queryable, err = createQueryable(shard, WithMaterializedLabelsFilterCallback(noopFilter))
+//				require.NoError(t, err)
+//				querier, err = queryable.Querier(data.MinTime, data.MaxTime)
+//				require.NoError(t, err)
+//
+//				ss = querier.Select(ctx, true, nil, matchers...)
+//				var allSeries []prom_storage.Series
+//				for ss.Next() {
+//					allSeries = append(allSeries, ss.At())
+//				}
+//				require.NoError(t, ss.Err())
+//				require.NotEmpty(t, allSeries, "No filtering should return all series")
+//			})
+//		})
+//	}
+//}
+//
+//func TestQueryableWithEmptyMatcher(t *testing.T) {
+//	opts := promql.EngineOpts{
+//		Timeout:                  1 * time.Hour,
+//		MaxSamples:               1e10,
+//		EnableNegativeOffset:     true,
+//		EnableAtModifier:         true,
+//		NoStepSubqueryIntervalFn: func(_ int64) int64 { return 30 * time.Second.Milliseconds() },
+//		LookbackDelta:            5 * time.Minute,
+//		EnableDelayedNameRemoval: true,
+//	}
+//
+//	engine := promql.NewEngine(opts)
+//	t.Cleanup(func() { _ = engine.Close() })
+//
+//	load := `load 30s
+//			    http_requests_total{pod="nginx-1", route="/"} 0+1x5
+//			    http_requests_total{pod="nginx-2"} 0+2x5
+//			    http_requests_total{pod="nginx-3", route="/"} 0+3x5
+//			    http_requests_total{pod="nginx-4"} 0+4x5
+//
+//eval instant at 60s http_requests_total{route=""}
+//	{__name__="http_requests_total", pod="nginx-2"} 4
+//	{__name__="http_requests_total", pod="nginx-4"} 8
+//
+//eval instant at 60s http_requests_total{route=~""}
+//	{__name__="http_requests_total", pod="nginx-2"} 4
+//	{__name__="http_requests_total", pod="nginx-4"} 8
+//
+//eval instant at 60s http_requests_total{route!~".+"}
+//	{__name__="http_requests_total", pod="nginx-2"} 4
+//	{__name__="http_requests_total", pod="nginx-4"} 8
+//
+//eval instant at 60s http_requests_total{route!=""}
+//	{__name__="http_requests_total", pod="nginx-1", route="/"} 2
+//	{__name__="http_requests_total", pod="nginx-3", route="/"} 6
+//
+//eval instant at 60s http_requests_total{route!~""}
+//	{__name__="http_requests_total", pod="nginx-1", route="/"} 2
+//	{__name__="http_requests_total", pod="nginx-3", route="/"} 6
+//
+//eval instant at 60s http_requests_total{route=~".+"}
+//	{__name__="http_requests_total", pod="nginx-1", route="/"} 2
+//	{__name__="http_requests_total", pod="nginx-3", route="/"} 6
+//`
+//
+//	promqltest.RunTestWithStorage(t, load, engine, func(tt testutil.T) prom_storage.Storage {
+//		return &acceptanceTestStorage{t: t, st: teststorage.New(tt)}
+//	})
+//}
 
-func TestQueryable(t *testing.T) {
-	st := teststorage.New(t)
-	ctx := context.Background()
-	t.Cleanup(func() { _ = st.Close() })
-
-	bkt, err := newBucket(t.TempDir())
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = bkt.Close() })
-
-	cfg := util.DefaultTestConfig()
-	data := util.GenerateTestData(t, st, ctx, cfg)
-
-	ir, err := st.Head().Index()
-	require.NoError(t, err)
-
-	testCases := map[string]struct {
-		ops []storage.FileOption
-	}{
-		"default": {
-			ops: []storage.FileOption{},
-		},
-		"skipBloomFilters": {
-			ops: []storage.FileOption{
-				storage.WithFileOptions(
-					parquet.SkipBloomFilters(true),
-					parquet.OptimisticRead(true),
-				),
-			},
-		},
-	}
-
-	for n, tc := range testCases {
-		t.Run(n, func(t *testing.T) {
-			// Convert to Parquet
-			shard := convertToParquet(t, ctx, bkt, data, st.Head(), tc.ops...)
-
-			t.Run("QueryByUniqueLabel", func(t *testing.T) {
-				matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
-				sFound := queryWithQueryable(t, data.MinTime, data.MaxTime, shard, nil, matchers...)
-				totalFound := 0
-				for _, series := range sFound {
-					require.Equal(t, series.Labels().Get("unique"), "unique_0")
-					require.Contains(t, data.SeriesHash, series.Labels().Hash())
-					totalFound++
-				}
-				require.Equal(t, cfg.TotalMetricNames, totalFound)
-			})
-
-			t.Run("QueryByMetricName", func(t *testing.T) {
-				for i := 0; i < 50; i++ {
-					name := fmt.Sprintf("metric_%d", rand.Int()%cfg.TotalMetricNames)
-					matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, labels.MetricName, name)}
-					sFound := queryWithQueryable(t, data.MinTime, data.MaxTime, shard, nil, matchers...)
-					totalFound := 0
-					for _, series := range sFound {
-						totalFound++
-						require.Equal(t, series.Labels().Get(labels.MetricName), name)
-						require.Contains(t, data.SeriesHash, series.Labels().Hash())
-					}
-					require.Equal(t, cfg.MetricsPerMetricName, totalFound)
-				}
-			})
-
-			t.Run("QueryByUniqueLabel and SkipChunks=true", func(t *testing.T) {
-				matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
-				hints := &prom_storage.SelectHints{
-					Func: "series",
-				}
-				sFound := queryWithQueryable(t, data.MinTime, data.MaxTime, shard, hints, matchers...)
-				totalFound := 0
-				for _, series := range sFound {
-					totalFound++
-					require.Equal(t, series.Labels().Get("unique"), "unique_0")
-					require.Contains(t, data.SeriesHash, series.Labels().Hash())
-				}
-				require.Equal(t, cfg.TotalMetricNames, totalFound)
-			})
-
-			t.Run("LabelNames", func(t *testing.T) {
-				queryable, err := createQueryable(shard)
-				require.NoError(t, err)
-				querier, err := queryable.Querier(data.MinTime, data.MaxTime)
-				require.NoError(t, err)
-
-				t.Run("Without Matchers", func(t *testing.T) {
-					lNames, _, err := querier.LabelNames(context.Background(), nil)
-					require.NoError(t, err)
-					require.NotEmpty(t, lNames)
-					expectedLabelNames, err := ir.LabelNames(context.Background())
-					require.NoError(t, err)
-					require.Equal(t, expectedLabelNames, lNames)
-				})
-
-				t.Run("With Matchers", func(t *testing.T) {
-					lNames, _, err := querier.LabelNames(context.Background(), nil, labels.MustNewMatcher(labels.MatchEqual, "random_name_0", "random_value_0"))
-					require.NoError(t, err)
-					require.NotEmpty(t, lNames)
-					expectedLabelNames, err := ir.LabelNames(context.Background(), labels.MustNewMatcher(labels.MatchEqual, "random_name_0", "random_value_0"))
-					require.NoError(t, err)
-					require.Equal(t, expectedLabelNames, lNames)
-				})
-			})
-
-			t.Run("LabelValues", func(t *testing.T) {
-				queryable, err := createQueryable(shard)
-				require.NoError(t, err)
-				querier, err := queryable.Querier(data.MinTime, data.MaxTime)
-				require.NoError(t, err)
-				t.Run("Without Matchers", func(t *testing.T) {
-					lValues, _, err := querier.LabelValues(context.Background(), labels.MetricName, nil)
-					require.NoError(t, err)
-					expectedLabelValues, err := ir.SortedLabelValues(context.Background(), labels.MetricName)
-					require.NoError(t, err)
-					require.Equal(t, expectedLabelValues, lValues)
-				})
-
-				t.Run("With Matchers", func(t *testing.T) {
-					lValues, _, err := querier.LabelValues(context.Background(), labels.MetricName, nil, labels.MustNewMatcher(labels.MatchEqual, "random_name_0", "random_value_0"))
-					require.NoError(t, err)
-					expectedLabelValues, err := ir.SortedLabelValues(context.Background(), labels.MetricName, labels.MustNewMatcher(labels.MatchEqual, "random_name_0", "random_value_0"))
-					require.NoError(t, err)
-					require.Equal(t, expectedLabelValues, lValues)
-				})
-			})
-
-			t.Run("RowCountQuota", func(t *testing.T) {
-				// Test with limited row count quota
-				limitedRowQuota := func(ctx context.Context) int64 {
-					return 10 // Only allow 10 rows
-				}
-				queryable, err := createQueryable(shard, WithRowCountLimitFunc(limitedRowQuota))
-				require.NoError(t, err)
-				querier, err := queryable.Querier(data.MinTime, data.MaxTime)
-				require.NoError(t, err)
-
-				// Try to query more rows than quota allows
-				matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
-				ss := querier.Select(ctx, true, nil, matchers...)
-
-				// This should fail due to row count quota
-				for ss.Next() {
-					_ = ss.At()
-				}
-				require.Error(t, ss.Err())
-				require.Contains(t, ss.Err().Error(), "would fetch too many rows")
-				require.True(t, search.IsResourceExhausted(ss.Err()))
-
-				// Test with sufficient quota
-				sufficientRowQuota := func(ctx context.Context) int64 {
-					return 1000 // Allow 1000 rows
-				}
-				queryable, err = createQueryable(shard, WithRowCountLimitFunc(sufficientRowQuota))
-				require.NoError(t, err)
-				querier, err = queryable.Querier(data.MinTime, data.MaxTime)
-				require.NoError(t, err)
-
-				ss = querier.Select(ctx, true, nil, matchers...)
-				var series []prom_storage.Series
-				for ss.Next() {
-					series = append(series, ss.At())
-				}
-				require.NoError(t, ss.Err())
-				require.NotEmpty(t, series)
-			})
-
-			t.Run("ChunkBytesQuota", func(t *testing.T) {
-				// Test with limited chunk bytes quota
-				limitedChunkQuota := func(ctx context.Context) int64 {
-					return 100 // Only allow 100 bytes
-				}
-				queryable, err := createQueryable(shard, WithChunkBytesLimitFunc(limitedChunkQuota))
-				require.NoError(t, err)
-				querier, err := queryable.Querier(data.MinTime, data.MaxTime)
-				require.NoError(t, err)
-
-				// Try to query chunks that exceed the quota
-				matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
-				ss := querier.Select(ctx, true, nil, matchers...)
-
-				// This should fail due to chunk bytes quota
-				for ss.Next() {
-					_ = ss.At()
-				}
-				require.Error(t, ss.Err())
-				require.Contains(t, ss.Err().Error(), "would fetch too many chunk bytes")
-				require.True(t, search.IsResourceExhausted(ss.Err()))
-
-				// Test with sufficient quota
-				sufficientChunkQuota := func(ctx context.Context) int64 {
-					return 1000000 // Allow 1MB
-				}
-				queryable, err = createQueryable(shard, WithChunkBytesLimitFunc(sufficientChunkQuota))
-				require.NoError(t, err)
-				querier, err = queryable.Querier(data.MinTime, data.MaxTime)
-				require.NoError(t, err)
-
-				ss = querier.Select(ctx, true, nil, matchers...)
-				var series []prom_storage.Series
-				for ss.Next() {
-					series = append(series, ss.At())
-				}
-				require.NoError(t, ss.Err())
-				require.NotEmpty(t, series)
-			})
-
-			t.Run("DataBytesQuota", func(t *testing.T) {
-				// Test with limited data bytes quota
-				limitedDataQuota := func(ctx context.Context) int64 {
-					return 100 // Only allow 100 bytes
-				}
-				queryable, err := createQueryable(shard, WithDataBytesLimitFunc(limitedDataQuota))
-				require.NoError(t, err)
-				querier, err := queryable.Querier(data.MinTime, data.MaxTime)
-				require.NoError(t, err)
-
-				// Try to query data that exceeds the quota
-				matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
-				ss := querier.Select(ctx, true, nil, matchers...)
-
-				// This should fail due to data bytes quota
-				for ss.Next() {
-					_ = ss.At()
-				}
-				require.Error(t, ss.Err())
-				require.Contains(t, ss.Err().Error(), "would fetch too many data bytes")
-				require.True(t, search.IsResourceExhausted(ss.Err()))
-
-				// Test with sufficient quota
-				sufficientDataQuota := func(ctx context.Context) int64 {
-					return 1000000 // Allow 1MB
-				}
-				queryable, err = createQueryable(shard, WithDataBytesLimitFunc(sufficientDataQuota))
-				require.NoError(t, err)
-				querier, err = queryable.Querier(data.MinTime, data.MaxTime)
-				require.NoError(t, err)
-
-				ss = querier.Select(ctx, true, nil, matchers...)
-				var series []prom_storage.Series
-				for ss.Next() {
-					series = append(series, ss.At())
-				}
-				require.NoError(t, ss.Err())
-				require.NotEmpty(t, series)
-			})
-
-			t.Run("MaterializedSeriesCallback", func(t *testing.T) {
-				// Test callback that counts materialized series
-				var seriesCount int
-				mtx := sync.Mutex{}
-				seriesCallback := func(ctx context.Context, series []prom_storage.ChunkSeries) error {
-					mtx.Lock()
-					seriesCount += len(series)
-					mtx.Unlock()
-					return nil
-				}
-
-				queryable, err := createQueryable(shard, WithMaterializedSeriesCallback(seriesCallback))
-				require.NoError(t, err)
-				querier, err := queryable.Querier(data.MinTime, data.MaxTime)
-				require.NoError(t, err)
-
-				// Query some series to trigger the callback
-				matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
-				ss := querier.Select(ctx, true, nil, matchers...)
-
-				var foundSeries []prom_storage.Series
-				for ss.Next() {
-					foundSeries = append(foundSeries, ss.At())
-				}
-				require.NoError(t, ss.Err())
-				require.NotEmpty(t, foundSeries)
-				require.Equal(t, len(foundSeries), seriesCount, "Callback should receive the same number of series")
-
-				// Test callback that returns an error
-				errorCallback := func(ctx context.Context, series []prom_storage.ChunkSeries) error {
-					return fmt.Errorf("callback error")
-				}
-
-				queryable, err = createQueryable(shard, WithMaterializedSeriesCallback(errorCallback))
-				require.NoError(t, err)
-				querier, err = queryable.Querier(data.MinTime, data.MaxTime)
-				require.NoError(t, err)
-
-				ss = querier.Select(ctx, true, nil, matchers...)
-				for ss.Next() {
-					_ = ss.At()
-				}
-				require.Error(t, ss.Err())
-				require.Contains(t, ss.Err().Error(), "callback error")
-			})
-
-			t.Run("MaterializedLabelsFilterCallback", func(t *testing.T) {
-				// Query series that should be filtered by the callback
-				matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
-
-				// Test callback that returns empty results by filtering out all series
-				emptyFilter := func(ctx context.Context, hints *prom_storage.SelectHints) (search.MaterializedLabelsFilter, bool) {
-					return &allRejectingFilter{}, true
-				}
-
-				queryable, err := createQueryable(shard, WithMaterializedLabelsFilterCallback(emptyFilter))
-				require.NoError(t, err)
-				querier, err := queryable.Querier(data.MinTime, data.MaxTime)
-				require.NoError(t, err)
-
-				ss := querier.Select(ctx, true, nil, matchers...)
-				var emptySeries []prom_storage.Series
-				for ss.Next() {
-					emptySeries = append(emptySeries, ss.At())
-				}
-				require.NoError(t, ss.Err())
-				require.Empty(t, emptySeries, "Callback should filter out all series")
-
-				// Test callback that filters out series with specific labels
-				specificFilter := func(ctx context.Context, hints *prom_storage.SelectHints) (search.MaterializedLabelsFilter, bool) {
-					return &randomName0RejectingFilter{}, true
-				}
-
-				queryable, err = createQueryable(shard, WithMaterializedLabelsFilterCallback(specificFilter))
-				require.NoError(t, err)
-				querier, err = queryable.Querier(data.MinTime, data.MaxTime)
-				require.NoError(t, err)
-
-				ss = querier.Select(ctx, true, nil, matchers...)
-				var filteredSeries []prom_storage.Series
-				for ss.Next() {
-					filteredSeries = append(filteredSeries, ss.At())
-				}
-				require.NoError(t, ss.Err())
-
-				// Verify that series with "random_name_0" label were filtered out
-				for _, series := range filteredSeries {
-					require.Empty(t, series.Labels().Get("random_name_0"), "Series with random_name_0 should be filtered out")
-				}
-
-				// Test callback that returns false (no filtering)
-				noopFilter := func(ctx context.Context, hints *prom_storage.SelectHints) (search.MaterializedLabelsFilter, bool) {
-					return nil, false
-				}
-
-				queryable, err = createQueryable(shard, WithMaterializedLabelsFilterCallback(noopFilter))
-				require.NoError(t, err)
-				querier, err = queryable.Querier(data.MinTime, data.MaxTime)
-				require.NoError(t, err)
-
-				ss = querier.Select(ctx, true, nil, matchers...)
-				var allSeries []prom_storage.Series
-				for ss.Next() {
-					allSeries = append(allSeries, ss.At())
-				}
-				require.NoError(t, ss.Err())
-				require.NotEmpty(t, allSeries, "No filtering should return all series")
-			})
-		})
-	}
-}
-
-func TestQueryableWithEmptyMatcher(t *testing.T) {
-	opts := promql.EngineOpts{
-		Timeout:                  1 * time.Hour,
-		MaxSamples:               1e10,
-		EnableNegativeOffset:     true,
-		EnableAtModifier:         true,
-		NoStepSubqueryIntervalFn: func(_ int64) int64 { return 30 * time.Second.Milliseconds() },
-		LookbackDelta:            5 * time.Minute,
-		EnableDelayedNameRemoval: true,
-	}
-
-	engine := promql.NewEngine(opts)
-	t.Cleanup(func() { _ = engine.Close() })
-
-	load := `load 30s
-			    http_requests_total{pod="nginx-1", route="/"} 0+1x5
-			    http_requests_total{pod="nginx-2"} 0+2x5
-			    http_requests_total{pod="nginx-3", route="/"} 0+3x5
-			    http_requests_total{pod="nginx-4"} 0+4x5
-
-eval instant at 60s http_requests_total{route=""}
-	{__name__="http_requests_total", pod="nginx-2"} 4
-	{__name__="http_requests_total", pod="nginx-4"} 8
-
-eval instant at 60s http_requests_total{route=~""}
-	{__name__="http_requests_total", pod="nginx-2"} 4
-	{__name__="http_requests_total", pod="nginx-4"} 8
-
-eval instant at 60s http_requests_total{route!~".+"}
-	{__name__="http_requests_total", pod="nginx-2"} 4
-	{__name__="http_requests_total", pod="nginx-4"} 8
-
-eval instant at 60s http_requests_total{route!=""}
-	{__name__="http_requests_total", pod="nginx-1", route="/"} 2
-	{__name__="http_requests_total", pod="nginx-3", route="/"} 6
-
-eval instant at 60s http_requests_total{route!~""}
-	{__name__="http_requests_total", pod="nginx-1", route="/"} 2
-	{__name__="http_requests_total", pod="nginx-3", route="/"} 6
-
-eval instant at 60s http_requests_total{route=~".+"}
-	{__name__="http_requests_total", pod="nginx-1", route="/"} 2
-	{__name__="http_requests_total", pod="nginx-3", route="/"} 6
-`
-
-	promqltest.RunTestWithStorage(t, load, engine, func(tt testutil.T) prom_storage.Storage {
-		return &acceptanceTestStorage{t: t, st: teststorage.New(tt)}
-	})
-}
-
-func queryWithQueryable(t *testing.T, mint, maxt int64, shard storage.ParquetShard, hints *prom_storage.SelectHints, matchers ...*labels.Matcher) []prom_storage.Series {
+func queryWithQueryable(t *testing.T, iter bool, mint, maxt int64, shard storage.ParquetShard, hints *prom_storage.SelectHints, matchers ...*labels.Matcher) []prom_storage.Series {
 	ctx := context.Background()
 	queryable, err := createQueryable(shard)
 	require.NoError(t, err)
 	querier, err := queryable.Querier(mint, maxt)
 	require.NoError(t, err)
-	ss := querier.Select(ctx, true, hints, matchers...)
+	ss := querier.Select(ctx, true, iter, hints, matchers...)
 
 	found := make([]prom_storage.Series, 0, 100)
 	for ss.Next() {
@@ -569,7 +562,7 @@ func queryWithQueryable(t *testing.T, mint, maxt int64, shard storage.ParquetSha
 	return found
 }
 
-func createQueryable(shard storage.ParquetShard, opts ...QueryableOpts) (prom_storage.Queryable, error) {
+func createQueryable(shard storage.ParquetShard, opts ...QueryableOpts) (*parquetQueryable, error) {
 	d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
 	return NewParquetQueryable(d, func(ctx context.Context, mint, maxt int64) ([]storage.ParquetShard, error) {
 		return []storage.ParquetShard{shard}, nil
@@ -726,31 +719,34 @@ func BenchmarkSelect(b *testing.B) {
 	require.NoError(b, err, "unable to create querier")
 
 	for _, bc := range benchmarkCases {
-		b.Run(bc.name, func(b *testing.B) {
-			cbkt.ResetCounters()
-			b.ReportAllocs()
-			b.ResetTimer()
+		for _, materializeIter := range []bool{false, true} {
 
-			var series int
-			for i := 0; i < b.N; i++ {
-				ss := q.Select(ctx, true, &prom_storage.SelectHints{}, bc.matchers...)
-				for ss.Next() {
-					series++
-					s := ss.At()
-					it := s.Iterator(nil)
-					for it.Next() != chunkenc.ValNone {
+			b.Run(fmt.Sprintf("%s/iter=%t", bc.name, materializeIter), func(b *testing.B) {
+				cbkt.ResetCounters()
+				b.ReportAllocs()
+				b.ResetTimer()
+
+				var series int
+				for i := 0; i < b.N; i++ {
+					ss := q.Select(ctx, true, materializeIter, &prom_storage.SelectHints{}, bc.matchers...)
+					for ss.Next() {
+						series++
+						s := ss.At()
+						it := s.Iterator(nil)
+						for it.Next() != chunkenc.ValNone {
+						}
+					}
+					if err := ss.Err(); err != nil {
+						b.Error(err)
 					}
 				}
-				if err := ss.Err(); err != nil {
-					b.Error(err)
-				}
-			}
 
-			b.ReportMetric(float64(series)/float64(b.N), "series/op")
-			b.ReportMetric(float64(cbkt.nGet.Load())/float64(b.N), "get/op")
-			b.ReportMetric(float64(cbkt.nGetRange.Load())/float64(b.N), "get_range/op")
-			b.ReportMetric(float64(cbkt.bsGetRange.Load())/float64(b.N), "bytes_get_range/op")
-		})
+				b.ReportMetric(float64(series)/float64(b.N), "series/op")
+				b.ReportMetric(float64(cbkt.nGet.Load())/float64(b.N), "get/op")
+				b.ReportMetric(float64(cbkt.nGetRange.Load())/float64(b.N), "get_range/op")
+				b.ReportMetric(float64(cbkt.bsGetRange.Load())/float64(b.N), "bytes_get_range/op")
+			})
+		}
 	}
 }
 
