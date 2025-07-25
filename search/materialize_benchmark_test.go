@@ -31,7 +31,7 @@ func BenchmarkMaterialize(b *testing.B) {
 	b.Cleanup(func() { _ = bkt.Close() })
 
 	cfg := util.DefaultTestConfig()
-	cfg.NumberOfSamples = 20_000 // non-trivial chunks
+	cfg.NumberOfSamples = 5_000 // non-trivial chunks
 	data := util.GenerateTestData(b, st, ctx, cfg)
 	bktw := &bucketWrapper{
 		Bucket: bkt,
