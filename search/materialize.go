@@ -247,6 +247,14 @@ func (m *Materializer) filterSeries(ctx context.Context, hints *prom_storage.Sel
 	return results, filteredRR
 }
 
+// MaterializeAllLabelNames extracts and returns all label names from the schema
+// of the labels file. It iterates through all columns in the schema and extracts
+// valid label names, filtering out any columns that are not label columns.
+//
+// This method is useful for discovering all possible label names that exist in
+// the parquet file without needing to read any actual data rows.
+//
+// Returns a slice of all label names found in the schema.
 func (m *Materializer) MaterializeAllLabelNames() []string {
 	r := make([]string, 0, len(m.b.LabelsFile().Schema().Columns()))
 	for _, c := range m.b.LabelsFile().Schema().Columns() {
@@ -260,6 +268,16 @@ func (m *Materializer) MaterializeAllLabelNames() []string {
 	return r
 }
 
+// MaterializeLabelNames extracts and returns all unique label names from the specified row ranges
+// within a given row group. It reads the column indexes from the labels file and decodes them
+// to determine which label columns are present in the data.
+//
+// Parameters:
+//   - ctx: Context for cancellation and tracing
+//   - rgi: Row group index to read from
+//   - rr: Row ranges to process within the row group
+//
+// Returns a slice of label names found in the specified ranges, or an error if materialization fails.
 func (m *Materializer) MaterializeLabelNames(ctx context.Context, rgi int, rr []RowRange) ([]string, error) {
 	labelsRg := m.b.LabelsFile().RowGroups()[rgi]
 	cc := labelsRg.ColumnChunks()[m.colIdx]
@@ -295,6 +313,18 @@ func (m *Materializer) MaterializeLabelNames(ctx context.Context, rgi int, rr []
 	return lbls, nil
 }
 
+// MaterializeLabelValues extracts and returns all unique values for a specific label name
+// from the specified row ranges within a given row group. It reads the label column data
+// and deduplicates the values to provide a unique set of label values.
+//
+// Parameters:
+//   - ctx: Context for cancellation and tracing
+//   - name: The label name to extract values for
+//   - rgi: Row group index to read from
+//   - rr: Row ranges to process within the row group
+//
+// Returns a slice of unique label values for the specified label name, or an error if
+// materialization fails. If the label name doesn't exist in the schema, returns an empty slice.
 func (m *Materializer) MaterializeLabelValues(ctx context.Context, name string, rgi int, rr []RowRange) ([]string, error) {
 	labelsRg := m.b.LabelsFile().RowGroups()[rgi]
 	cIdx, ok := m.b.LabelsFile().Schema().Lookup(schema.LabelToColumn(name))
@@ -319,6 +349,20 @@ func (m *Materializer) MaterializeLabelValues(ctx context.Context, name string, 
 	return r, nil
 }
 
+// MaterializeAllLabelValues extracts all unique values for a specific label name
+// from the entire row group using the dictionary page optimization. This method
+// is more efficient than MaterializeLabelValues when you need all values for a
+// label across the entire row group, as it reads directly from the dictionary
+// page instead of scanning individual data pages.
+//
+// Parameters:
+//   - ctx: Context for cancellation and tracing
+//   - name: The label name to extract all values for
+//   - rgi: Row group index to read from
+//
+// Returns a slice of all unique label values for the specified label name from
+// the dictionary, or an error if materialization fails. If the label name doesn't
+// exist in the schema, returns an empty slice.
 func (m *Materializer) MaterializeAllLabelValues(ctx context.Context, name string, rgi int) ([]string, error) {
 	labelsRg := m.b.LabelsFile().RowGroups()[rgi]
 	cIdx, ok := m.b.LabelsFile().Schema().Lookup(schema.LabelToColumn(name))
