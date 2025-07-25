@@ -417,13 +417,13 @@ func (b queryableShard) Query(ctx context.Context, sorted bool, sp *prom_storage
 		return nil, err
 	}
 
-	//if sorted {
-	//	sort.Sort(byLabels(results))
-	//}
 	totalResults := 0
 	for _, res := range results {
 		totalResults += len(res)
 	}
+	// The inner slices in results are already in order of row groups,
+	// so they are in order relative to each other.
+	// The elements of the inner slices were already themselves sorted by labels after materialization.
 	resultsFlattened := make([]prom_storage.ChunkSeries, 0, totalResults)
 	for _, res := range results {
 		resultsFlattened = append(resultsFlattened, res...)
