@@ -24,7 +24,6 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
 	prom_storage "github.com/prometheus/prometheus/storage"
-	"github.com/prometheus/prometheus/tsdb/chunks"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -58,10 +57,10 @@ type Materializer struct {
 
 // MaterializedSeriesFunc is a callback function that can be used to add limiter or statistic logics for
 // materialized series.
-type MaterializedSeriesFunc func(ctx context.Context, seriesSet prom_storage.ChunkSeriesSet) error
+type MaterializedSeriesFunc func(ctx context.Context, series []prom_storage.ChunkSeries) error
 
 // NoopMaterializedSeriesFunc is a noop callback function that does nothing.
-func NoopMaterializedSeriesFunc(_ context.Context, _ prom_storage.ChunkSeriesSet) error {
+func NoopMaterializedSeriesFunc(_ context.Context, _ []prom_storage.ChunkSeries) error {
 	return nil
 }
 
@@ -125,71 +124,11 @@ func NewMaterializer(s *schema.TSDBSchema,
 	}, nil
 }
 
-// Materialize reconstructs the ChunkSeries that belong to the specified row ranges (rr).
+// Materialize creates an iterator to reconstruct the ChunkSeries that belong to the specified row ranges (rr).
 // It uses the row group index (rgi) and time bounds (mint, maxt) to filter and decode the series.
-func (m *Materializer) Materialize(ctx context.Context, hints *prom_storage.SelectHints, rgi int, mint, maxt int64, skipChunks bool, rr []RowRange) (results []prom_storage.ChunkSeries, err error) {
-	ctx, span := tracer.Start(ctx, "Materializer.Materialize")
-	defer func() {
-		if err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-		}
-		span.End()
-	}()
-
-	span.SetAttributes(
-		attribute.Int("row_group_index", rgi),
-		attribute.Int64("mint", mint),
-		attribute.Int64("maxt", maxt),
-		attribute.Bool("skip_chunks", skipChunks),
-		attribute.Int("row_ranges_count", len(rr)),
-	)
-
-	if err := m.checkRowCountQuota(rr); err != nil {
-		return nil, err
-	}
-	sLbls, err := m.materializeAllLabels(ctx, rgi, rr)
-	if err != nil {
-		return nil, errors.Wrapf(err, "error materializing labels")
-	}
-
-	results, rr = m.filterSeries(ctx, hints, sLbls, rr)
-	if !skipChunks {
-		chksIter, err := m.materializeChunksIter(ctx, rgi, mint, maxt, rr)
-		if err != nil {
-			return nil, errors.Wrap(err, "materializer failed to create chunks iterator")
-		}
-		seriesIdx := 0
-		for chksIter.Next() {
-			chkIter := chksIter.At()
-			var iterChks []chunks.Meta
-			for chkIter.Next() {
-				iterChk := chkIter.At()
-				iterChks = append(iterChks, iterChk)
-			}
-			results[seriesIdx].(*concreteChunksSeries).chks = iterChks
-			seriesIdx++
-		}
-
-		// If we are not skipping chunks and there is no chunks for the time range queried, lets remove the series
-		results = slices.DeleteFunc(results, func(cs prom_storage.ChunkSeries) bool {
-			return len(cs.(*concreteChunksSeries).chks) == 0
-		})
-	}
-
-	//if err := m.materializedSeriesCallback(ctx, results); err != nil {
-	//	return nil, err
-	//}
-
-	span.SetAttributes(attribute.Int("materialized_series_count", len(results)))
-	return results, err
-}
-
-// MaterializeIter creates an iterator to reconstruct the ChunkSeries that belong to the specified row ranges (rr).
-// It uses the row group index (rgi) and time bounds (mint, maxt) to filter and decode the series.
-func (m *Materializer) MaterializeIter(ctx context.Context, hints *prom_storage.SelectHints, rgi int, mint, maxt int64, skipChunks bool, rr []RowRange) (ChunkSeriesSetCloser, error) {
+func (m *Materializer) Materialize(ctx context.Context, hints *prom_storage.SelectHints, rgi int, mint, maxt int64, skipChunks bool, rr []RowRange) (ChunkSeriesSetCloser, error) {
 	var err error
-	ctx, span := tracer.Start(ctx, "Materializer.MaterializeIter")
+	ctx, span := tracer.Start(ctx, "Materializer.Materialize")
 	defer func() {
 		if err != nil {
 			span.RecordError(err)
@@ -220,23 +159,23 @@ func (m *Materializer) MaterializeIter(ctx context.Context, hints *prom_storage.
 		return newNoChunksConcreteLabelsSeriesSet(seriesSetLabels), nil
 	}
 
-	chksIter, err := m.materializeChunksIter(ctx, rgi, mint, maxt, rr)
+	chksIter, err := m.materializeChunks(ctx, rgi, mint, maxt, rr)
 	if err != nil {
 		return nil, errors.Wrap(err, "materializer failed to create chunks iterator")
 	}
 
 	seriesSetIter := newFilterEmptyChunkSeriesSet(seriesSetLabels, chksIter)
 	// TODO filter iterator somehow
-	if err := m.materializedSeriesCallback(ctx, seriesSetIter); err != nil {
-		return nil, err
-	}
+	//if err := m.materializedSeriesCallback(ctx, seriesSetIter); err != nil {
+	//	return nil, err
+	//}
 
 	span.SetAttributes(attribute.Int("materialized_series_count", len(seriesSetLabels)))
 	return seriesSetIter, nil
 }
 
-func (m *Materializer) filterSeriesLabels(ctx context.Context, hints *prom_storage.SelectHints, sLbls [][]labels.Label, rr []RowRange) ([][]labels.Label, []RowRange) {
-	seriesLabels := make([][]labels.Label, 0, len(sLbls))
+func (m *Materializer) filterSeriesLabels(ctx context.Context, hints *prom_storage.SelectHints, sLbls [][]labels.Label, rr []RowRange) ([]labels.Labels, []RowRange) {
+	seriesLabels := make([]labels.Labels, 0, len(sLbls))
 	labelsFilter, ok := m.materializedLabelsFilterCallback(ctx, hints)
 	if !ok {
 		for _, s := range sLbls {
@@ -296,73 +235,6 @@ func (m *Materializer) filterSeriesLabels(ctx context.Context, hints *prom_stora
 	}
 
 	return seriesLabels, filteredRR
-}
-
-func (m *Materializer) filterSeries(ctx context.Context, hints *prom_storage.SelectHints, sLbls [][]labels.Label, rr []RowRange) ([]prom_storage.ChunkSeries, []RowRange) {
-	results := make([]prom_storage.ChunkSeries, 0, len(sLbls))
-	labelsFilter, ok := m.materializedLabelsFilterCallback(ctx, hints)
-	if !ok {
-		for _, s := range sLbls {
-			results = append(results, &concreteChunksSeries{
-				lbls: labels.New(s...),
-			})
-		}
-		return results, rr
-	}
-
-	defer labelsFilter.Close()
-
-	filteredRR := make([]RowRange, 0, len(rr))
-	var currentRange RowRange
-	inRange := false
-	seriesIdx := 0
-
-	for _, rowRange := range rr {
-		for i := int64(0); i < rowRange.Count; i++ {
-			actualRowID := rowRange.From + i
-			lbls := labels.New(sLbls[seriesIdx]...)
-
-			if labelsFilter.Filter(lbls) {
-				results = append(results, &concreteChunksSeries{
-					lbls: lbls,
-				})
-
-				// Handle row range collection
-				if !inRange {
-					// Start new range
-					currentRange = RowRange{
-						From:  actualRowID,
-						Count: 1,
-					}
-					inRange = true
-				} else if actualRowID == currentRange.From+currentRange.Count {
-					// Extend current range
-					currentRange.Count++
-				} else {
-					// Save current range and start new range (non-contiguous)
-					filteredRR = append(filteredRR, currentRange)
-					currentRange = RowRange{
-						From:  actualRowID,
-						Count: 1,
-					}
-				}
-			} else {
-				// Save current range and reset when we hit a non-matching series
-				if inRange {
-					filteredRR = append(filteredRR, currentRange)
-					inRange = false
-				}
-			}
-			seriesIdx++
-		}
-	}
-
-	// Save the final range if we have one
-	if inRange {
-		filteredRR = append(filteredRR, currentRange)
-	}
-
-	return results, filteredRR
 }
 
 func (m *Materializer) MaterializeAllLabelNames() []string {
@@ -548,7 +420,7 @@ func totalRows(rr []RowRange) int64 {
 	return res
 }
 
-func (m *Materializer) materializeChunksIter(ctx context.Context, rgi int, mint, maxt int64, rr []RowRange) (ChunksIteratorIterator, error) {
+func (m *Materializer) materializeChunks(ctx context.Context, rgi int, mint, maxt int64, rr []RowRange) (ChunksIteratorIterator, error) {
 	var err error
 	ctx, span := tracer.Start(ctx, "Materializer.materializeChunks")
 	defer func() {

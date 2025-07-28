@@ -70,7 +70,7 @@ type noChunksConcreteLabelsSeriesSet struct {
 	currentSeriesIdx int
 }
 
-func newNoChunksConcreteLabelsSeriesSet(sLbls [][]labels.Label) *noChunksConcreteLabelsSeriesSet {
+func newNoChunksConcreteLabelsSeriesSet(sLbls []labels.Labels) *noChunksConcreteLabelsSeriesSet {
 	seriesSet := make([]*concreteChunksSeries, len(sLbls))
 	for i, lbls := range sLbls {
 		seriesSet[i] = &concreteChunksSeries{lbls: lbls}
@@ -106,14 +106,14 @@ func (s *noChunksConcreteLabelsSeriesSet) Close() {
 
 // filterEmptyChunkSeriesSet is a ChunkSeriesSet that lazily filters out series with no chunks.
 type filterEmptyChunkSeriesSet struct {
-	lblsSet [][]labels.Label
+	lblsSet []labels.Labels
 	chnkSet ChunksIteratorIterator
 
 	currentSeries *iteratorChunksSeries
 	err           error
 }
 
-func newFilterEmptyChunkSeriesSet(lblsSet [][]labels.Label, chnkSet ChunksIteratorIterator) *filterEmptyChunkSeriesSet {
+func newFilterEmptyChunkSeriesSet(lblsSet []labels.Labels, chnkSet ChunksIteratorIterator) *filterEmptyChunkSeriesSet {
 	return &filterEmptyChunkSeriesSet{
 		lblsSet: lblsSet,
 		chnkSet: chnkSet,

@@ -2,7 +2,6 @@ package search
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"runtime"
 	"sync/atomic"
@@ -106,105 +105,57 @@ func BenchmarkMaterialize(b *testing.B) {
 		if err != nil {
 			b.Fatal("error creating materializer: ", err)
 		}
-		for _, materializeStrategy := range []string{"Materialize", "MaterializeIter"} {
 
-			b.Run(fmt.Sprintf("%s/func=%s", tc.name, materializeStrategy), func(b *testing.B) {
-				// Warm up
-				_, err = m.Materialize(ctx, nil, 0, data.MinTime, data.MaxTime, false, tc.rr)
-				require.NoError(b, err)
-				//s.Close()
+		b.Run(tc.name, func(b *testing.B) {
+			// Warm up
+			seriesIter, err := m.Materialize(ctx, nil, 0, data.MinTime, data.MaxTime, false, tc.rr)
+			require.NoError(b, err)
+			seriesIter.Close()
 
-				seriesIter, err := m.MaterializeIter(ctx, nil, 0, data.MinTime, data.MaxTime, false, tc.rr)
-				require.NoError(b, err)
+			b.ReportAllocs()
+			b.ResetTimer()
+			bktw.getRangeCalls.Store(0)
+			for i := 0; i < b.N; i++ {
+				var m1, m2 runtime.MemStats
+				runtime.GC()
+				runtime.ReadMemStats(&m1)
+				start := time.Now()
+
+				seriesIter, err := m.Materialize(ctx, nil, 0, data.MinTime, data.MaxTime, false, tc.rr)
+				if err != nil {
+					b.Fatal("error materializing: ", err)
+				}
+
+				firstChunk := true
+				for seriesIter.Next() {
+					s := seriesIter.At()
+					_ = s.Labels()
+					it := s.Iterator(nil)
+					for it.Next() {
+						chk := it.At()
+						if firstChunk {
+							firstChunk = false
+							b.ReportMetric(float64(time.Since(start).Nanoseconds()/int64(b.N)), "ns_to_first_chunk/op")
+						}
+						_ = chk.Chunk.NumSamples()
+					}
+					if it.Err() != nil {
+						b.Fatal("error iterating chunks: ", it.Err())
+					}
+				}
+				if err := seriesIter.Err(); err != nil {
+					b.Fatal("error iterating series: ", err)
+				}
+
+				runtime.ReadMemStats(&m2)
+				heapAllocDiff := m2.HeapAlloc - m1.HeapAlloc
+				heapInUseDiff := m2.HeapInuse - m1.HeapInuse
+				b.ReportMetric(float64(heapAllocDiff/uint64(b.N)), "B-alloc-diff")
+				b.ReportMetric(float64(heapInUseDiff/uint64(b.N)), "B-inuse-diff")
 				seriesIter.Close()
-
-				var materializeFunc func()
-				if materializeStrategy == "MaterializeIter" {
-					materializeFunc = func() {
-						var m1, m2 runtime.MemStats
-						runtime.GC()
-						runtime.ReadMemStats(&m1)
-						start := time.Now()
-
-						seriesIter, err := m.MaterializeIter(ctx, nil, 0, data.MinTime, data.MaxTime, false, tc.rr)
-						if err != nil {
-							b.Fatal("error materializing: ", err)
-						}
-
-						firstChunk := true
-						for seriesIter.Next() {
-							s := seriesIter.At()
-							_ = s.Labels()
-							it := s.Iterator(nil)
-							for it.Next() {
-								chk := it.At()
-								if firstChunk {
-									firstChunk = false
-									b.ReportMetric(float64(time.Since(start).Nanoseconds()/int64(b.N)), "ns_to_first_chunk/op")
-								}
-								_ = chk.Chunk.NumSamples()
-							}
-							if it.Err() != nil {
-								b.Fatal("error iterating chunks: ", it.Err())
-							}
-						}
-						if err := seriesIter.Err(); err != nil {
-							b.Fatal("error iterating series: ", err)
-						}
-
-						runtime.ReadMemStats(&m2)
-						heapAllocDiff := m2.HeapAlloc - m1.HeapAlloc
-						heapInUseDiff := m2.HeapInuse - m1.HeapInuse
-						b.ReportMetric(float64(heapAllocDiff/uint64(b.N)), "B-alloc-diff")
-						b.ReportMetric(float64(heapInUseDiff/uint64(b.N)), "B-inuse-diff")
-						seriesIter.Close()
-					}
-				} else if materializeStrategy == "Materialize" {
-					materializeFunc = func() {
-						var m1, m2 runtime.MemStats
-						runtime.GC()
-						runtime.ReadMemStats(&m1)
-						start := time.Now()
-
-						seriesSet, err := m.Materialize(ctx, nil, 0, data.MinTime, data.MaxTime, false, tc.rr)
-						if err != nil {
-							b.Fatal("error materializing: ", err)
-						}
-
-						firstChunk := true
-						for _, s := range seriesSet {
-							//s := seriesSet.At()
-							_ = s.Labels()
-							it := s.Iterator(nil)
-							for it.Next() {
-								chk := it.At()
-								if firstChunk {
-									firstChunk = false
-									b.ReportMetric(float64(time.Since(start).Nanoseconds()/int64(b.N)), "ns_to_first_chunk/op")
-								}
-								_ = chk.Chunk.NumSamples()
-							}
-							if it.Err() != nil {
-								b.Fatal("error iterating chunks: ", it.Err())
-							}
-						}
-						runtime.ReadMemStats(&m2)
-						heapAllocDiff := m2.HeapAlloc - m1.HeapAlloc
-						heapInUseDiff := m2.HeapInuse - m1.HeapInuse
-						b.ReportMetric(float64(heapAllocDiff/uint64(b.N)), "B-alloc-diff")
-						b.ReportMetric(float64(heapInUseDiff/uint64(b.N)), "B-inuse-diff")
-					}
-				}
-
-				b.ReportAllocs()
-				//b.ResetTimer()
-				bktw.getRangeCalls.Store(0)
-				for i := 0; i < b.N; i++ {
-					materializeFunc()
-				}
-				b.ReportMetric(float64(bktw.getRangeCalls.Load())/float64(b.N), "range_calls/op")
-			})
-		}
+			}
+			b.ReportMetric(float64(bktw.getRangeCalls.Load())/float64(b.N), "range_calls/op")
+		})
 	}
 }
 

@@ -53,7 +53,7 @@ func TestMaterializeE2E(t *testing.T) {
 
 	t.Run("QueryByUniqueLabel", func(t *testing.T) {
 		eq := Equal(schema.LabelToColumn("unique"), parquet.ValueOf("unique_0"))
-		found := queryWithIterCheck(t, data.MinTime, data.MaxTime, shard, eq)
+		found := query(t, data.MinTime, data.MaxTime, shard, eq)
 		require.Len(t, found, cfg.TotalMetricNames)
 
 		for _, series := range found {
@@ -67,7 +67,7 @@ func TestMaterializeE2E(t *testing.T) {
 			name := fmt.Sprintf("metric_%d", rand.Int()%cfg.TotalMetricNames)
 			eq := Equal(schema.LabelToColumn(labels.MetricName), parquet.ValueOf(name))
 
-			found := queryWithIterCheck(t, data.MinTime, data.MaxTime, shard, eq)
+			found := query(t, data.MinTime, data.MaxTime, shard, eq)
 			require.Len(t, found, cfg.MetricsPerMetricName, fmt.Sprintf("metric_%d", i))
 
 			for _, series := range found {
@@ -93,17 +93,17 @@ func TestMaterializeE2E(t *testing.T) {
 		c2 := Equal(schema.LabelToColumn("unique"), parquet.ValueOf("unique_0"))
 
 		// Test first column only
-		found := queryWithIterCheck(t, data.MinTime, data.MinTime+colDuration.Milliseconds()-1, shard, c1, c2)
+		found := query(t, data.MinTime, data.MinTime+colDuration.Milliseconds()-1, shard, c1, c2)
 		require.Len(t, found, 1)
 		require.Len(t, found[0].(*concreteChunksSeries).chks, 1)
 
 		// Test first two columns
-		found = queryWithIterCheck(t, data.MinTime, data.MinTime+(2*colDuration).Milliseconds()-1, shard, c1, c2)
+		found = query(t, data.MinTime, data.MinTime+(2*colDuration).Milliseconds()-1, shard, c1, c2)
 		require.Len(t, found, 1)
 		require.Len(t, found[0].(*concreteChunksSeries).chks, 2)
 
 		// Query outside the range
-		found = queryWithIterCheck(t, data.MinTime+(9*colDuration).Milliseconds(), data.MinTime+(10*colDuration).Milliseconds()-1, shard, c1, c2)
+		found = query(t, data.MinTime+(9*colDuration).Milliseconds(), data.MinTime+(10*colDuration).Milliseconds()-1, shard, c1, c2)
 		require.Len(t, found, 0)
 	})
 
@@ -246,7 +246,7 @@ func convertToParquet(t testing.TB, ctx context.Context, bkt objstore.Bucket, da
 	return shard
 }
 
-func queryWithIterCheck(t *testing.T, mint, maxt int64, shard storage.ParquetShard, constraints ...Constraint) []prom_storage.ChunkSeries {
+func query(t *testing.T, mint, maxt int64, shard storage.ParquetShard, constraints ...Constraint) []prom_storage.ChunkSeries {
 	ctx := context.Background()
 	for _, c := range constraints {
 		require.NoError(t, c.init(shard.LabelsFile()))
@@ -258,7 +258,7 @@ func queryWithIterCheck(t *testing.T, mint, maxt int64, shard storage.ParquetSha
 	m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback)
 	require.NoError(t, err)
 
-	found := make([]prom_storage.ChunkSeries, 0, 100)
+	results := make([]prom_storage.ChunkSeries, 0, 100)
 	for i := range shard.LabelsFile().RowGroups() {
 		rr, err := Filter(context.Background(), shard, i, constraints...)
 		total := int64(0)
@@ -266,12 +266,10 @@ func queryWithIterCheck(t *testing.T, mint, maxt int64, shard storage.ParquetSha
 			total += r.Count
 		}
 		require.NoError(t, err)
-		//series, err := m.Materialize(ctx, nil, i, mint, maxt, false, rr)
-		//require.NoError(t, err)
-		seriesSetIter, err := m.MaterializeIter(ctx, nil, i, mint, maxt, false, rr)
+
+		seriesSetIter, err := m.Materialize(ctx, nil, i, mint, maxt, false, rr)
 		require.NoError(t, err)
 
-		seriesIdx := 0
 		for seriesSetIter.Next() {
 			seriesIter := seriesSetIter.At()
 			concreteSeriesFromIter := &concreteChunksSeries{
@@ -281,13 +279,10 @@ func queryWithIterCheck(t *testing.T, mint, maxt int64, shard storage.ParquetSha
 			for seriesChunksIter.Next() {
 				concreteSeriesFromIter.chks = append(concreteSeriesFromIter.chks, seriesChunksIter.At())
 			}
-			found = append(found, concreteSeriesFromIter)
-			seriesIdx++
+			results = append(results, concreteSeriesFromIter)
 		}
-
-		//found = append(found, series...)
 	}
-	return found
+	return results
 }
 
 func TestFilterSeries(t *testing.T) {
@@ -334,7 +329,7 @@ func TestFilterSeries(t *testing.T) {
 			return nil, false
 		}
 
-		results, filteredRR := materializer.filterSeries(ctx, nil, sampleLabels, sampleRowRanges)
+		results, filteredRR := materializer.filterSeriesLabels(ctx, nil, sampleLabels, sampleRowRanges)
 
 		// Should return all series without filtering
 		require.Len(t, results, len(sampleLabels))
@@ -343,7 +338,7 @@ func TestFilterSeries(t *testing.T) {
 		// Verify all labels are preserved
 		for i, result := range results {
 			expectedLabels := labels.New(sampleLabels[i]...)
-			require.Equal(t, expectedLabels, result.Labels())
+			require.Equal(t, expectedLabels, result)
 		}
 	})
 
@@ -353,7 +348,7 @@ func TestFilterSeries(t *testing.T) {
 			return &acceptAllFilter{}, true
 		}
 
-		results, filteredRR := materializer.filterSeries(ctx, nil, sampleLabels, sampleRowRanges)
+		results, filteredRR := materializer.filterSeriesLabels(ctx, nil, sampleLabels, sampleRowRanges)
 
 		// Should return all series
 		require.Len(t, results, len(sampleLabels))
@@ -362,7 +357,7 @@ func TestFilterSeries(t *testing.T) {
 		// Verify all labels are preserved
 		for i, result := range results {
 			expectedLabels := labels.New(sampleLabels[i]...)
-			require.Equal(t, expectedLabels, result.Labels())
+			require.Equal(t, expectedLabels, result)
 		}
 	})
 
@@ -372,7 +367,7 @@ func TestFilterSeries(t *testing.T) {
 			return &rejectAllFilter{}, true
 		}
 
-		results, filteredRR := materializer.filterSeries(ctx, nil, sampleLabels, sampleRowRanges)
+		results, filteredRR := materializer.filterSeriesLabels(ctx, nil, sampleLabels, sampleRowRanges)
 
 		// Should return no series
 		require.Len(t, results, 0)
@@ -385,17 +380,17 @@ func TestFilterSeries(t *testing.T) {
 			return &jobWebFilter{}, true
 		}
 
-		results, filteredRR := materializer.filterSeries(ctx, nil, sampleLabels, sampleRowRanges)
+		results, filteredRR := materializer.filterSeriesLabels(ctx, nil, sampleLabels, sampleRowRanges)
 
 		// Should return only series with job="web" (indices 0 and 2)
 		require.Len(t, results, 2)
 		require.Len(t, filteredRR, 2)
 
 		// Verify correct series are returned
-		require.Equal(t, "metric_1", results[0].Labels().Get("__name__"))
-		require.Equal(t, "web", results[0].Labels().Get("job"))
-		require.Equal(t, "metric_3", results[1].Labels().Get("__name__"))
-		require.Equal(t, "web", results[1].Labels().Get("job"))
+		require.Equal(t, "metric_1", results[0].Get("__name__"))
+		require.Equal(t, "web", results[0].Get("job"))
+		require.Equal(t, "metric_3", results[1].Get("__name__"))
+		require.Equal(t, "web", results[1].Get("job"))
 
 		// Verify row ranges map to the actual row positions from input
 		expectedRR := []RowRange{
@@ -419,15 +414,15 @@ func TestFilterSeries(t *testing.T) {
 			return &firstTwoFilter{}, true
 		}
 
-		results, filteredRR := materializer.filterSeries(ctx, nil, sampleLabels, contiguousRowRanges)
+		results, filteredRR := materializer.filterSeriesLabels(ctx, nil, sampleLabels, contiguousRowRanges)
 
 		// Should return first two series
 		require.Len(t, results, 2)
 		require.Len(t, filteredRR, 1) // Should be merged into one contiguous range
 
 		// Verify correct series are returned
-		require.Equal(t, "metric_1", results[0].Labels().Get("__name__"))
-		require.Equal(t, "metric_2", results[1].Labels().Get("__name__"))
+		require.Equal(t, "metric_1", results[0].Get("__name__"))
+		require.Equal(t, "metric_2", results[1].Get("__name__"))
 
 		// Verify contiguous ranges are merged
 		expectedRR := []RowRange{
@@ -442,7 +437,7 @@ func TestFilterSeries(t *testing.T) {
 			return &acceptAllFilter{}, true
 		}
 
-		results, filteredRR := materializer.filterSeries(ctx, nil, nil, nil)
+		results, filteredRR := materializer.filterSeriesLabels(ctx, nil, nil, nil)
 
 		require.Len(t, results, 0)
 		require.Len(t, filteredRR, 0)
@@ -460,7 +455,7 @@ func TestFilterSeries(t *testing.T) {
 			return filter, true
 		}
 
-		_, _ = materializer.filterSeries(ctx, nil, sampleLabels, sampleRowRanges)
+		_, _ = materializer.filterSeriesLabels(ctx, nil, sampleLabels, sampleRowRanges)
 
 		require.True(t, closeCalled, "Filter Close() should have been called")
 	})
