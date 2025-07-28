@@ -376,18 +376,18 @@ func (b queryableShard) Query(ctx context.Context, sorted bool, sp *prom_storage
 				return nil
 			}
 
-			set, err := b.m.Materialize(ctx, sp, rgi, mint, maxt, skipChunks, rr)
+			seriesSetIter, err := b.m.Materialize(ctx, sp, rgi, mint, maxt, skipChunks, rr)
 			if err != nil {
 				return err
 			}
-			defer set.Close()
-			for set.Next() {
-				results[rgi] = append(results[rgi], set.At())
+			defer seriesSetIter.Close()
+			for seriesSetIter.Next() {
+				results[rgi] = append(results[rgi], seriesSetIter.At())
 			}
 			if sorted {
 				sort.Sort(byLabels(results[rgi]))
 			}
-			return set.Err()
+			return seriesSetIter.Err()
 		})
 	}
 

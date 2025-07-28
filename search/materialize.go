@@ -431,9 +431,21 @@ func (m *Materializer) materializeChunks(ctx context.Context, rgi int, mint, max
 		span.End()
 	}()
 
+	span.SetAttributes(
+		attribute.Int("row_group_index", rgi),
+		attribute.Int64("mint", mint),
+		attribute.Int64("maxt", maxt),
+		attribute.Int("row_ranges_count", len(rr)),
+	)
 	minDataCol := m.s.DataColumIdx(mint)
 	maxDataCol := m.s.DataColumIdx(maxt)
 	rg := m.b.ChunksFile().RowGroups()[rgi]
+
+	span.SetAttributes(
+		attribute.Int("min_data_col", minDataCol),
+		attribute.Int("max_data_col", maxDataCol),
+		attribute.Int("total_rows", int(totalRows(rr))),
+	)
 
 	var columnValueIterators []*columnValueIterator
 	for i := minDataCol; i <= min(maxDataCol, len(m.dataColToIndex)-1); i++ {
@@ -525,34 +537,11 @@ func (m *Materializer) materializeColumnSlice(
 		return nil, errors.Wrap(err, "failed to materialize columns")
 	}
 
-	type sortablePageRange struct {
-		pageRange           pageToReadWithRow
-		pageRangesValuesIdx int
+	valuesFlattened := make([]parquet.Value, 0, totalRows(rr))
+	for _, pageRangeValues := range pageRangesValues {
+		valuesFlattened = append(valuesFlattened, pageRangeValues...)
 	}
-
-	// Do not assume the page ranges are in order; partitions may not prioritize sequential reads.
-	pageRangesSorted := make([]sortablePageRange, len(pageRanges))
-	for i, pageRange := range pageRanges {
-		pageRangesSorted[i] = sortablePageRange{
-			pageRange:           pageRange,
-			pageRangesValuesIdx: i,
-		}
-	}
-	slices.SortFunc(pageRangesSorted, func(a, b sortablePageRange) int {
-		if a.pageRange.pfrom < b.pageRange.pfrom {
-			return -1
-		} else if a.pageRange.pfrom > b.pageRange.pfrom {
-			return 1
-		}
-		return 0
-	})
-
-	res := make([]parquet.Value, 0, totalRows(rr))
-	for _, sortedPageRange := range pageRangesSorted {
-		// Within a page range, the values are in order
-		res = append(res, pageRangesValues[sortedPageRange.pageRangesValuesIdx]...)
-	}
-	return res, nil
+	return valuesFlattened, nil
 }
 
 func (m *Materializer) materializePageRangeIter(
