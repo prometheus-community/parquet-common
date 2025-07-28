@@ -396,9 +396,9 @@ func TestQueryable(t *testing.T) {
 				// Test callback that counts materialized series
 				var seriesCount int
 				mtx := sync.Mutex{}
-				seriesCallback := func(ctx context.Context, series []prom_storage.ChunkSeries) error {
+				seriesCallback := func(ctx context.Context, series prom_storage.ChunkSeries) error {
 					mtx.Lock()
-					seriesCount += len(series)
+					seriesCount++
 					mtx.Unlock()
 					return nil
 				}
@@ -421,7 +421,7 @@ func TestQueryable(t *testing.T) {
 				require.Equal(t, len(foundSeries), seriesCount, "Callback should receive the same number of series")
 
 				// Test callback that returns an error
-				errorCallback := func(ctx context.Context, series []prom_storage.ChunkSeries) error {
+				errorCallback := func(ctx context.Context, series prom_storage.ChunkSeries) error {
 					return fmt.Errorf("callback error")
 				}
 

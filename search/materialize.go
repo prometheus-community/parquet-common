@@ -57,10 +57,10 @@ type Materializer struct {
 
 // MaterializedSeriesFunc is a callback function that can be used to add limiter or statistic logics for
 // materialized series.
-type MaterializedSeriesFunc func(ctx context.Context, series []prom_storage.ChunkSeries) error
+type MaterializedSeriesFunc func(ctx context.Context, series prom_storage.ChunkSeries) error
 
 // NoopMaterializedSeriesFunc is a noop callback function that does nothing.
-func NoopMaterializedSeriesFunc(_ context.Context, _ []prom_storage.ChunkSeries) error {
+func NoopMaterializedSeriesFunc(_ context.Context, _ prom_storage.ChunkSeries) error {
 	return nil
 }
 
@@ -164,7 +164,7 @@ func (m *Materializer) Materialize(ctx context.Context, hints *prom_storage.Sele
 		return nil, errors.Wrap(err, "materializer failed to create chunks iterator")
 	}
 
-	seriesSetIter := newFilterEmptyChunkSeriesSet(seriesSetLabels, chksIter)
+	seriesSetIter := newFilterEmptyChunkSeriesSet(ctx, seriesSetLabels, chksIter, m.materializedSeriesCallback)
 	// TODO filter iterator somehow
 	//if err := m.materializedSeriesCallback(ctx, seriesSetIter); err != nil {
 	//	return nil, err

@@ -105,18 +105,30 @@ func (s *noChunksConcreteLabelsSeriesSet) Close() {
 }
 
 // filterEmptyChunkSeriesSet is a ChunkSeriesSet that lazily filters out series with no chunks.
+// It takes a set of materialized labels and a lazy iterator of chunks.Iterators;
+// the labels and iterators are iterated in tandem to yield series with chunks.
+// The materialized series callback is applied to each series when the iterator advances during Next().
 type filterEmptyChunkSeriesSet struct {
+	ctx     context.Context
 	lblsSet []labels.Labels
 	chnkSet ChunksIteratorIterator
 
-	currentSeries *iteratorChunksSeries
-	err           error
+	currentSeries              *iteratorChunksSeries
+	materializedSeriesCallback MaterializedSeriesFunc
+	err                        error
 }
 
-func newFilterEmptyChunkSeriesSet(lblsSet []labels.Labels, chnkSet ChunksIteratorIterator) *filterEmptyChunkSeriesSet {
+func newFilterEmptyChunkSeriesSet(
+	ctx context.Context,
+	lblsSet []labels.Labels,
+	chnkSet ChunksIteratorIterator,
+	materializeSeriesCallback MaterializedSeriesFunc,
+) *filterEmptyChunkSeriesSet {
 	return &filterEmptyChunkSeriesSet{
-		lblsSet: lblsSet,
-		chnkSet: chnkSet,
+		ctx:                        ctx,
+		lblsSet:                    lblsSet,
+		chnkSet:                    chnkSet,
+		materializedSeriesCallback: materializeSeriesCallback,
 	}
 }
 
@@ -143,7 +155,8 @@ func (s *filterEmptyChunkSeriesSet) Next() bool {
 					peekedValue: &meta,
 				},
 			}
-			return true
+			s.err = s.materializedSeriesCallback(s.ctx, s.currentSeries)
+			return s.err == nil
 		}
 
 		if iter.Err() != nil {
