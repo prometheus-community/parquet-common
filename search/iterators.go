@@ -44,8 +44,8 @@ func (c concreteChunksSeries) Iterator(_ chunks.Iterator) chunks.Iterator {
 }
 
 type iteratorChunksSeries struct {
-	lbls   labels.Labels
-	chunks chunks.Iterator
+	lbls labels.Labels
+	chks chunks.Iterator
 }
 
 func (i *iteratorChunksSeries) Labels() labels.Labels {
@@ -53,7 +53,7 @@ func (i *iteratorChunksSeries) Labels() labels.Labels {
 }
 
 func (i *iteratorChunksSeries) Iterator(_ chunks.Iterator) chunks.Iterator {
-	return i.chunks
+	return i.chks
 }
 
 type ChunkSeriesSetCloser interface {
@@ -150,7 +150,7 @@ func (s *filterEmptyChunkSeriesSet) Next() bool {
 			meta := iter.At()
 			s.currentSeries = &iteratorChunksSeries{
 				lbls: lbls,
-				chunks: &peekedChunksIterator{
+				chks: &peekedChunksIterator{
 					inner:       iter,
 					peekedValue: &meta,
 				},
@@ -189,9 +189,10 @@ func (s *filterEmptyChunkSeriesSet) Close() {
 	s.chnkSet.Close()
 }
 
-// peekedChunksIterator wraps a chunks.Iterator with an extra value to return on
-// the first iteration. It is useful to allow peeking the first chunk without
-// consuming it.
+// peekedChunksIterator is used to yield the first chunk of chunks.Iterator
+// which has already had its Next() method called to check if it has any chunks.
+// The already-consumed chunks.Meta is stored in peekedValue and returned on the first call to At().
+// Subsequent calls to Next then continue with the inner chunks.Iterator.
 type peekedChunksIterator struct {
 	inner       chunks.Iterator
 	peekedValue *chunks.Meta
