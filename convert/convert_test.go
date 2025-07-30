@@ -190,7 +190,7 @@ func Test_CreateParquetWithReducedTimestampSamples(t *testing.T) {
 	require.NoError(t, err)
 
 	// Check metadatas
-	for _, file := range []*storage.ParquetFile{shard.LabelsFile(), shard.ChunksFile()} {
+	for _, file := range []storage.ParquetFileView{shard.LabelsFile(), shard.ChunksFile()} {
 		require.Equal(t, schema.MetadataToMap(file.Metadata().KeyValueMetadata)[schema.MinTMd], strconv.FormatInt(mint, 10))
 		require.Equal(t, schema.MetadataToMap(file.Metadata().KeyValueMetadata)[schema.MaxTMd], strconv.FormatInt(maxt, 10))
 		require.Equal(t, schema.MetadataToMap(file.Metadata().KeyValueMetadata)[schema.DataColSizeMd], strconv.FormatInt(datColDuration.Milliseconds(), 10))
@@ -385,8 +385,9 @@ func Test_SortedLabels(t *testing.T) {
 }
 
 func readSeries(t *testing.T, shard storage.ParquetShard) ([]labels.Labels, [][]chunks.Meta, error) {
-	lr := parquet.NewGenericReader[any](shard.LabelsFile().File)
-	cr := parquet.NewGenericReader[any](shard.ChunksFile().File)
+	ctx := context.Background()
+	lr := parquet.NewGenericReader[any](shard.LabelsFile().WithContext(ctx))
+	cr := parquet.NewGenericReader[any](shard.ChunksFile().WithContext(ctx))
 
 	labelsBuff := make([]parquet.Row, 100)
 	chunksBuff := make([]parquet.Row, 100)
