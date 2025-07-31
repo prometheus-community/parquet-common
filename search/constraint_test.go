@@ -507,3 +507,92 @@ func TestFilter(t *testing.T) {
 		}
 	})
 }
+
+// Mock constraint for testing constraint ordering
+type mockConstraint struct {
+	pathName string
+}
+
+func (m *mockConstraint) String() string                    { return fmt.Sprintf("mock(%s)", m.pathName) }
+func (m *mockConstraint) path() string                      { return m.pathName }
+func (m *mockConstraint) init(f *storage.ParquetFile) error { return nil }
+func (m *mockConstraint) filter(ctx context.Context, rgIdx int, primary bool, rr []RowRange) ([]RowRange, error) {
+	return rr, nil
+}
+
+type mockSortingColumn struct {
+	pathName string
+}
+
+func (m *mockSortingColumn) Path() []string   { return []string{m.pathName} }
+func (m *mockSortingColumn) Descending() bool { return false }
+func (m *mockSortingColumn) NullsFirst() bool { return false }
+
+func TestSortConstraintsBySortingColumns(t *testing.T) {
+	tests := []struct {
+		name           string
+		sortingColumns []string
+		constraints    []string
+		expectedOrder  []string
+	}{
+		{
+			name:           "no sorting columns",
+			sortingColumns: []string{},
+			constraints:    []string{"a", "b", "c"},
+			expectedOrder:  []string{"a", "b", "c"}, // original order preserved
+		},
+		{
+			name:           "single sorting column with matching constraint",
+			sortingColumns: []string{"b"},
+			constraints:    []string{"a", "b", "c"},
+			expectedOrder:  []string{"b", "a", "c"}, // b moved to front
+		},
+		{
+			name:           "multiple sorting columns with matching constraints",
+			sortingColumns: []string{"c", "a"},
+			constraints:    []string{"a", "b", "c", "d"},
+			expectedOrder:  []string{"c", "a", "b", "d"}, // c first (sc[0]), then a (sc[1])
+		},
+		{
+			name:           "multiple constraints per sorting column",
+			sortingColumns: []string{"x", "y"},
+			constraints:    []string{"a", "x", "b", "x", "y", "c"},
+			expectedOrder:  []string{"x", "x", "y", "a", "b", "c"}, // all x constraints first, then y, then others
+		},
+		{
+			name:           "sorting columns with no matching constraints",
+			sortingColumns: []string{"x", "y"},
+			constraints:    []string{"a", "b", "c"},
+			expectedOrder:  []string{"a", "b", "c"}, // original order preserved
+		},
+		{
+			name:           "mixed scenario",
+			sortingColumns: []string{"col1", "col2", "col3"},
+			constraints:    []string{"other1", "col2", "col1", "other2", "col1", "col3"},
+			expectedOrder:  []string{"col1", "col1", "col2", "col3", "other1", "other2"}, // sorting cols by priority, then others
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var sortingColumns []parquet.SortingColumn
+			for _, colName := range tt.sortingColumns {
+				sortingColumns = append(sortingColumns, &mockSortingColumn{pathName: colName})
+			}
+
+			var constraints []Constraint
+			for _, constraintPath := range tt.constraints {
+				constraints = append(constraints, &mockConstraint{pathName: constraintPath})
+			}
+
+			sortConstraintsBySortingColumns(constraints, sortingColumns)
+
+			var actualOrder []string
+			for _, c := range constraints {
+				actualOrder = append(actualOrder, c.path())
+			}
+
+			require.Equal(t, tt.expectedOrder, actualOrder, "expected order %v, got %v", tt.expectedOrder, actualOrder)
+		})
+	}
+}

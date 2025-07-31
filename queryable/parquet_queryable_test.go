@@ -101,7 +101,7 @@ func (st *acceptanceTestStorage) Querier(from, to int64) (prom_storage.Querier, 
 
 	h := st.st.Head()
 	data := util.TestData{MinTime: h.MinTime(), MaxTime: h.MaxTime()}
-	block := convertToParquet(st.t, context.Background(), bkt, data, h)
+	block := convertToParquet(st.t, context.Background(), bkt, data, h, nil)
 
 	q, err := createQueryable(block)
 	if err != nil {
@@ -163,25 +163,37 @@ func TestQueryable(t *testing.T) {
 	require.NoError(t, err)
 
 	testCases := map[string]struct {
-		ops []storage.FileOption
+		storageOpts []storage.FileOption
+		convertOpts []convert.ConvertOption
 	}{
 		"default": {
-			ops: []storage.FileOption{},
+			storageOpts: []storage.FileOption{},
+			convertOpts: defaultConvertOpts,
 		},
 		"skipBloomFilters": {
-			ops: []storage.FileOption{
+			storageOpts: []storage.FileOption{
 				storage.WithFileOptions(
 					parquet.SkipBloomFilters(true),
 					parquet.OptimisticRead(true),
 				),
+			},
+			convertOpts: defaultConvertOpts,
+		},
+		"multipleSortingColumns": {
+			storageOpts: []storage.FileOption{},
+			convertOpts: []convert.ConvertOption{
+				convert.WithName("shard"),
+				convert.WithColDuration(time.Hour),
+				convert.WithRowGroupSize(500),
+				convert.WithPageBufferSize(300),
+				convert.WithSortBy(fmt.Sprintf("%s,%s", labels.MetricName, "label_name_1")),
 			},
 		},
 	}
 
 	for n, tc := range testCases {
 		t.Run(n, func(t *testing.T) {
-			// Convert to Parquet
-			shard := convertToParquet(t, ctx, bkt, data, st.Head(), tc.ops...)
+			shard := convertToParquet(t, ctx, bkt, data, st.Head(), tc.convertOpts, tc.storageOpts...)
 
 			t.Run("QueryByUniqueLabel", func(t *testing.T) {
 				matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchEqual, "unique", "unique_0")}
@@ -204,6 +216,25 @@ func TestQueryable(t *testing.T) {
 					for _, series := range sFound {
 						totalFound++
 						require.Equal(t, series.Labels().Get(labels.MetricName), name)
+						require.Contains(t, data.SeriesHash, series.Labels().Hash())
+					}
+					require.Equal(t, cfg.MetricsPerMetricName, totalFound)
+				}
+			})
+
+			t.Run("QueryByMultipleLabels", func(t *testing.T) {
+				for i := 0; i < 50; i++ {
+					name := fmt.Sprintf("metric_%d", rand.Int()%cfg.TotalMetricNames)
+					matchers := []*labels.Matcher{
+						labels.MustNewMatcher(labels.MatchEqual, labels.MetricName, name),
+						labels.MustNewMatcher(labels.MatchEqual, "label_name_1", "label_value_1"),
+					}
+					sFound := queryWithQueryable(t, data.MinTime, data.MaxTime, shard, nil, matchers...)
+					totalFound := 0
+					for _, series := range sFound {
+						totalFound++
+						require.Equal(t, series.Labels().Get(labels.MetricName), name)
+						require.Equal(t, series.Labels().Get("label_name_1"), "label_value_1")
 						require.Contains(t, data.SeriesHash, series.Labels().Hash())
 					}
 					require.Equal(t, cfg.MetricsPerMetricName, totalFound)
@@ -718,7 +749,7 @@ func BenchmarkSelect(b *testing.B) {
 
 	cbkt := newCountingBucket(bkt)
 	data := util.TestData{MinTime: h.MinTime(), MaxTime: h.MaxTime()}
-	block := convertToParquetForBenchWithCountingBucket(b, ctx, bkt, cbkt, data, h)
+	block := convertToParquetForBenchWithCountingBucket(b, ctx, bkt, cbkt, data, h, nil)
 	queryable, err := createQueryable(block)
 	require.NoError(b, err, "unable to create queryable")
 
@@ -754,18 +785,25 @@ func BenchmarkSelect(b *testing.B) {
 	}
 }
 
-func convertToParquet(t *testing.T, ctx context.Context, bkt *bucket, data util.TestData, h convert.Convertible, opts ...storage.FileOption) storage.ParquetShard {
-	colDuration := time.Hour
+var defaultConvertOpts = []convert.ConvertOption{
+	convert.WithName("shard"),
+	convert.WithColDuration(time.Hour),
+	convert.WithRowGroupSize(500),
+	convert.WithPageBufferSize(300),
+}
+
+func convertToParquet(t *testing.T, ctx context.Context, bkt *bucket, data util.TestData, h convert.Convertible, convertOpts []convert.ConvertOption, opts ...storage.FileOption) storage.ParquetShard {
+	if convertOpts == nil {
+		convertOpts = defaultConvertOpts
+	}
+
 	shards, err := convert.ConvertTSDBBlock(
 		ctx,
 		bkt,
 		data.MinTime,
 		data.MaxTime,
 		[]convert.Convertible{h},
-		convert.WithName("shard"),
-		convert.WithColDuration(colDuration),
-		convert.WithRowGroupSize(500),
-		convert.WithPageBufferSize(300),
+		convertOpts...,
 	)
 	if err != nil {
 		t.Fatalf("error converting to parquet: %v", err)
@@ -785,18 +823,18 @@ func convertToParquet(t *testing.T, ctx context.Context, bkt *bucket, data util.
 	return shard
 }
 
-func convertToParquetForBenchWithCountingBucket(tb testing.TB, ctx context.Context, bkt *bucket, cbkt *countingBucket, data util.TestData, h convert.Convertible, opts ...storage.FileOption) storage.ParquetShard {
-	colDuration := time.Hour
+func convertToParquetForBenchWithCountingBucket(tb testing.TB, ctx context.Context, bkt *bucket, cbkt *countingBucket, data util.TestData, h convert.Convertible, convertOpts []convert.ConvertOption, opts ...storage.FileOption) storage.ParquetShard {
+	if convertOpts == nil {
+		convertOpts = defaultConvertOpts
+	}
+
 	shards, err := convert.ConvertTSDBBlock(
 		ctx,
 		bkt,
 		data.MinTime,
 		data.MaxTime,
 		[]convert.Convertible{h},
-		convert.WithName("shard"),
-		convert.WithColDuration(colDuration),
-		convert.WithRowGroupSize(500),
-		convert.WithPageBufferSize(300),
+		convertOpts...,
 	)
 	if err != nil {
 		tb.Fatalf("error converting to parquet: %v", err)
