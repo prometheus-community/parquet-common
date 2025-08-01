@@ -562,6 +562,7 @@ func (m *Materializer) materializeColumn(ctx context.Context, file storage.Parqu
 					return errors.Wrap(err, "could not read page")
 				}
 				vi.Reset(page)
+
 				for vi.Next() {
 					if currentRow == next {
 						rMutex.Lock()
@@ -577,6 +578,11 @@ func (m *Materializer) materializeColumn(ctx context.Context, file storage.Parqu
 							remainingRr = remainingRr[1:]
 						}
 					}
+
+					if vi.CanSkip() && remaining > 0 {
+						currentRow += vi.Skip(next - currentRow - 1)
+					}
+
 					currentRow++
 				}
 				parquet.Release(page)
@@ -699,6 +705,16 @@ func (vi *valuesIterator) Reset(p parquet.Page) {
 		vi.currentBufferIndex = -1
 	}
 	vi.current = -1
+}
+
+func (vi *valuesIterator) CanSkip() bool {
+	return vi.vr == nil
+}
+
+func (vi *valuesIterator) Skip(n int64) int64 {
+	r := min(n, vi.p.NumRows()-int64(vi.current)-1)
+	vi.current += int(r)
+	return r
 }
 
 func (vi *valuesIterator) Next() bool {
