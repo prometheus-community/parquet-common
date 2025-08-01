@@ -35,16 +35,16 @@ type Constraint interface {
 	// filter returns a set of non-overlapping increasing row indexes that may satisfy the constraint.
 	filter(ctx context.Context, rgIdx int, primary bool, rr []RowRange) ([]RowRange, error)
 	// init initializes the constraint with respect to the file schema and projections.
-	init(f *storage.ParquetFile) error
+	init(f storage.ParquetFileView) error
 	// path is the path for the column that is constrained
 	path() string
 }
 
-// MatchersToConstraint converts Prometheus label matchers into parquet search constraints.
+// MatchersToConstraints converts Prometheus label matchers into parquet search constraints.
 // It supports MatchEqual, MatchNotEqual, MatchRegexp, and MatchNotRegexp matcher types.
 // Returns a slice of constraints that can be used to filter parquet data based on the
 // provided label matchers, or an error if an unsupported matcher type is encountered.
-func MatchersToConstraint(matchers ...*labels.Matcher) ([]Constraint, error) {
+func MatchersToConstraints(matchers ...*labels.Matcher) ([]Constraint, error) {
 	r := make([]Constraint, 0, len(matchers))
 	for _, matcher := range matchers {
 		switch matcher.Type {
@@ -81,13 +81,44 @@ func MatchersToConstraint(matchers ...*labels.Matcher) ([]Constraint, error) {
 //
 // Returns an error if any constraint fails to initialize, wrapping the original
 // error with context about which constraint failed.
-func Initialize(f *storage.ParquetFile, cs ...Constraint) error {
+func Initialize(f storage.ParquetFileView, cs ...Constraint) error {
 	for i := range cs {
 		if err := cs[i].init(f); err != nil {
 			return fmt.Errorf("unable to initialize constraint %d: %w", i, err)
 		}
 	}
 	return nil
+}
+
+// sortConstraintsBySortingColumns reorders constraints to prioritize those that match sorting columns.
+// Constraints matching sorting columns are moved to the front, ordered by the sorting column priority.
+// Other constraints maintain their original relative order.
+func sortConstraintsBySortingColumns(cs []Constraint, sc []parquet.SortingColumn) {
+	if len(sc) == 0 {
+		return // No sorting columns, nothing to do
+	}
+
+	sortingPaths := make(map[string]int, len(sc))
+	for i, col := range sc {
+		sortingPaths[col.Path()[0]] = i
+	}
+
+	// Sort constraints: sorting column constraints first (by their order in sc), then others
+	slices.SortStableFunc(cs, func(a, b Constraint) int {
+		aIdx, aIsSorting := sortingPaths[a.path()]
+		bIdx, bIsSorting := sortingPaths[b.path()]
+
+		if aIsSorting && bIsSorting {
+			return aIdx - bIdx // Sort by sorting column order
+		}
+		if aIsSorting {
+			return -1 // a comes first
+		}
+		if bIsSorting {
+			return 1 // b comes first
+		}
+		return 0 // preserve original order for non-sorting constraints
+	})
 }
 
 // Filter applies the given constraints to a parquet row group and returns the row ranges
@@ -107,18 +138,8 @@ func Filter(ctx context.Context, s storage.ParquetShard, rgIdx int, cs ...Constr
 	// Constraints for sorting columns are cheaper to evaluate, so we sort them first.
 	sc := rg.SortingColumns()
 
-	var n int
-	for i := range sc {
-		if n == len(cs) {
-			break
-		}
-		for j := range cs {
-			if cs[j].path() == sc[i].Path()[0] {
-				cs[n], cs[j] = cs[j], cs[n]
-				n++
-			}
-		}
-	}
+	sortConstraintsBySortingColumns(cs, sc)
+
 	var err error
 	rr := []RowRange{{From: int64(0), Count: rg.NumRows()}}
 	for i := range cs {
@@ -194,7 +215,7 @@ type equalConstraint struct {
 	pth string
 
 	val parquet.Value
-	f   *storage.ParquetFile
+	f   storage.ParquetFileView
 
 	comp func(l, r parquet.Value) int
 }
@@ -298,7 +319,7 @@ func (ec *equalConstraint) filter(ctx context.Context, rgIdx int, primary bool, 
 
 	// If the gap between the first page and the dic page is less than PagePartitioningMaxGapSize,
 	// we include the dic to be read in the single read
-	if int(minOffset-(dictOff+dictSz)) < ec.f.Cfg.PagePartitioningMaxGapSize {
+	if int(minOffset-(dictOff+dictSz)) < ec.f.PagePartitioningMaxGapSize() {
 		minOffset = dictOff
 	}
 
@@ -364,7 +385,7 @@ func (ec *equalConstraint) filter(ctx context.Context, rgIdx int, primary bool, 
 	return intersectRowRanges(simplify(res), rr), nil
 }
 
-func (ec *equalConstraint) init(f *storage.ParquetFile) error {
+func (ec *equalConstraint) init(f storage.ParquetFileView) error {
 	c, ok := f.Schema().Lookup(ec.path())
 	ec.f = f
 	if !ok {
@@ -390,7 +411,7 @@ func (ec *equalConstraint) matches(v parquet.Value) bool {
 }
 
 func (ec *equalConstraint) skipByBloomfilter(cc parquet.ColumnChunk) (bool, error) {
-	if ec.f.Cfg.SkipBloomFilters {
+	if ec.f.SkipBloomFilters() {
 		return false, nil
 	}
 
@@ -412,7 +433,7 @@ func Regex(path string, r *labels.FastRegexMatcher) Constraint {
 type regexConstraint struct {
 	pth   string
 	cache map[parquet.Value]bool
-	f     *storage.ParquetFile
+	f     storage.ParquetFileView
 	r     *labels.FastRegexMatcher
 }
 
@@ -520,7 +541,7 @@ func (rc *regexConstraint) filter(ctx context.Context, rgIdx int, primary bool, 
 	return intersectRowRanges(simplify(res), rr), nil
 }
 
-func (rc *regexConstraint) init(f *storage.ParquetFile) error {
+func (rc *regexConstraint) init(f storage.ParquetFileView) error {
 	c, ok := f.Schema().Lookup(rc.path())
 	rc.f = f
 	if !ok {
@@ -567,7 +588,7 @@ func (nc *notConstraint) filter(ctx context.Context, rgIdx int, primary bool, rr
 	return complementRowRanges(base, rr), nil
 }
 
-func (nc *notConstraint) init(f *storage.ParquetFile) error {
+func (nc *notConstraint) init(f storage.ParquetFileView) error {
 	return nc.c.init(f)
 }
 

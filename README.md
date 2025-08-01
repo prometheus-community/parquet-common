@@ -1,87 +1,273 @@
-# Prometheus Parquet Library (WIP)
+# Prometheus Parquet Common Library
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/prometheus-community/parquet-common)](https://goreportcard.com/report/github.com/prometheus-community/parquet-common) [![Go Reference](https://pkg.go.dev/badge/github.com/prometheus-community/parquet-common.svg)](https://pkg.go.dev/github.com/prometheus-community/parquet-common) [![Slack](https://img.shields.io/badge/join%20slack-%23prometheus--parquet--dev-brightgreen?style=flat)](https://slack.cncf.io/)
 
-**Status: 🚧 Very early stage – expect breaking changes and rapid iteration**
+**Status: 🚧 Early development – expect breaking changes**
 
----
+A shared Go library for working with Parquet-encoded Prometheus time series data, designed for use across projects like [Cortex](https://github.com/cortexproject/cortex) and [Thanos](https://github.com/thanos-io/thanos).
 
-This project aims to provide a **shared Go library** for working with **Parquet**-encoded time series data across Prometheus-related projects such as [Cortex](https://github.com/cortexproject/cortex) and [Thanos](https://github.com/thanos-io/thanos).
+## Overview
 
-## Goal
+This library provides a standardized approach to storing and querying Prometheus time series data in Parquet format, enabling:
 
-The core objective is to define a **common Parquet schema** and implement **encoding/decoding logic** that can be reused to:
+- **Efficient long-term storage** in object stores (S3, GCS, Azure Blob)
+- **Columnar compression** for better storage efficiency
+- **Fast analytical queries** on historical time series data
+- **Shared schema** to reduce duplication across Prometheus ecosystem projects
 
-- Export and query time series data in a Parquet format.
-- Enable more efficient and scalable long-term storage in object stores like S3, GCS, and Azure Blob.
-- Reduce duplication across projects that are independently experimenting with Parquet-based storage.
+## Key Features
 
-## Current Status
+- **TSDB Block Conversion**: Convert Prometheus TSDB blocks to Parquet format
+- **Prometheus-Compatible Querying**: Implements `storage.Queryable` interface
+- **Flexible Schema**: Configurable column layout and compression options
+- **Performance Optimized**: Built-in bloom filters, sorting, and chunking strategies
+- **Cloud Storage Ready**: Works with any `objstore.Bucket` implementation
 
-This repository is in a **very early phase**. We're still experimenting with the schema design, low-level encoding strategies, and how this can plug into Cortex, Thanos, or other Prometheus-compatible systems.
+## Architecture
 
-Expect:
+The library is organized into several key packages:
 
-- Rapid changes in structure and API
-- Incomplete or unstable features
-- Minimal documentation
+- **`convert`**: TSDB block to Parquet conversion utilities
+- **`schema`**: Parquet schema definitions and encoding/decoding logic
+- **`queryable`**: Prometheus-compatible query interface implementation
+- **`search`**: Query optimization and constraint handling
 
-## Benchmarks Results 
+## Quick Start
 
-* https://prometheus-community.github.io/parquet-common/dev/bench/
+### Installation
 
-## Usage 
+```bash
+go get github.com/prometheus-community/parquet-common
+```
 
-### Converting a TSDB block to Parquet
+### Converting TSDB Blocks to Parquet
 
-To convert one or more TSDB block to parquet we can just use the ConvertTSDBBlock as below:
+Convert Prometheus TSDB blocks to Parquet format for long-term storage:
 
 ```go
-  blockDir := "/path/to/block"
-  bkt, _ := filesystem.NewBucket(blockDir)
-  tsdbBlock, _ := tsdb.OpenBlock(slog.Default(), blockDir, nil, tsdb.DefaultPostingsDecoderFactory)
+package main
 
-  _, err := convert.ConvertTSDBBlock(
-    context.Background(),
-    bkt,
-    tsdbBlock.MinTime(),
-    tsdbBlock.MaxTime(),
-    []convert.Convertible{tsdbBlock},
-    options.WithSortBy(labels.MetricName), // Optional: apply sorting or other options
-  )
+import (
+    "context"
+    "log/slog"
+    
+    "github.com/prometheus/prometheus/tsdb"
+    "github.com/thanos-io/objstore/providers/filesystem"
+    
+    "github.com/prometheus-community/parquet-common/convert"
+)
+
+func main() {
+    ctx := context.Background()
+    blockDir := "/path/to/tsdb/block"
+    
+    // Set up storage bucket
+    bkt, err := filesystem.NewBucket(blockDir)
+    if err != nil {
+        panic(err)
+    }
+    defer bkt.Close()
+    
+    // Open TSDB block
+    tsdbBlock, err := tsdb.OpenBlock(slog.Default(), blockDir, nil, tsdb.DefaultPostingsDecoderFactory)
+    if err != nil {
+        panic(err)
+    }
+    defer tsdbBlock.Close()
+    
+    // Convert to Parquet
+    _, err = convert.ConvertTSDBBlock(
+        ctx,
+        bkt,
+        tsdbBlock.MinTime(),
+        tsdbBlock.MaxTime(),
+        []convert.Convertible{tsdbBlock},
+        convert.WithSortBy("__name__"), // Sort by metric name for better compression
+    )
+    if err != nil {
+        panic(err)
+    }
+}
 ```
-### Querying Parquet File
+
+### Querying Parquet Data
+
+Query Parquet files using the Prometheus-compatible interface:
 
 ```go
-  blockDir := "/path/to/block"
-  ctx := context.Background()
+package main
 
-  bkt, _ := filesystem.NewBucket(blockDir)
-  bucketOpener := storage.NewParquetBucketOpener(bkt)
+import (
+	"context"
+	"fmt"
+	"math"
 
-  shard, err := storage.NewParquetShardOpener(
-	ctx, "shard", bucketOpener, bucketOpener, 0,
-  )
-  if err != nil {
-	t.Fatalf("error opening parquet shard: %v", err)
-  }
+	"github.com/prometheus/prometheus/model/labels"
+	"github.com/prometheus/prometheus/tsdb/chunkenc"
+	"github.com/thanos-io/objstore/providers/filesystem"
 
-  decoder := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
-  queryable, _ := NewParquetQueryable(decoder, func(ctx context.Context, mint, maxt int64) ([]storage.ParquetShard, error) {
-	return []storage.ParquetShard{shard}, nil
-  }) // Implements prometheus/storage.Queryable
+	"github.com/prometheus-community/parquet-common/queryable"
+	"github.com/prometheus-community/parquet-common/schema"
+	"github.com/prometheus-community/parquet-common/storage"
+)
 
-  querier, _ := queryable.Querier(mint, maxt)
-  set := querier.Select(ctx, true, hints, matchers...) // storage.SeriesSet
+func main() {
+	ctx := context.Background()
+
+	// Set up storage
+	bkt, _ := filesystem.NewBucket("/path/to/parquet/data")
+	bucketOpener := storage.NewParquetBucketOpener(bkt)
+
+	// Open parquet shard
+	shard, err := storage.NewParquetShardOpener(
+		ctx, "shard", bucketOpener, bucketOpener, 0,
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	// Create queryable interface
+	decoder := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
+	queryable, _ := queryable.NewParquetQueryable(decoder, func(ctx context.Context, mint, maxt int64) ([]storage.ParquetShard, error) {
+		return []storage.ParquetShard{shard}, nil
+	})
+
+	// Query data
+	querier, err := queryable.Querier(0, math.MaxInt64) // Query all time
+	if err != nil {
+		panic(err)
+	}
+	defer querier.Close()
+
+	// Select series matching criteria
+	matchers := []*labels.Matcher{
+		labels.MustNewMatcher(labels.MatchEqual, "__name__", "cpu_usage"),
+	}
+
+	seriesSet := querier.Select(ctx, false, nil, matchers...)
+
+	// Iterate through results
+	for seriesSet.Next() {
+		series := seriesSet.At()
+		fmt.Printf("Series: %s\n", series.Labels().String())
+
+		iterator := series.Iterator(nil)
+		for iterator.Next() == chunkenc.ValFloat {
+			ts, val := iterator.At()
+			fmt.Printf("  %d: %f\n", ts, val)
+		}
+	}
+}
+
 ```
-## Planned Features
 
-- Reusable Go types for time series + metadata
-- Parquet schema definitions (with logical type hints for efficiency)
-- High-performance encoders/decoders
-- Utilities for block indexing and  querying
-- Test data generators for benchmarking
+## Configuration Options
 
-## Contributions
+### Conversion Options
 
-Ideas, feedback, and code contributions are welcome — but please note that the design is still in flux. If you're interested in contributing, feel free to open an issue or discussion.
+Customize the conversion process with various options:
+
+```go
+_, err := convert.ConvertTSDBBlock(
+    ctx, bkt, minTime, maxTime, blocks,
+    convert.WithName("custom-block-name"),
+    convert.WithRowGroupSize(500000),                    // Rows per row group
+    convert.WithColumnDuration(4*time.Hour),             // Time span per column
+    convert.WithSortBy("__name__", "instance"),          // Sort order for better compression
+    convert.WithBloomFilterLabels("__name__", "job"),    // Labels to create bloom filters for
+    convert.WithConcurrency(8),                          // Parallel processing
+    convert.WithCompression(schema.CompressionZstd),     // Compression algorithm
+)
+```
+
+### Schema Configuration
+
+The library uses a columnar schema optimized for time series data:
+
+- **Label columns**: Prefixed with `l_` (e.g., `l___name__`, `l_instance`)
+- **Data columns**: Time-partitioned chunks prefixed with `s_data_`
+- **Index column**: `s_col_indexes` for efficient chunk lookup
+- **Metadata**: Min/max timestamps and column duration information
+## Performance
+
+The library is designed for high performance with several optimizations:
+
+- **Columnar storage** with efficient compression (Zstd, Snappy)
+- **Bloom filters** on frequently queried labels
+- **Time-based partitioning** for faster range queries
+- **Parallel processing** during conversion and querying
+
+### Benchmarks
+
+Performance benchmarks are available at: https://prometheus-community.github.io/parquet-common/dev/bench/
+
+Run benchmarks locally:
+
+```bash
+make bench-select  # Query performance benchmarks
+```
+
+## Development
+
+### Prerequisites
+
+- Go 1.23.4 or later
+- Make
+
+### Building and Testing
+
+```bash
+# Run tests
+make test-short
+
+# Run all tests with coverage
+make all-tests-with-coverage
+```
+
+### Project Structure
+
+```
+├── convert/          # TSDB to Parquet conversion
+├── queryable/        # Prometheus-compatible query interface
+├── schema/           # Parquet schema and encoding/decoding
+├── search/           # Query optimization and constraints
+├── storage/          # Parquet file management
+└── util/             # Common utilities
+```
+
+## Current Status & Roadmap
+
+**Current Status**: Early development with core functionality implemented
+
+**Completed**:
+- ✅ TSDB block to Parquet conversion
+- ✅ Prometheus-compatible querying interface
+- ✅ Configurable schema and compression
+- ✅ Performance optimizations (bloom filters, sorting, opmistic reader)
+
+**In Progress**:
+- 🔄 API stabilization
+- 🔄 Enhanced query performance
+- 🔄 Documentation improvements
+
+**Planned**:
+- 📋 Streaming query capabilities
+
+## Contributing
+
+We welcome contributions! This project is in active development, so please:
+
+1. **Check existing issues** before starting work
+2. **Open an issue** to discuss significant changes
+3. **Follow Go best practices** and include tests
+4. **Update documentation** for user-facing changes
+
+### Getting Help
+
+- **GitHub Issues**: Bug reports and feature requests
+- **Slack**: Join [#prometheus-parquet-dev](https://slack.cncf.io/) for discussions
+- **Documentation**: Check the [Go Reference](https://pkg.go.dev/github.com/prometheus-community/parquet-common)
+
+## License
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.
