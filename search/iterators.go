@@ -385,7 +385,7 @@ func (ci *columnValueIterator) Err() error {
 
 // rowRangesValueIterator yields individual parquet Values from specified row ranges in its FilePages
 type rowRangesValueIterator struct {
-	pgs          *parquet.FilePages
+	pgs          parquet.Pages
 	pageIterator *pageValueIterator
 
 	remainingRr []RowRange
@@ -411,7 +411,7 @@ func newRowRangesValueIterator(
 	maxOffset := uint64(pageRange.off + pageRange.csz)
 
 	// if dictOff == 0, it means that the collum is not dictionary encoded
-	if dictOff > 0 && int(minOffset-(dictOff+dictSz)) < file.Cfg.PagePartitioningMaxGapSize {
+	if dictOff > 0 && int(minOffset-(dictOff+dictSz)) < file.PagePartitioningMaxGapSize() {
 		minOffset = dictOff
 	}
 
