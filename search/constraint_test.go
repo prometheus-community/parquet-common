@@ -513,9 +513,9 @@ type mockConstraint struct {
 	pathName string
 }
 
-func (m *mockConstraint) String() string                    { return fmt.Sprintf("mock(%s)", m.pathName) }
-func (m *mockConstraint) path() string                      { return m.pathName }
-func (m *mockConstraint) init(f *storage.ParquetFile) error { return nil }
+func (m *mockConstraint) String() string                       { return fmt.Sprintf("mock(%s)", m.pathName) }
+func (m *mockConstraint) path() string                         { return m.pathName }
+func (m *mockConstraint) init(f storage.ParquetFileView) error { return nil }
 func (m *mockConstraint) filter(ctx context.Context, rgIdx int, primary bool, rr []RowRange) ([]RowRange, error) {
 	return rr, nil
 }
