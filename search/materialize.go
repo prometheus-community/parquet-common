@@ -623,7 +623,6 @@ func (m *Materializer) materializeColumn(ctx context.Context, file storage.Parqu
 	errGroup.SetLimit(m.concurrency)
 
 	dictOff, dictSz := file.DictionaryPageBounds(rgi, cc.Column())
-	cc.Type()
 
 	for _, p := range pageRanges {
 		errGroup.Go(func() error {
