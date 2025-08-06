@@ -401,7 +401,7 @@ type rowRangesValueIterator struct {
 
 func newRowRangesValueIterator(
 	ctx context.Context,
-	file *storage.ParquetFile,
+	file storage.ParquetFileView,
 	cc parquet.ColumnChunk,
 	pageRange pageToReadWithRow,
 	dictOff uint64,
