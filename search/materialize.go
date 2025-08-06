@@ -732,6 +732,7 @@ type valuesIterator struct {
 	vr parquet.ValueReader
 
 	current            int
+	totalRows          int
 	buffer             []parquet.Value
 	currentBufferIndex int
 	err                error
@@ -740,6 +741,7 @@ type valuesIterator struct {
 func (vi *valuesIterator) Reset(p parquet.Page) {
 	vi.p = p
 	vi.vr = nil
+	vi.totalRows = int(p.NumRows())
 	if p.Dictionary() != nil {
 		vi.st.Reset(p)
 		vi.cachedSymbols = make(map[int32]parquet.Value, p.Dictionary().Len())
@@ -756,7 +758,7 @@ func (vi *valuesIterator) CanSkip() bool {
 }
 
 func (vi *valuesIterator) Skip(n int64) int64 {
-	r := min(n, vi.p.NumRows()-int64(vi.current)-1)
+	r := min(n, int64(vi.totalRows-vi.current-1))
 	vi.current += int(r)
 	return r
 }
@@ -767,7 +769,7 @@ func (vi *valuesIterator) Next() bool {
 	}
 
 	vi.current++
-	if vi.current >= int(vi.p.NumRows()) {
+	if vi.current >= vi.totalRows {
 		return false
 	}
 
