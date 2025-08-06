@@ -411,7 +411,6 @@ func (m *Materializer) materializeAllLabels(ctx context.Context, rgi int, rr []R
 
 	// Build mapping of which columns are needed for which row ranges
 	columnToRowRanges, rowRangeToStartIndex, err := m.buildColumnMappings(rr, columnIndexes)
-
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to build collum mapping")
 	}
