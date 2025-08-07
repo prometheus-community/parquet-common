@@ -405,11 +405,13 @@ func (b queryableShard) Query(ctx context.Context, sorted bool, sp *prom_storage
 	for _, res := range results {
 		totalResults += len(res)
 	}
-	// No need to sort results; the inner slices correspond to already-in-order row groups,
-	// The elements of the inner slices were sorted relative to themselves after materialization.
+
 	resultsFlattened := make([]prom_storage.ChunkSeries, 0, totalResults)
 	for _, res := range results {
 		resultsFlattened = append(resultsFlattened, res...)
+	}
+	if sorted {
+		sort.Sort(byLabels(resultsFlattened))
 	}
 
 	return convert.NewChunksSeriesSet(resultsFlattened), nil
