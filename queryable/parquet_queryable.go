@@ -386,7 +386,7 @@ func (b queryableShard) Query(ctx context.Context, sorted bool, sp *prom_storage
 			if err != nil {
 				return err
 			}
-			defer seriesSetIter.Close()
+			defer func() { _ = seriesSetIter.Close() }()
 			for seriesSetIter.Next() {
 				results[rgi] = append(results[rgi], seriesSetIter.At())
 			}

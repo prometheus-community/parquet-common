@@ -166,10 +166,6 @@ func (m *Materializer) Materialize(ctx context.Context, hints *prom_storage.Sele
 	}
 
 	seriesSetIter := newFilterEmptyChunkSeriesSet(ctx, seriesSetLabels, chksIter, m.materializedSeriesCallback)
-	// TODO filter iterator somehow
-	//if err := m.materializedSeriesCallback(ctx, seriesSetIter); err != nil {
-	//	return nil, err
-	//}
 
 	span.SetAttributes(attribute.Int("materialized_series_count", len(seriesSetLabels)))
 	return seriesSetIter, nil
@@ -606,9 +602,9 @@ func (m *Materializer) materializeColumnSlice(
 	errGroup.SetLimit(m.concurrency)
 	for i, pageRange := range pageRanges {
 		errGroup.Go(func() error {
-			valuesIter, err := m.materializePageRangeIter(ctx, file, pageRange, dictOff, dictSz, cc)
+			valuesIter, err := newRowRangesValueIterator(ctx, file, cc, pageRange, dictOff, dictSz)
 			if err != nil {
-				return errors.Wrap(err, "failed to materialize page range iterator")
+				return errors.Wrap(err, "failed to create row values iterator for page")
 			}
 			defer func() { _ = valuesIter.Close() }()
 
@@ -634,23 +630,6 @@ func (m *Materializer) materializeColumnSlice(
 		valuesFlattened = append(valuesFlattened, pageRangeValues...)
 	}
 	return valuesFlattened, nil
-}
-
-func (m *Materializer) materializePageRangeIter(
-	ctx context.Context,
-	file storage.ParquetFileView,
-	p pageToReadWithRow,
-	dictOff uint64,
-	dictSz uint64,
-	cc parquet.ColumnChunk,
-) (*rowRangesValueIterator, error) {
-	rowValuesIter, err := newRowRangesValueIterator(
-		ctx, file, cc, p, dictOff, dictSz,
-	)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create row values iterator for page")
-	}
-	return rowValuesIter, nil
 }
 
 type pageToReadWithRow struct {

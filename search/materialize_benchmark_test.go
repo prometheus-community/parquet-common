@@ -110,7 +110,7 @@ func BenchmarkMaterialize(b *testing.B) {
 			// Warm up
 			seriesIter, err := m.Materialize(ctx, nil, 0, data.MinTime, data.MaxTime, false, tc.rr)
 			require.NoError(b, err)
-			seriesIter.Close()
+			_ = seriesIter.Close()
 
 			b.ReportAllocs()
 			b.ResetTimer()
@@ -152,7 +152,7 @@ func BenchmarkMaterialize(b *testing.B) {
 				heapInUseDiff := m2.HeapInuse - m1.HeapInuse
 				b.ReportMetric(float64(heapAllocDiff/uint64(b.N)), "B-alloc-diff")
 				b.ReportMetric(float64(heapInUseDiff/uint64(b.N)), "B-inuse-diff")
-				seriesIter.Close()
+				_ = seriesIter.Close()
 			}
 			b.ReportMetric(float64(bktw.getRangeCalls.Load())/float64(b.N), "range_calls/op")
 		})

@@ -17,6 +17,7 @@ import (
 	"context"
 	"io"
 
+	"github.com/hashicorp/go-multierror"
 	"github.com/parquet-go/parquet-go"
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
@@ -62,7 +63,7 @@ type ChunkSeriesSetCloser interface {
 	// Close releases any memory buffers held by the ChunkSeriesSet or the
 	// underlying ChunkSeries. It is not safe to use the ChunkSeriesSet
 	// or any of its ChunkSeries after calling Close.
-	Close()
+	Close() error
 }
 
 type noChunksConcreteLabelsSeriesSet struct {
@@ -101,7 +102,8 @@ func (s *noChunksConcreteLabelsSeriesSet) Warnings() annotations.Annotations {
 	return nil
 }
 
-func (s *noChunksConcreteLabelsSeriesSet) Close() {
+func (s *noChunksConcreteLabelsSeriesSet) Close() error {
+	return nil
 }
 
 // filterEmptyChunkSeriesSet is a ChunkSeriesSet that lazily filters out series with no chunks.
@@ -185,8 +187,8 @@ func (s *filterEmptyChunkSeriesSet) Warnings() annotations.Annotations {
 	return nil
 }
 
-func (s *filterEmptyChunkSeriesSet) Close() {
-	s.chnkSet.Close()
+func (s *filterEmptyChunkSeriesSet) Close() error {
+	return s.chnkSet.Close()
 }
 
 // peekedChunksIterator is used to yield the first chunk of chunks.Iterator
@@ -199,34 +201,34 @@ type peekedChunksIterator struct {
 	nextCalled  bool
 }
 
-func (p *peekedChunksIterator) Next() bool {
-	if !p.nextCalled {
-		p.nextCalled = true
+func (i *peekedChunksIterator) Next() bool {
+	if !i.nextCalled {
+		i.nextCalled = true
 		return true
 	}
-	if p.peekedValue != nil {
+	if i.peekedValue != nil {
 		// This is the second call to Next, discard the peeked value
-		p.peekedValue = nil
+		i.peekedValue = nil
 	}
-	return p.inner.Next()
+	return i.inner.Next()
 }
 
-func (p *peekedChunksIterator) At() chunks.Meta {
-	if p.peekedValue != nil {
-		return *p.peekedValue
+func (i *peekedChunksIterator) At() chunks.Meta {
+	if i.peekedValue != nil {
+		return *i.peekedValue
 	}
-	return p.inner.At()
+	return i.inner.At()
 }
 
-func (p *peekedChunksIterator) Err() error {
-	return p.inner.Err()
+func (i *peekedChunksIterator) Err() error {
+	return i.inner.Err()
 }
 
 type ChunksIteratorIterator interface {
 	Next() bool
 	At() chunks.Iterator
 	Err() error
-	Close()
+	Close() error
 }
 
 // multiColumnChunksDecodingIterator yields a prometheus chunks.Iterator from multiple parquet Columns.
@@ -250,20 +252,20 @@ type multiColumnChunksDecodingIterator struct {
 	err     error
 }
 
-func (c *multiColumnChunksDecodingIterator) At() chunks.Iterator {
-	return c.current
+func (i *multiColumnChunksDecodingIterator) At() chunks.Iterator {
+	return i.current
 }
 
-func (c *multiColumnChunksDecodingIterator) Next() bool {
-	if c.err != nil || len(c.columnValueIterators) == 0 {
+func (i *multiColumnChunksDecodingIterator) Next() bool {
+	if i.err != nil || len(i.columnValueIterators) == 0 {
 		return false
 	}
 
-	multiColumnValues := make([]parquet.Value, 0, len(c.columnValueIterators))
-	for _, columnValueIter := range c.columnValueIterators {
+	multiColumnValues := make([]parquet.Value, 0, len(i.columnValueIterators))
+	for _, columnValueIter := range i.columnValueIterators {
 		if !columnValueIter.Next() {
-			c.err = columnValueIter.Err()
-			if c.err != nil {
+			i.err = columnValueIter.Err()
+			if i.err != nil {
 				return false
 			}
 			continue
@@ -275,25 +277,29 @@ func (c *multiColumnChunksDecodingIterator) Next() bool {
 		return false
 	}
 
-	c.current = &valueDecodingChunkIterator{
-		mint:   c.mint,
-		maxt:   c.maxt,
+	i.current = &valueDecodingChunkIterator{
+		mint:   i.mint,
+		maxt:   i.maxt,
 		values: multiColumnValues,
-		d:      c.d,
+		d:      i.d,
 	}
 	return true
 }
 
-func (c *multiColumnChunksDecodingIterator) Err() error {
-	return c.err
+func (i *multiColumnChunksDecodingIterator) Err() error {
+	return i.err
 }
 
-func (c *multiColumnChunksDecodingIterator) Close() {
+func (i *multiColumnChunksDecodingIterator) Close() error {
+	err := &multierror.Error{}
+	for _, iter := range i.columnValueIterators {
+		err = multierror.Append(err, iter.Close())
+	}
+	return err.ErrorOrNil()
 }
 
 // valueDecodingChunkIterator decodes and yields chunks from a parquet Values slice.
 type valueDecodingChunkIterator struct {
-	// TODO: why do we need these for decoding? can't we discard out of range chunks in advance?
 	mint   int64
 	maxt   int64
 	values []parquet.Value
@@ -304,32 +310,31 @@ type valueDecodingChunkIterator struct {
 	err     error
 }
 
-func (c *valueDecodingChunkIterator) At() chunks.Meta {
-	return c.current
+func (i *valueDecodingChunkIterator) At() chunks.Meta {
+	return i.current
 }
 
-func (c *valueDecodingChunkIterator) Next() bool {
-	if c.err != nil {
+func (i *valueDecodingChunkIterator) Next() bool {
+	if i.err != nil {
 		return false
 	}
-	if len(c.values) == 0 && len(c.decoded) == 0 {
+	if len(i.values) == 0 && len(i.decoded) == 0 {
 		return false
 	}
-	if len(c.decoded) > 0 {
-		c.current = c.decoded[0]
-		c.decoded = c.decoded[1:]
+	if len(i.decoded) > 0 {
+		i.current = i.decoded[0]
+		i.decoded = i.decoded[1:]
 		return true
 	}
-	value := c.values[0]
-	c.values = c.values[1:]
+	value := i.values[0]
+	i.values = i.values[1:]
 
-	// TODO: we can do better at pooling here.
-	c.decoded, c.err = c.d.Decode(value.ByteArray(), c.mint, c.maxt)
-	return c.Next()
+	i.decoded, i.err = i.d.Decode(value.ByteArray(), i.mint, i.maxt)
+	return i.Next()
 }
 
-func (c *valueDecodingChunkIterator) Err() error {
-	return c.err
+func (i *valueDecodingChunkIterator) Err() error {
+	return i.err
 }
 
 func (c concreteChunksSeries) ChunkCount() (int, error) {
@@ -344,43 +349,51 @@ type columnValueIterator struct {
 	err     error
 }
 
-func (ci *columnValueIterator) At() parquet.Value {
-	return ci.current
+func (i *columnValueIterator) At() parquet.Value {
+	return i.current
 }
 
-func (ci *columnValueIterator) Next() bool {
-	if ci.err != nil {
+func (i *columnValueIterator) Next() bool {
+	if i.err != nil {
 		return false
 	}
 
 	found := false
 	for !found {
-		if ci.currentIteratorIndex >= len(ci.rowRangesIterators) {
+		if i.currentIteratorIndex >= len(i.rowRangesIterators) {
 			return false
 		}
 
-		currentIterator := ci.rowRangesIterators[ci.currentIteratorIndex]
+		currentIterator := i.rowRangesIterators[i.currentIteratorIndex]
 		hasNext := currentIterator.Next()
 
 		if !hasNext {
 			if err := currentIterator.Err(); err != nil {
-				ci.err = err
+				i.err = err
 				_ = currentIterator.Close()
 				return false
 			}
 			// Iterator exhausted without error; close and move on to the next one
 			_ = currentIterator.Close()
-			ci.currentIteratorIndex++
+			i.currentIteratorIndex++
 			continue
 		}
-		ci.current = currentIterator.At()
+		i.current = currentIterator.At()
 		found = true
 	}
 	return found
 }
 
-func (ci *columnValueIterator) Err() error {
-	return ci.err
+func (i *columnValueIterator) Err() error {
+	return i.err
+}
+
+func (i *columnValueIterator) Close() error {
+	err := &multierror.Error{}
+	for _, iter := range i.rowRangesIterators {
+		err = multierror.Append(err, iter.Close())
+	}
+	return err.ErrorOrNil()
 }
 
 // rowRangesValueIterator yields individual parquet Values from specified row ranges in its FilePages
@@ -449,22 +462,22 @@ func newRowRangesValueIterator(
 	}, nil
 }
 
-func (ri *rowRangesValueIterator) At() parquet.Value {
-	return ri.buffer[ri.currentBufferIndex]
+func (i *rowRangesValueIterator) At() parquet.Value {
+	return i.buffer[i.currentBufferIndex]
 }
 
-func (ri *rowRangesValueIterator) Next() bool {
-	if ri.err != nil {
+func (i *rowRangesValueIterator) Next() bool {
+	if i.err != nil {
 		return false
 	}
 
-	if len(ri.buffer) > 0 && ri.currentBufferIndex < len(ri.buffer)-1 {
+	if len(i.buffer) > 0 && i.currentBufferIndex < len(i.buffer)-1 {
 		// Still have buffered values from previous page reads to yield
-		ri.currentBufferIndex++
+		i.currentBufferIndex++
 		return true
 	}
 
-	if len(ri.remainingRr) == 0 && ri.remaining == 0 {
+	if len(i.remainingRr) == 0 && i.remaining == 0 {
 		// Done; all rows of all pages have been read
 		// and all buffered values from the row ranges have been yielded
 		return false
@@ -474,55 +487,54 @@ func (ri *rowRangesValueIterator) Next() bool {
 	found := false
 	for !found {
 		// Prepare inner iterator
-		page, err := ri.pgs.ReadPage()
+		page, err := i.pgs.ReadPage()
 		if err != nil {
-			ri.err = errors.Wrap(err, "failed to read page")
+			i.err = errors.Wrap(err, "failed to read page")
 			return false
 		}
-		ri.pageIterator.Reset(page)
+		i.pageIterator.Reset(page)
 		// Reset page values buffer
-		ri.currentBufferIndex = 0
-		ri.buffer = ri.buffer[:0]
+		i.currentBufferIndex = 0
+		i.buffer = i.buffer[:0]
 
-		for ri.pageIterator.Next() {
-			if ri.currentRow == ri.next {
+		for i.pageIterator.Next() {
+			if i.currentRow == i.next {
 				found = true
-				ri.buffer = append(ri.buffer, ri.pageIterator.At())
+				i.buffer = append(i.buffer, i.pageIterator.At())
 
-				ri.remaining--
-				if ri.remaining > 0 {
-					ri.next = ri.next + 1
-				} else if len(ri.remainingRr) > 0 {
-					ri.currentRr = ri.remainingRr[0]
-					ri.next = ri.currentRr.From
-					ri.remaining = ri.currentRr.Count
-					ri.remainingRr = ri.remainingRr[1:]
+				i.remaining--
+				if i.remaining > 0 {
+					i.next = i.next + 1
+				} else if len(i.remainingRr) > 0 {
+					i.currentRr = i.remainingRr[0]
+					i.next = i.currentRr.From
+					i.remaining = i.currentRr.Count
+					i.remainingRr = i.remainingRr[1:]
 				}
 			}
-			ri.currentRow++
+			i.currentRow++
 		}
 		parquet.Release(page)
-		if ri.pageIterator.Err() != nil {
-			ri.err = errors.Wrap(ri.pageIterator.Err(), "failed to read page values")
+		if i.pageIterator.Err() != nil {
+			i.err = errors.Wrap(i.pageIterator.Err(), "failed to read page values")
 			return false
 		}
 	}
 	return found
 }
 
-func (ri *rowRangesValueIterator) Err() error {
-	return ri.err
+func (i *rowRangesValueIterator) Err() error {
+	return i.err
 }
 
-func (ri *rowRangesValueIterator) Close() error {
-	return ri.pgs.Close()
+func (i *rowRangesValueIterator) Close() error {
+	return i.pgs.Close()
 }
 
 // pageValueIterator yields individual parquet Values from its Page.
 type pageValueIterator struct {
 	p parquet.Page
 
-	// TODO: consider using unique.Handle
 	cachedSymbols map[int32]parquet.Value
 	st            symbolTable
 
@@ -534,62 +546,61 @@ type pageValueIterator struct {
 	err                error
 }
 
-func (pi *pageValueIterator) At() parquet.Value {
-	if pi.vr == nil {
-		dicIndex := pi.st.GetIndex(pi.current)
+func (i *pageValueIterator) At() parquet.Value {
+	if i.vr == nil {
+		dicIndex := i.st.GetIndex(i.current)
 		// Cache a clone of the current symbol table entry.
 		// This allows us to release the original page while avoiding unnecessary future clones.
-		if _, ok := pi.cachedSymbols[dicIndex]; !ok {
-			pi.cachedSymbols[dicIndex] = pi.st.Get(pi.current).Clone()
+		if _, ok := i.cachedSymbols[dicIndex]; !ok {
+			i.cachedSymbols[dicIndex] = i.st.Get(i.current).Clone()
 		}
-		return pi.cachedSymbols[dicIndex]
+		return i.cachedSymbols[dicIndex]
 	}
-	// TODO: can we reduce the number of allocations caused by the clone here?
-	return pi.buffer[pi.currentBufferIndex].Clone()
+	return i.buffer[i.currentBufferIndex].Clone()
 }
 
-func (pi *pageValueIterator) Next() bool {
-	if pi.err != nil {
+func (i *pageValueIterator) Next() bool {
+	if i.err != nil {
 		return false
 	}
 
-	pi.current++
-	if pi.current >= int(pi.p.NumRows()) {
+	i.current++
+	if i.current >= int(i.p.NumRows()) {
 		return false
 	}
 
-	pi.currentBufferIndex++
+	i.currentBufferIndex++
 
-	if pi.currentBufferIndex == len(pi.buffer) {
-		n, err := pi.vr.ReadValues(pi.buffer[:cap(pi.buffer)])
+	if i.currentBufferIndex == len(i.buffer) {
+		n, err := i.vr.ReadValues(i.buffer[:cap(i.buffer)])
 		if err != nil && err != io.EOF {
-			pi.err = err
+			i.err = err
 		}
-		pi.buffer = pi.buffer[:n]
-		pi.currentBufferIndex = 0
+		i.buffer = i.buffer[:n]
+		i.currentBufferIndex = 0
 	}
 
 	return true
 }
 
-func (pi *pageValueIterator) Reset(p parquet.Page) {
-	pi.p = p
-	pi.vr = nil
+func (i *pageValueIterator) Reset(p parquet.Page) {
+	i.p = p
+	i.vr = nil
 	if p.Dictionary() != nil {
-		pi.st.Reset(p)
-		pi.cachedSymbols = make(map[int32]parquet.Value, p.Dictionary().Len())
+		i.st.Reset(p)
+		i.cachedSymbols = make(map[int32]parquet.Value, p.Dictionary().Len())
 	} else {
-		pi.vr = p.Values()
-		if pi.buffer != nil {
-			pi.buffer = pi.buffer[:0]
+		i.vr = p.Values()
+		if i.buffer != nil {
+			i.buffer = i.buffer[:0]
 		} else {
-			pi.buffer = make([]parquet.Value, 0, 128)
+			i.buffer = make([]parquet.Value, 0, 128)
 		}
-		pi.currentBufferIndex = -1
+		i.currentBufferIndex = -1
 	}
-	pi.current = -1
+	i.current = -1
 }
 
-func (pi *pageValueIterator) Err() error {
-	return pi.err
+func (i *pageValueIterator) Err() error {
+	return i.err
 }
