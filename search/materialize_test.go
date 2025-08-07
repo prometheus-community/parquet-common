@@ -26,6 +26,7 @@ import (
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/prometheus/util/teststorage"
 	"github.com/stretchr/testify/require"
+	"github.com/thanos-io/objstore"
 
 	"github.com/thanos-io/objstore/providers/filesystem"
 
@@ -220,7 +221,7 @@ func TestMaterializeE2E(t *testing.T) {
 	})
 }
 
-func convertToParquet(t *testing.T, ctx context.Context, bkt *filesystem.Bucket, data util.TestData, h convert.Convertible, opts ...storage.FileOption) storage.ParquetShard {
+func convertToParquet(t testing.TB, ctx context.Context, bkt objstore.Bucket, data util.TestData, h convert.Convertible, opts ...storage.FileOption) storage.ParquetShard {
 	colDuration := time.Hour
 	shards, err := convert.ConvertTSDBBlock(
 		ctx,
@@ -257,7 +258,7 @@ func query(t *testing.T, mint, maxt int64, shard storage.ParquetShard, constrain
 	m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback)
 	require.NoError(t, err)
 
-	found := make([]prom_storage.ChunkSeries, 0, 100)
+	results := make([]prom_storage.ChunkSeries, 0, 100)
 	for i := range shard.LabelsFile().RowGroups() {
 		rr, err := Filter(context.Background(), shard, i, constraints...)
 		total := int64(0)
@@ -265,11 +266,23 @@ func query(t *testing.T, mint, maxt int64, shard storage.ParquetShard, constrain
 			total += r.Count
 		}
 		require.NoError(t, err)
-		series, err := m.Materialize(ctx, nil, i, mint, maxt, false, rr)
+
+		seriesSetIter, err := m.Materialize(ctx, nil, i, mint, maxt, false, rr)
 		require.NoError(t, err)
-		found = append(found, series...)
+
+		for seriesSetIter.Next() {
+			seriesIter := seriesSetIter.At()
+			concreteSeriesFromIter := &concreteChunksSeries{
+				lbls: seriesIter.Labels(),
+			}
+			seriesChunksIter := seriesIter.Iterator(nil)
+			for seriesChunksIter.Next() {
+				concreteSeriesFromIter.chks = append(concreteSeriesFromIter.chks, seriesChunksIter.At())
+			}
+			results = append(results, concreteSeriesFromIter)
+		}
 	}
-	return found
+	return results
 }
 
 func TestFilterSeries(t *testing.T) {
@@ -316,7 +329,7 @@ func TestFilterSeries(t *testing.T) {
 			return nil, false
 		}
 
-		results, filteredRR := materializer.filterSeries(ctx, nil, sampleLabels, sampleRowRanges)
+		results, filteredRR := materializer.filterSeriesLabels(ctx, nil, sampleLabels, sampleRowRanges)
 
 		// Should return all series without filtering
 		require.Len(t, results, len(sampleLabels))
@@ -325,7 +338,7 @@ func TestFilterSeries(t *testing.T) {
 		// Verify all labels are preserved
 		for i, result := range results {
 			expectedLabels := labels.New(sampleLabels[i]...)
-			require.Equal(t, expectedLabels, result.Labels())
+			require.Equal(t, expectedLabels, result)
 		}
 	})
 
@@ -335,7 +348,7 @@ func TestFilterSeries(t *testing.T) {
 			return &acceptAllFilter{}, true
 		}
 
-		results, filteredRR := materializer.filterSeries(ctx, nil, sampleLabels, sampleRowRanges)
+		results, filteredRR := materializer.filterSeriesLabels(ctx, nil, sampleLabels, sampleRowRanges)
 
 		// Should return all series
 		require.Len(t, results, len(sampleLabels))
@@ -344,7 +357,7 @@ func TestFilterSeries(t *testing.T) {
 		// Verify all labels are preserved
 		for i, result := range results {
 			expectedLabels := labels.New(sampleLabels[i]...)
-			require.Equal(t, expectedLabels, result.Labels())
+			require.Equal(t, expectedLabels, result)
 		}
 	})
 
@@ -354,7 +367,7 @@ func TestFilterSeries(t *testing.T) {
 			return &rejectAllFilter{}, true
 		}
 
-		results, filteredRR := materializer.filterSeries(ctx, nil, sampleLabels, sampleRowRanges)
+		results, filteredRR := materializer.filterSeriesLabels(ctx, nil, sampleLabels, sampleRowRanges)
 
 		// Should return no series
 		require.Len(t, results, 0)
@@ -367,17 +380,17 @@ func TestFilterSeries(t *testing.T) {
 			return &jobWebFilter{}, true
 		}
 
-		results, filteredRR := materializer.filterSeries(ctx, nil, sampleLabels, sampleRowRanges)
+		results, filteredRR := materializer.filterSeriesLabels(ctx, nil, sampleLabels, sampleRowRanges)
 
 		// Should return only series with job="web" (indices 0 and 2)
 		require.Len(t, results, 2)
 		require.Len(t, filteredRR, 2)
 
 		// Verify correct series are returned
-		require.Equal(t, "metric_1", results[0].Labels().Get("__name__"))
-		require.Equal(t, "web", results[0].Labels().Get("job"))
-		require.Equal(t, "metric_3", results[1].Labels().Get("__name__"))
-		require.Equal(t, "web", results[1].Labels().Get("job"))
+		require.Equal(t, "metric_1", results[0].Get("__name__"))
+		require.Equal(t, "web", results[0].Get("job"))
+		require.Equal(t, "metric_3", results[1].Get("__name__"))
+		require.Equal(t, "web", results[1].Get("job"))
 
 		// Verify row ranges map to the actual row positions from input
 		expectedRR := []RowRange{
@@ -401,15 +414,15 @@ func TestFilterSeries(t *testing.T) {
 			return &firstTwoFilter{}, true
 		}
 
-		results, filteredRR := materializer.filterSeries(ctx, nil, sampleLabels, contiguousRowRanges)
+		results, filteredRR := materializer.filterSeriesLabels(ctx, nil, sampleLabels, contiguousRowRanges)
 
 		// Should return first two series
 		require.Len(t, results, 2)
 		require.Len(t, filteredRR, 1) // Should be merged into one contiguous range
 
 		// Verify correct series are returned
-		require.Equal(t, "metric_1", results[0].Labels().Get("__name__"))
-		require.Equal(t, "metric_2", results[1].Labels().Get("__name__"))
+		require.Equal(t, "metric_1", results[0].Get("__name__"))
+		require.Equal(t, "metric_2", results[1].Get("__name__"))
 
 		// Verify contiguous ranges are merged
 		expectedRR := []RowRange{
@@ -424,7 +437,7 @@ func TestFilterSeries(t *testing.T) {
 			return &acceptAllFilter{}, true
 		}
 
-		results, filteredRR := materializer.filterSeries(ctx, nil, nil, nil)
+		results, filteredRR := materializer.filterSeriesLabels(ctx, nil, nil, nil)
 
 		require.Len(t, results, 0)
 		require.Len(t, filteredRR, 0)
@@ -442,7 +455,7 @@ func TestFilterSeries(t *testing.T) {
 			return filter, true
 		}
 
-		_, _ = materializer.filterSeries(ctx, nil, sampleLabels, sampleRowRanges)
+		_, _ = materializer.filterSeriesLabels(ctx, nil, sampleLabels, sampleRowRanges)
 
 		require.True(t, closeCalled, "Filter Close() should have been called")
 	})
