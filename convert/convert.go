@@ -48,6 +48,7 @@ var DefaultConvertOpts = convertOpts{
 	columnPageBuffers:  parquet.DefaultWriterConfig().ColumnPageBuffers,
 	concurrency:        runtime.GOMAXPROCS(0),
 	maxSamplesPerChunk: tsdb.DefaultSamplesPerChunk,
+	includeTimeranges:  false,
 }
 
 type Convertible interface {
@@ -71,6 +72,7 @@ type convertOpts struct {
 	maxSamplesPerChunk    int
 	labelsCompressionOpts []schema.CompressionOpts
 	chunksCompressionOpts []schema.CompressionOpts
+	includeTimeranges     bool
 }
 
 func (cfg convertOpts) buildBloomfilterColumns() []parquet.BloomFilterColumn {
@@ -287,6 +289,22 @@ func WithChunksCompression(compressionOpts ...schema.CompressionOpts) ConvertOpt
 	}
 }
 
+// WithIncludeTimeranges controls whether chunk time range metadata is included in the chunks.parquet file.
+// When enabled, the chunks file will contain an additional column with encoded time ranges for each series,
+// providing the min/max timestamps of all chunks belonging to that series.
+//
+// Parameters:
+//   - include: whether to include timeranges column (default: true)
+//
+// Example:
+//
+//	WithIncludeTimeranges(false)  // Exclude timeranges to reduce file size
+func WithIncludeTimeranges(include bool) ConvertOption {
+	return func(opts *convertOpts) {
+		opts.includeTimeranges = include
+	}
+}
+
 // ConvertTSDBBlock converts one or more TSDB blocks to Parquet format and writes them to an object store bucket.
 // It processes time series data within the specified time range and outputs sharded Parquet files.
 //
@@ -364,7 +382,7 @@ func NewTsdbRowReader(ctx context.Context, mint, maxt, colDuration int64, blks [
 		closers    = make([]io.Closer, 0, len(blks))
 	)
 
-	b := schema.NewBuilder(mint, maxt, colDuration)
+	b := schema.NewBuilder(mint, maxt, colDuration, ops.includeTimeranges)
 
 	compareFunc := func(a, b labels.Labels) int {
 		for _, lb := range ops.sortedLabels {
@@ -494,8 +512,9 @@ func sortedPostings(ctx context.Context, indexr tsdb.IndexReader, sortedLabels .
 
 func (rr *TsdbRowReader) ReadRows(buf []parquet.Row) (int, error) {
 	type chkBytesOrError struct {
-		chkBytes [][]byte
-		err      error
+		chkBytes   [][]byte
+		timeranges []schema.ChunkTimerange
+		err        error
 	}
 	type chunkSeriesPromise struct {
 		s storage.ChunkSeries
@@ -522,8 +541,8 @@ func (rr *TsdbRowReader) ReadRows(buf []parquet.Row) (int, error) {
 				return
 			}
 			go func() {
-				chkBytes, err := rr.encoder.Encode(it)
-				promise.c <- chkBytesOrError{chkBytes: chkBytes, err: err}
+				chkBytes, timeranges, err := rr.encoder.Encode(it)
+				promise.c <- chkBytesOrError{chkBytes: chkBytes, timeranges: timeranges, err: err}
 			}()
 			i++
 		}
@@ -535,6 +554,7 @@ func (rr *TsdbRowReader) ReadRows(buf []parquet.Row) (int, error) {
 	if !ok {
 		return 0, fmt.Errorf("unable to find indexes")
 	}
+	chunkTimerangeColumn, hasTimeranges := rr.tsdbSchema.Schema.Lookup(schema.ChunkTimeranges)
 
 	for promise := range c {
 		j++
@@ -556,6 +576,14 @@ func (rr *TsdbRowReader) ReadRows(buf []parquet.Row) (int, error) {
 		})
 
 		rr.rowBuilder.Add(colIndex.ColumnIndex, parquet.ValueOf(schema.EncodeIntSlice(lblsIdxs)))
+
+		if hasTimeranges {
+			timeranges := make([]int64, 0, len(chkBytesOrErr.timeranges)*2)
+			for _, t := range chkBytesOrErr.timeranges {
+				timeranges = append(timeranges, t.MinTime, t.MaxTime)
+			}
+			rr.rowBuilder.Add(chunkTimerangeColumn.ColumnIndex, parquet.ValueOf(schema.EncodeIntSlice(timeranges)))
+		}
 
 		// skip series that have no chunks in the requested time
 		if allChunksEmpty(chkBytes) {
