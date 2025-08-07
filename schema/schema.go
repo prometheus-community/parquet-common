@@ -28,6 +28,7 @@ const (
 	LabelColumnPrefix = "l_"
 	DataColumnPrefix  = "s_data_"
 	ColIndexes        = "s_col_indexes"
+	ChunkTimeranges   = "s_chunk_timeranges"
 
 	DataColSizeMd = "data_col_duration_ms"
 	MinTMd        = "minT"

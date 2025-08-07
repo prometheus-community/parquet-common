@@ -54,7 +54,7 @@ load_with_nhcb 1m
 	require.NoError(t, app.Commit())
 
 	mint, maxt := ts.Head().MinTime(), ts.Head().MaxTime()
-	sb := NewBuilder(mint, maxt, (time.Minute * 60).Milliseconds())
+	sb := NewBuilder(mint, maxt, (time.Minute * 60).Milliseconds(), true)
 	s, err := sb.Build()
 	maxSamplesPerChunk := 30
 	enc := NewPrometheusParquetChunksEncoder(s, maxSamplesPerChunk)
@@ -82,8 +82,9 @@ load_with_nhcb 1m
 			chks[i].Chunk = c
 			totalSamples += c.NumSamples()
 		}
-		decodedChunksByTime, err := enc.Encode(storage.NewListChunkSeriesIterator(chks...))
+		decodedChunksByTime, timeranges, err := enc.Encode(storage.NewListChunkSeriesIterator(chks...))
 		require.NoError(t, err)
+		require.NotEmpty(t, timeranges)
 		for _, chunksByTime := range decodedChunksByTime {
 			decodedChunkMeta, err := dec.Decode(chunksByTime, mint, maxt)
 			require.NoError(t, err)

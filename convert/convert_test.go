@@ -19,6 +19,7 @@ import (
 	"math"
 	"math/rand"
 	"slices"
+	"sort"
 	"strconv"
 	"testing"
 	"time"
@@ -98,7 +99,7 @@ func Test_Convert_TSDB(t *testing.T) {
 			require.NoError(t, app.Commit())
 
 			h := st.Head()
-			shards, err := ConvertTSDBBlock(ctx, bkt, h.MinTime(), h.MaxTime(), []Convertible{h}, WithColDuration(tt.dataColDuration), WithSortBy(labels.MetricName))
+			shards, err := ConvertTSDBBlock(ctx, bkt, h.MinTime(), h.MaxTime(), []Convertible{h}, WithColDuration(tt.dataColDuration), WithSortBy(labels.MetricName), WithIncludeTimeranges(true))
 			require.NoError(t, err)
 			require.Equal(t, 1, shards)
 
@@ -113,6 +114,16 @@ func Test_Convert_TSDB(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, st.DB.Head().NumSeries(), uint64(len(series)))
 			require.Equal(t, st.DB.Head().NumSeries(), uint64(len(chunks)))
+
+			seriesTimeranges := readTimeranges(t, shard)
+			for i, timeranges := range seriesTimeranges {
+				metas := chunks[i]
+				require.Equal(t, len(metas)*2, len(timeranges))
+				for j, meta := range metas {
+					require.Equal(t, meta.MinTime, timeranges[j*2])
+					require.Equal(t, meta.MaxTime, timeranges[j*2+1])
+				}
+			}
 
 			// Make sure the chunk page bounds are empty
 			for _, ci := range shard.ChunksFile().ColumnIndexes() {
@@ -198,7 +209,7 @@ func Test_CreateParquetWithReducedTimestampSamples(t *testing.T) {
 
 	// 2 labels + col indexes
 	require.Len(t, shard.LabelsFile().Schema().Columns(), 3)
-	// 6 data cols with 10 min duration
+	// 6 data cols with 10 min duration (no timeranges col by default)
 	require.Len(t, shard.ChunksFile().Schema().Columns(), 6)
 	series, chunks, err := readSeries(t, shard)
 
@@ -282,6 +293,62 @@ func Test_BlockHasOnlySomeSeriesInConvertTime(t *testing.T) {
 	series, _, err := readSeries(t, shard)
 	require.NoError(t, err)
 	require.Len(t, series, 241)
+}
+
+func Test_IncludeTimerangesOption(t *testing.T) {
+	ctx := context.Background()
+	st := teststorage.New(t)
+	t.Cleanup(func() { _ = st.Close() })
+
+	bkt, err := filesystem.NewBucket(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = bkt.Close() })
+
+	app := st.Appender(ctx)
+	_, err = app.Append(0, labels.FromStrings("__name__", "test_metric", "job", "test"), 100, 1.0)
+	require.NoError(t, err)
+	require.NoError(t, app.Commit())
+
+	h := st.Head()
+
+	testCases := []struct {
+		name             string
+		includeTimerange bool
+		expectedColumns  int
+	}{
+		{
+			name:             "with_timeranges",
+			includeTimerange: true,
+			expectedColumns:  2, // 1 data column + 1 timeranges column
+		},
+		{
+			name:             "without_timeranges",
+			includeTimerange: false,
+			expectedColumns:  1, // 1 data column only
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ConvertTSDBBlock(
+				ctx, bkt, h.MinTime(), h.MaxTime(), []Convertible{h},
+				WithIncludeTimeranges(tc.includeTimerange),
+				WithName("test_"+tc.name),
+			)
+			require.NoError(t, err)
+
+			bucketOpener := storage.NewParquetBucketOpener(bkt)
+			shard, err := storage.NewParquetShardOpener(
+				ctx, "test_"+tc.name, bucketOpener, bucketOpener, 0,
+			)
+			require.NoError(t, err)
+
+			chunksSchema := shard.ChunksFile().Schema()
+			_, hasTimeranges := chunksSchema.Lookup(schema.ChunkTimeranges)
+			require.Equal(t, tc.includeTimerange, hasTimeranges)
+			require.Len(t, chunksSchema.Columns(), tc.expectedColumns)
+		})
+	}
 }
 
 func Test_SortedLabels(t *testing.T) {
@@ -448,7 +515,7 @@ func rowToSeries(t *testing.T, s *parquet.Schema, dec *schema.PrometheusParquetC
 			}
 
 			if col == schema.ColIndexes {
-				lblIdx, err := schema.DecodeUintSlice(colVal.ByteArray())
+				lblIdx, err := schema.DecodeUintSlice[int](colVal.ByteArray())
 				if err != nil {
 					return nil, nil, err
 				}
@@ -458,7 +525,39 @@ func rowToSeries(t *testing.T, s *parquet.Schema, dec *schema.PrometheusParquetC
 		series[i] = b.Labels()
 		slices.Sort(foundLblsIdxs)
 		require.Equal(t, expectedLblsIdxs, foundLblsIdxs)
+
+		// Data columns in a parquet.Row are not necessarily ordered by index.
+		// Sort them by start time to follow the s_data_i order.
+		sort.Slice(chunksMetas[i], func(a, b int) bool {
+			return chunksMetas[i][a].MinTime < chunksMetas[i][b].MinTime
+		})
 	}
 
 	return series, chunksMetas, nil
+}
+
+func readTimeranges(t *testing.T, shard *storage.ParquetShardOpener) [][]int64 {
+	ctx := context.Background()
+
+	chunksSchema := shard.ChunksFile().Schema()
+	cr := parquet.NewGenericReader[any](shard.ChunksFile().WithContext(ctx))
+	chunkTimerangeCol, ok := chunksSchema.Lookup(schema.ChunkTimeranges)
+	require.True(t, ok)
+
+	chunksBuff := make([]parquet.Row, 100)
+	var seriesTimeranges [][]int64
+	for {
+		nc, _ := cr.ReadRows(chunksBuff)
+		if nc == 0 {
+			break
+		}
+		for i := 0; i < nc; i++ {
+			row := chunksBuff[i]
+			timerangeBytes := row[chunkTimerangeCol.ColumnIndex].ByteArray()
+			timeranges, err := schema.DecodeUintSlice[int64](timerangeBytes)
+			require.NoError(t, err)
+			seriesTimeranges = append(seriesTimeranges, timeranges)
+		}
+	}
+	return seriesTimeranges
 }

@@ -278,7 +278,7 @@ func (m *Materializer) MaterializeLabelNames(ctx context.Context, rgi int, rr []
 	for _, colsIdx := range colsIdxs {
 		key := util.YoloString(colsIdx.ByteArray())
 		if _, ok := seen[key]; !ok {
-			idxs, err := schema.DecodeUintSlice(colsIdx.ByteArray())
+			idxs, err := schema.DecodeUintSlice[int](colsIdx.ByteArray())
 			if err != nil {
 				return nil, errors.Wrap(err, "failed to decode column index")
 			}
@@ -479,7 +479,7 @@ func (m *Materializer) buildColumnMappings(rr []RowRange, columnIndexes []parque
 
 		// Process each row in the current range
 		for rowInRange := int64(0); rowInRange < rowRange.Count; rowInRange++ {
-			columnIds, err := schema.DecodeUintSlice(columnIndexes[columnIndexPos].ByteArray())
+			columnIds, err := schema.DecodeUintSlice[int](columnIndexes[columnIndexPos].ByteArray())
 			columnIndexPos++
 
 			if err != nil {

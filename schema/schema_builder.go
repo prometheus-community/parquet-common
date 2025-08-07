@@ -27,6 +27,7 @@ type Builder struct {
 	metadata          map[string]string
 	dataColDurationMs int64
 	mint, maxt        int64
+	includeTimeranges bool
 }
 
 // NewBuilder creates a new Builder instance for constructing TSDB schemas.
@@ -36,9 +37,10 @@ type Builder struct {
 //   - mint: minimum timestamp (inclusive) for the time range
 //   - maxt: maximum timestamp (inclusive) for the time range
 //   - colDuration: duration in milliseconds for each data column
+//   - includeTimeranges: whether to include the timeranges column in the schema
 //
 // Returns a pointer to a new Builder instance with initialized metadata.
-func NewBuilder(mint, maxt, colDuration int64) *Builder {
+func NewBuilder(mint, maxt, colDuration int64, includeTimeranges bool) *Builder {
 	b := &Builder{
 		g:                 make(parquet.Group),
 		dataColDurationMs: colDuration,
@@ -47,8 +49,9 @@ func NewBuilder(mint, maxt, colDuration int64) *Builder {
 			MaxTMd:        strconv.FormatInt(maxt, 10),
 			MinTMd:        strconv.FormatInt(mint, 10),
 		},
-		mint: mint,
-		maxt: maxt,
+		mint:              mint,
+		maxt:              maxt,
+		includeTimeranges: includeTimeranges,
 	}
 
 	return b
@@ -82,6 +85,9 @@ func FromLabelsFile(lf parquet.FileView) (*TSDBSchema, error) {
 		mint:              mint,
 		maxt:              maxt,
 		dataColDurationMs: dataColDurationMs,
+		// TODO: We have no way of knowing if the chunks file has timeranges or
+		// not. Assume not for compatibility.
+		includeTimeranges: false,
 	}
 
 	for _, c := range lf.Schema().Columns() {
@@ -106,6 +112,9 @@ func (b *Builder) Build() (*TSDBSchema, error) {
 	colIdx := 0
 
 	b.g[ColIndexes] = parquet.Encoded(parquet.Leaf(parquet.ByteArrayType), &parquet.DeltaByteArray)
+	if b.includeTimeranges {
+		b.g[ChunkTimeranges] = parquet.Encoded(parquet.Leaf(parquet.ByteArrayType), &parquet.DeltaByteArray)
+	}
 	for i := b.mint; i <= b.maxt; i += b.dataColDurationMs {
 		b.g[DataColumn(colIdx)] = parquet.Encoded(parquet.Leaf(parquet.ByteArrayType), &parquet.DeltaLengthByteArray)
 		colIdx++
@@ -193,7 +202,8 @@ func (s *TSDBSchema) LabelsProjection(opts ...CompressionOpts) (*TSDBProjection,
 	}, nil
 }
 
-// ChunksProjection creates a TSDBProjection containing only data columns for time series chunks.
+// ChunksProjection creates a TSDBProjection containing only data columns for time series chunks,
+// and the chunk timeranges column if it exists.
 // This projection is used for creating parquet files that contain the actual time series data
 // without the label metadata. The resulting projection includes:
 //   - All data columns (columns that store time series chunk data)
@@ -205,10 +215,16 @@ func (s *TSDBSchema) LabelsProjection(opts ...CompressionOpts) (*TSDBProjection,
 // Returns a TSDBProjection configured for chunks files, or an error if required columns are missing.
 func (s *TSDBSchema) ChunksProjection(opts ...CompressionOpts) (*TSDBProjection, error) {
 	g := make(parquet.Group)
-	writeOptions := make([]parquet.WriterOption, 0, len(s.DataColsIndexes))
+	writeOptions := make([]parquet.WriterOption, 0, len(s.DataColsIndexes)+1)
+
+	timerangesCol, ok := s.Schema.Lookup(ChunkTimeranges)
+	if ok {
+		g[ChunkTimeranges] = timerangesCol.Node
+		writeOptions = append(writeOptions, parquet.SkipPageBounds(ChunkTimeranges))
+	}
 
 	for _, c := range s.Schema.Columns() {
-		if ok := IsDataColumn(c[0]); !ok {
+		if !IsDataColumn(c[0]) && c[0] != ChunkTimeranges {
 			continue
 		}
 		lc, ok := s.Schema.Lookup(c...)
