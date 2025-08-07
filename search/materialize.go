@@ -19,6 +19,7 @@ import (
 	"iter"
 	"maps"
 	"slices"
+	"sync"
 
 	"github.com/parquet-go/parquet-go"
 	"github.com/pkg/errors"
@@ -349,67 +350,115 @@ func (m *Materializer) materializeAllLabels(ctx context.Context, rgi int, rr []R
 		attribute.Int("row_ranges_count", len(rr)),
 	)
 
-	labelsRg := m.b.LabelsFile().RowGroups()[rgi]
-	cc := labelsRg.ColumnChunks()[m.colIdx]
-	colsIdxs, err := m.materializeColumnSlice(ctx, m.b.LabelsFile(), rgi, rr, cc, false)
+	// Get column indexes for all rows in the specified ranges
+	columnIndexes, err := m.getColumnIndexes(ctx, rgi, rr)
 	if err != nil {
-		return nil, errors.Wrap(err, "materializer failed to materialize columns")
+		return nil, errors.Wrap(err, "failed to get column indexes")
 	}
 
-	colsMap := make(map[int]*[]parquet.Value, 10)
-	results := make([][]labels.Label, len(colsIdxs))
-
-	for _, colsIdx := range colsIdxs {
-		idxs, err := schema.DecodeUintSlice(colsIdx.ByteArray())
-		if err != nil {
-			return nil, errors.Wrap(err, "materializer failed to decode column index")
-		}
-		for _, idx := range idxs {
-			colsMap[idx] = &[]parquet.Value{}
-		}
+	// Build mapping of which columns are needed for which row ranges
+	columnToRowRanges, rowRangeToStartIndex, err := m.buildColumnMappings(rr, columnIndexes)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to build collum mapping")
 	}
 
-	errGroup, ctx := errgroup.WithContext(ctx)
-	errGroup.SetLimit(m.concurrency)
+	// Materialize label values for each column concurrently
+	results := make([][]labels.Label, len(columnIndexes))
+	mtx := sync.Mutex{}
+	errGroup := &errgroup.Group{}
+	labelsRowGroup := m.b.LabelsFile().RowGroups()[rgi]
 
-	for cIdx, v := range colsMap {
+	for columnIndex, rowRanges := range columnToRowRanges {
 		errGroup.Go(func() error {
-			cc := labelsRg.ColumnChunks()[cIdx]
-			values, err := m.materializeColumnSlice(ctx, m.b.LabelsFile(), rgi, rr, cc, false)
-			if err != nil {
-				return errors.Wrap(err, "failed to materialize labels values")
+			// Extract label name from column schema
+			columnChunk := labelsRowGroup.ColumnChunks()[columnIndex]
+			labelName, ok := schema.ExtractLabelFromColumn(m.b.LabelsFile().Schema().Columns()[columnIndex][0])
+			if !ok {
+				return fmt.Errorf("column %d not found in schema", columnIndex)
 			}
-			*v = values
+
+			// Materialize the actual label values for this column
+			labelValues, err := m.materializeColumnSlice(ctx, m.b.LabelsFile(), rgi, rowRanges, columnChunk, false)
+			if err != nil {
+				return errors.Wrap(err, "failed to materialize label values")
+			}
+
+			// Assign label values to the appropriate result positions
+			mtx.Lock()
+			defer mtx.Unlock()
+
+			valueIndex := 0
+			for _, rowRange := range rowRanges {
+				startIndex := rowRangeToStartIndex[rowRange]
+
+				for rowInRange := 0; rowInRange < int(rowRange.Count); rowInRange++ {
+					if !labelValues[valueIndex].IsNull() {
+						results[startIndex+rowInRange] = append(results[startIndex+rowInRange], labels.Label{
+							Name:  labelName,
+							Value: util.YoloString(labelValues[valueIndex].ByteArray()),
+						})
+					}
+					valueIndex++
+				}
+			}
+
 			return nil
 		})
 	}
-
-	if err = errGroup.Wait(); err != nil {
+	if err := errGroup.Wait(); err != nil {
 		return nil, err
-	}
-
-	for i := range results {
-		// pre-allocate slice to avoid multiple allocations on append
-		results[i] = make([]labels.Label, 0, len(colsMap))
-	}
-	for cIdx, values := range colsMap {
-		labelName, ok := schema.ExtractLabelFromColumn(m.b.LabelsFile().Schema().Columns()[cIdx][0])
-		if !ok {
-			return nil, fmt.Errorf("column %d not found in schema", cIdx)
-		}
-		for i, value := range *values {
-			if value.IsNull() {
-				continue
-			}
-			results[i] = append(results[i], labels.Label{
-				Name:  labelName,
-				Value: util.YoloString(value.ByteArray()),
-			})
-		}
 	}
 
 	span.SetAttributes(attribute.Int("materialized_labels_count", len(results)))
 	return results, nil
+}
+
+// getColumnIndexes retrieves the column index data for all rows in the specified ranges
+func (m *Materializer) getColumnIndexes(ctx context.Context, rgi int, rr []RowRange) ([]parquet.Value, error) {
+	labelsRowGroup := m.b.LabelsFile().RowGroups()[rgi]
+	columnChunk := labelsRowGroup.ColumnChunks()[m.colIdx]
+
+	columnIndexes, err := m.materializeColumnSlice(ctx, m.b.LabelsFile(), rgi, rr, columnChunk, false)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to materialize column indexes")
+	}
+
+	return columnIndexes, nil
+}
+
+// buildColumnMappings creates mappings between columns and row ranges based on column indexes
+func (m *Materializer) buildColumnMappings(rr []RowRange, columnIndexes []parquet.Value) (map[int][]RowRange, map[RowRange]int, error) {
+	columnToRowRanges := make(map[int][]RowRange, 10)
+	rowRangeToStartIndex := make(map[RowRange]int, len(rr))
+
+	columnIndexPos := 0
+	resultIndex := 0
+
+	for _, rowRange := range rr {
+		rowRangeToStartIndex[rowRange] = resultIndex
+		seenColumns := util.NewBitmap(len(m.b.LabelsFile().ColumnIndexes()))
+
+		// Process each row in the current range
+		for rowInRange := int64(0); rowInRange < rowRange.Count; rowInRange++ {
+			columnIds, err := schema.DecodeUintSlice(columnIndexes[columnIndexPos].ByteArray())
+			columnIndexPos++
+
+			if err != nil {
+				return nil, nil, err
+			}
+
+			// Track which columns are needed for this row range
+			for _, columnId := range columnIds {
+				if !seenColumns.Get(columnId) {
+					columnToRowRanges[columnId] = append(columnToRowRanges[columnId], rowRange)
+					seenColumns.Set(columnId)
+				}
+			}
+			resultIndex++
+		}
+	}
+
+	return columnToRowRanges, rowRangeToStartIndex, nil
 }
 
 func totalRows(rr []RowRange) int64 {
