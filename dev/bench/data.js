@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1754555576966,
+  "lastUpdate": 1754562659921,
   "repoUrl": "https://github.com/prometheus-community/parquet-common",
   "entries": {
     "Benchmark": [
@@ -20112,6 +20112,558 @@ window.BENCHMARK_DATA = {
             "value": 1795562,
             "unit": "allocs/op",
             "extra": "61 times\n4 procs"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "alanprot@gmail.com",
+            "name": "Alan Protasio",
+            "username": "alanprot"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2aeeceacebf0f434f74db9402f9b337f91ab34ad",
+          "message": "Optimize materializeAllLabels to Avoid Unnecessary Column Materialization (#97)\n\n* Opmizing materializeAllLabels method\n\nSigned-off-by: alanprot <alanprot@gmail.com>\n\n* removing dead code\n\nSigned-off-by: alanprot <alanprot@gmail.com>\n\n* fix makefile\n\nSigned-off-by: alanprot <alanprot@gmail.com>\n\n* removing vs code settings\n\nSigned-off-by: alanprot <alanprot@gmail.com>\n\n---------\n\nSigned-off-by: alanprot <alanprot@gmail.com>",
+          "timestamp": "2025-08-07T12:26:32+02:00",
+          "tree_id": "acfb0b51cea5b80a7fe7967f0ae364d8e1982556",
+          "url": "https://github.com/prometheus-community/parquet-common/commit/2aeeceacebf0f434f74db9402f9b337f91ab34ad"
+        },
+        "date": 1754562659479,
+        "tool": "go",
+        "benches": [
+          {
+            "name": "BenchmarkSelect/SingleMetricAllSeries",
+            "value": 936436111,
+            "unit": "ns/op\t   5683933 bytes_get_range/op\t         0 get/op\t      5400 get_range/op\t    300000 series/op\t822836827 B/op\t 7996252 allocs/op",
+            "extra": "21 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricAllSeries - ns/op",
+            "value": 936436111,
+            "unit": "ns/op",
+            "extra": "21 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricAllSeries - bytes_get_range/op",
+            "value": 5683933,
+            "unit": "bytes_get_range/op",
+            "extra": "21 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricAllSeries - get/op",
+            "value": 0,
+            "unit": "get/op",
+            "extra": "21 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricAllSeries - get_range/op",
+            "value": 5400,
+            "unit": "get_range/op",
+            "extra": "21 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricAllSeries - series/op",
+            "value": 300000,
+            "unit": "series/op",
+            "extra": "21 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricAllSeries - B/op",
+            "value": 822836827,
+            "unit": "B/op",
+            "extra": "21 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricAllSeries - allocs/op",
+            "value": 7996252,
+            "unit": "allocs/op",
+            "extra": "21 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricReducedSeries",
+            "value": 48551324,
+            "unit": "ns/op\t    327492 bytes_get_range/op\t         0 get/op\t       654.0 get_range/op\t      3000 series/op\t74010710 B/op\t  230592 allocs/op",
+            "extra": "226 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricReducedSeries - ns/op",
+            "value": 48551324,
+            "unit": "ns/op",
+            "extra": "226 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricReducedSeries - bytes_get_range/op",
+            "value": 327492,
+            "unit": "bytes_get_range/op",
+            "extra": "226 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricReducedSeries - get/op",
+            "value": 0,
+            "unit": "get/op",
+            "extra": "226 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricReducedSeries - get_range/op",
+            "value": 654,
+            "unit": "get_range/op",
+            "extra": "226 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricReducedSeries - series/op",
+            "value": 3000,
+            "unit": "series/op",
+            "extra": "226 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricReducedSeries - B/op",
+            "value": 74010710,
+            "unit": "B/op",
+            "extra": "226 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricReducedSeries - allocs/op",
+            "value": 230592,
+            "unit": "allocs/op",
+            "extra": "226 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricOneSeries",
+            "value": 46556533,
+            "unit": "ns/op\t    280517 bytes_get_range/op\t         0 get/op\t       624.0 get_range/op\t         1.000 series/op\t69005837 B/op\t  225208 allocs/op",
+            "extra": "246 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricOneSeries - ns/op",
+            "value": 46556533,
+            "unit": "ns/op",
+            "extra": "246 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricOneSeries - bytes_get_range/op",
+            "value": 280517,
+            "unit": "bytes_get_range/op",
+            "extra": "246 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricOneSeries - get/op",
+            "value": 0,
+            "unit": "get/op",
+            "extra": "246 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricOneSeries - get_range/op",
+            "value": 624,
+            "unit": "get_range/op",
+            "extra": "246 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricOneSeries - series/op",
+            "value": 1,
+            "unit": "series/op",
+            "extra": "246 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricOneSeries - B/op",
+            "value": 69005837,
+            "unit": "B/op",
+            "extra": "246 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricOneSeries - allocs/op",
+            "value": 225208,
+            "unit": "allocs/op",
+            "extra": "246 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricSparseSeries",
+            "value": 118577007,
+            "unit": "ns/op\t   1981756 bytes_get_range/op\t         0 get/op\t      3000 get_range/op\t      5000 series/op\t138162259 B/op\t  567504 allocs/op",
+            "extra": "100 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricSparseSeries - ns/op",
+            "value": 118577007,
+            "unit": "ns/op",
+            "extra": "100 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricSparseSeries - bytes_get_range/op",
+            "value": 1981756,
+            "unit": "bytes_get_range/op",
+            "extra": "100 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricSparseSeries - get/op",
+            "value": 0,
+            "unit": "get/op",
+            "extra": "100 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricSparseSeries - get_range/op",
+            "value": 3000,
+            "unit": "get_range/op",
+            "extra": "100 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricSparseSeries - series/op",
+            "value": 5000,
+            "unit": "series/op",
+            "extra": "100 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricSparseSeries - B/op",
+            "value": 138162259,
+            "unit": "B/op",
+            "extra": "100 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/SingleMetricSparseSeries - allocs/op",
+            "value": 567504,
+            "unit": "allocs/op",
+            "extra": "100 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/NonExistentSeries",
+            "value": 42301745,
+            "unit": "ns/op\t    270635 bytes_get_range/op\t         0 get/op\t       600.0 get_range/op\t         0 series/op\t65965936 B/op\t  150921 allocs/op",
+            "extra": "276 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/NonExistentSeries - ns/op",
+            "value": 42301745,
+            "unit": "ns/op",
+            "extra": "276 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/NonExistentSeries - bytes_get_range/op",
+            "value": 270635,
+            "unit": "bytes_get_range/op",
+            "extra": "276 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/NonExistentSeries - get/op",
+            "value": 0,
+            "unit": "get/op",
+            "extra": "276 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/NonExistentSeries - get_range/op",
+            "value": 600,
+            "unit": "get_range/op",
+            "extra": "276 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/NonExistentSeries - series/op",
+            "value": 0,
+            "unit": "series/op",
+            "extra": "276 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/NonExistentSeries - B/op",
+            "value": 65965936,
+            "unit": "B/op",
+            "extra": "276 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/NonExistentSeries - allocs/op",
+            "value": 150921,
+            "unit": "allocs/op",
+            "extra": "276 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/MultipleMetricsRange",
+            "value": 3905715748,
+            "unit": "ns/op\t  30865426 bytes_get_range/op\t         0 get/op\t     58013 get_range/op\t   1200000 series/op\t3372078733 B/op\t32470767 allocs/op",
+            "extra": "3 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/MultipleMetricsRange - ns/op",
+            "value": 3905715748,
+            "unit": "ns/op",
+            "extra": "3 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/MultipleMetricsRange - bytes_get_range/op",
+            "value": 30865426,
+            "unit": "bytes_get_range/op",
+            "extra": "3 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/MultipleMetricsRange - get/op",
+            "value": 0,
+            "unit": "get/op",
+            "extra": "3 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/MultipleMetricsRange - get_range/op",
+            "value": 58013,
+            "unit": "get_range/op",
+            "extra": "3 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/MultipleMetricsRange - series/op",
+            "value": 1200000,
+            "unit": "series/op",
+            "extra": "3 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/MultipleMetricsRange - B/op",
+            "value": 3372078733,
+            "unit": "B/op",
+            "extra": "3 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/MultipleMetricsRange - allocs/op",
+            "value": 32470767,
+            "unit": "allocs/op",
+            "extra": "3 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/MultipleMetricsSparse",
+            "value": 1171840889,
+            "unit": "ns/op\t  14625940 bytes_get_range/op\t         0 get/op\t     43613 get_range/op\t    300000 series/op\t1116291167 B/op\t 9009974 allocs/op",
+            "extra": "10 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/MultipleMetricsSparse - ns/op",
+            "value": 1171840889,
+            "unit": "ns/op",
+            "extra": "10 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/MultipleMetricsSparse - bytes_get_range/op",
+            "value": 14625940,
+            "unit": "bytes_get_range/op",
+            "extra": "10 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/MultipleMetricsSparse - get/op",
+            "value": 0,
+            "unit": "get/op",
+            "extra": "10 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/MultipleMetricsSparse - get_range/op",
+            "value": 43613,
+            "unit": "get_range/op",
+            "extra": "10 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/MultipleMetricsSparse - series/op",
+            "value": 300000,
+            "unit": "series/op",
+            "extra": "10 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/MultipleMetricsSparse - B/op",
+            "value": 1116291167,
+            "unit": "B/op",
+            "extra": "10 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/MultipleMetricsSparse - allocs/op",
+            "value": 9009974,
+            "unit": "allocs/op",
+            "extra": "10 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/NegativeRegexSingleMetric",
+            "value": 825821382,
+            "unit": "ns/op\t   6334022 bytes_get_range/op\t         0 get/op\t     12107 get_range/op\t    234000 series/op\t756635852 B/op\t 6902786 allocs/op",
+            "extra": "26 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/NegativeRegexSingleMetric - ns/op",
+            "value": 825821382,
+            "unit": "ns/op",
+            "extra": "26 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/NegativeRegexSingleMetric - bytes_get_range/op",
+            "value": 6334022,
+            "unit": "bytes_get_range/op",
+            "extra": "26 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/NegativeRegexSingleMetric - get/op",
+            "value": 0,
+            "unit": "get/op",
+            "extra": "26 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/NegativeRegexSingleMetric - get_range/op",
+            "value": 12107,
+            "unit": "get_range/op",
+            "extra": "26 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/NegativeRegexSingleMetric - series/op",
+            "value": 234000,
+            "unit": "series/op",
+            "extra": "26 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/NegativeRegexSingleMetric - B/op",
+            "value": 756635852,
+            "unit": "B/op",
+            "extra": "26 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/NegativeRegexSingleMetric - allocs/op",
+            "value": 6902786,
+            "unit": "allocs/op",
+            "extra": "26 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/NegativeRegexMultipleMetrics",
+            "value": 2646844341,
+            "unit": "ns/op\t  27402377 bytes_get_range/op\t         0 get/op\t     73332 get_range/op\t    702000 series/op\t2348204470 B/op\t20268109 allocs/op",
+            "extra": "4 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/NegativeRegexMultipleMetrics - ns/op",
+            "value": 2646844341,
+            "unit": "ns/op",
+            "extra": "4 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/NegativeRegexMultipleMetrics - bytes_get_range/op",
+            "value": 27402377,
+            "unit": "bytes_get_range/op",
+            "extra": "4 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/NegativeRegexMultipleMetrics - get/op",
+            "value": 0,
+            "unit": "get/op",
+            "extra": "4 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/NegativeRegexMultipleMetrics - get_range/op",
+            "value": 73332,
+            "unit": "get_range/op",
+            "extra": "4 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/NegativeRegexMultipleMetrics - series/op",
+            "value": 702000,
+            "unit": "series/op",
+            "extra": "4 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/NegativeRegexMultipleMetrics - B/op",
+            "value": 2348204470,
+            "unit": "B/op",
+            "extra": "4 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/NegativeRegexMultipleMetrics - allocs/op",
+            "value": 20268109,
+            "unit": "allocs/op",
+            "extra": "4 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/ExpensiveRegexSingleMetric",
+            "value": 160397356,
+            "unit": "ns/op\t   2220007 bytes_get_range/op\t         0 get/op\t      8459 get_range/op\t      6000 series/op\t200747391 B/op\t  840598 allocs/op",
+            "extra": "100 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/ExpensiveRegexSingleMetric - ns/op",
+            "value": 160397356,
+            "unit": "ns/op",
+            "extra": "100 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/ExpensiveRegexSingleMetric - bytes_get_range/op",
+            "value": 2220007,
+            "unit": "bytes_get_range/op",
+            "extra": "100 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/ExpensiveRegexSingleMetric - get/op",
+            "value": 0,
+            "unit": "get/op",
+            "extra": "100 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/ExpensiveRegexSingleMetric - get_range/op",
+            "value": 8459,
+            "unit": "get_range/op",
+            "extra": "100 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/ExpensiveRegexSingleMetric - series/op",
+            "value": 6000,
+            "unit": "series/op",
+            "extra": "100 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/ExpensiveRegexSingleMetric - B/op",
+            "value": 200747391,
+            "unit": "B/op",
+            "extra": "100 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/ExpensiveRegexSingleMetric - allocs/op",
+            "value": 840598,
+            "unit": "allocs/op",
+            "extra": "100 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/ExpensiveRegexMultipleMetrics",
+            "value": 430619101,
+            "unit": "ns/op\t  14736066 bytes_get_range/op\t         0 get/op\t     62100 get_range/op\t         0 series/op\t563100832 B/op\t 1795562 allocs/op",
+            "extra": "63 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/ExpensiveRegexMultipleMetrics - ns/op",
+            "value": 430619101,
+            "unit": "ns/op",
+            "extra": "63 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/ExpensiveRegexMultipleMetrics - bytes_get_range/op",
+            "value": 14736066,
+            "unit": "bytes_get_range/op",
+            "extra": "63 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/ExpensiveRegexMultipleMetrics - get/op",
+            "value": 0,
+            "unit": "get/op",
+            "extra": "63 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/ExpensiveRegexMultipleMetrics - get_range/op",
+            "value": 62100,
+            "unit": "get_range/op",
+            "extra": "63 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/ExpensiveRegexMultipleMetrics - series/op",
+            "value": 0,
+            "unit": "series/op",
+            "extra": "63 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/ExpensiveRegexMultipleMetrics - B/op",
+            "value": 563100832,
+            "unit": "B/op",
+            "extra": "63 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSelect/ExpensiveRegexMultipleMetrics - allocs/op",
+            "value": 1795562,
+            "unit": "allocs/op",
+            "extra": "63 times\n4 procs"
           }
         ]
       }
