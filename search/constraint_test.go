@@ -62,10 +62,18 @@ func buildFile[T any](t testing.TB, rows []T) storage.ParquetShard {
 	return shard
 }
 
-func mustNewFastRegexMatcher(t testing.TB, s string) *labels.FastRegexMatcher {
-	res, err := labels.NewFastRegexMatcher(s)
+func mustNewMatcher(t testing.TB, s string) *labels.Matcher {
+	res, err := labels.NewMatcher(labels.MatchRegexp, "doesntmatter", s)
 	if err != nil {
 		t.Fatalf("unable to build fast regex matcher: %s", err)
+	}
+	return res
+}
+
+func mustRegexConstraint(t testing.TB, col string, m *labels.Matcher) Constraint {
+	res, err := Regex(col, m)
+	if err != nil {
+		t.Fatalf("unable to build regex constraint: %s", err)
 	}
 	return res
 }
@@ -112,14 +120,14 @@ func BenchmarkConstraints(b *testing.B) {
 			c: []Constraint{
 				Equal("A", parquet.ValueOf(rows[0].A)),
 				Equal("B", parquet.ValueOf(rows[0].B)),
-				Regex("Random", mustNewFastRegexMatcher(b, rows[0].Random)),
+				mustRegexConstraint(b, "Random", mustNewMatcher(b, rows[0].Random)),
 			},
 		},
 		{
 			c: []Constraint{
 				Equal("A", parquet.ValueOf(rows[len(rows)-1].A)),
 				Equal("B", parquet.ValueOf(rows[len(rows)-1].B)),
-				Regex("Random", mustNewFastRegexMatcher(b, rows[len(rows)-1].Random)),
+				mustRegexConstraint(b, "Random", mustNewMatcher(b, rows[len(rows)-1].Random)),
 			},
 		},
 	}
@@ -161,7 +169,7 @@ func TestContextCancelled(t *testing.T) {
 
 	for _, c := range []Constraint{
 		Equal("A", parquet.ValueOf(rows[len(rows)-1].A)),
-		Regex("A", mustNewFastRegexMatcher(t, rows[len(rows)-1].A)),
+		mustRegexConstraint(t, "A", mustNewMatcher(t, rows[len(rows)-1].A)),
 		Not(Equal("A", parquet.ValueOf(rows[len(rows)-1].A))),
 	} {
 		if err := Initialize(shard.LabelsFile(), c); err != nil {
@@ -258,7 +266,7 @@ func TestFilter(t *testing.T) {
 					},
 					{
 						constraints: []Constraint{
-							Regex("C", mustNewFastRegexMatcher(t, "a|c|d")),
+							mustRegexConstraint(t, "C", mustNewMatcher(t, "a|c|d")),
 						},
 						expect: []RowRange{
 							{From: 0, Count: 1},
@@ -368,7 +376,7 @@ func TestFilter(t *testing.T) {
 				expectations: []expectation{
 					{
 						constraints: []Constraint{
-							Regex("C", mustNewFastRegexMatcher(t, "f.*")),
+							mustRegexConstraint(t, "C", mustNewMatcher(t, "f.*")),
 						},
 						expect: []RowRange{
 							{From: 0, Count: 1},
@@ -377,7 +385,7 @@ func TestFilter(t *testing.T) {
 					},
 					{
 						constraints: []Constraint{
-							Regex("C", mustNewFastRegexMatcher(t, "b.*")),
+							mustRegexConstraint(t, "C", mustNewMatcher(t, "b.*")),
 						},
 						expect: []RowRange{
 							{From: 1, Count: 1},
@@ -386,7 +394,7 @@ func TestFilter(t *testing.T) {
 					},
 					{
 						constraints: []Constraint{
-							Regex("C", mustNewFastRegexMatcher(t, "f.*|b.*")),
+							mustRegexConstraint(t, "C", mustNewMatcher(t, "f.*|b.*")),
 						},
 						expect: []RowRange{
 							{From: 0, Count: 4},
@@ -440,14 +448,14 @@ func TestFilter(t *testing.T) {
 					{
 						constraints: []Constraint{
 							Equal("A", parquet.ValueOf("1")),
-							Regex("None", mustNewFastRegexMatcher(t, "f.*|b.*")),
+							mustRegexConstraint(t, "None", mustNewMatcher(t, "f.*|b.*")),
 						},
 						expect: []RowRange{},
 					},
 					{
 						constraints: []Constraint{
 							Equal("A", parquet.ValueOf("1")),
-							Regex("None", mustNewFastRegexMatcher(t, "f.*|b.*|")),
+							mustRegexConstraint(t, "None", mustNewMatcher(t, "f.*|b.*|")),
 						},
 						expect: []RowRange{
 							{From: 0, Count: 2},
