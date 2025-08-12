@@ -698,6 +698,10 @@ func NewPageToReadWithRow(p PageToRead, rows []RowRange) PageToReadWithRow {
 	}
 }
 
+func (pr *PageToReadWithRow) Rows() []RowRange {
+	return pr.rows
+}
+
 func (m *Materializer) GetPageRangesForColummn(cc parquet.ColumnChunk, file storage.ParquetFileView, rgi int, rr []RowRange, chunkColumn bool) ([]PageToReadWithRow, error) {
 	if len(rr) == 0 {
 		return nil, nil
