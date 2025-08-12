@@ -686,12 +686,19 @@ func (m *Materializer) materializeColumnSlice(
 	return valuesFlattened, nil
 }
 
-type pageToReadWithRow struct {
-	pageToRead
+type PageToReadWithRow struct {
+	PageToRead
 	rows []RowRange
 }
 
-func (m *Materializer) GetPageRangesForColummn(cc parquet.ColumnChunk, file storage.ParquetFileView, rgi int, rr []RowRange, chunkColumn bool) ([]pageToReadWithRow, error) {
+func NewPageToReadWithRow(p PageToRead, rows []RowRange) PageToReadWithRow {
+	return PageToReadWithRow{
+		PageToRead: p,
+		rows:       rows,
+	}
+}
+
+func (m *Materializer) GetPageRangesForColummn(cc parquet.ColumnChunk, file storage.ParquetFileView, rgi int, rr []RowRange, chunkColumn bool) ([]PageToReadWithRow, error) {
 	if len(rr) == 0 {
 		return nil, nil
 	}
@@ -735,7 +742,7 @@ func (m *Materializer) GetPageRangesForColummn(cc parquet.ColumnChunk, file stor
 
 // CoalescePageRanges merges nearby pages to enable efficient sequential reads.
 // Pages that are not close to each other will be scheduled for concurrent reads.
-func (m *Materializer) CoalescePageRanges(pagedIdx map[int][]RowRange, offset parquet.OffsetIndex) []pageToReadWithRow {
+func (m *Materializer) CoalescePageRanges(pagedIdx map[int][]RowRange, offset parquet.OffsetIndex) []PageToReadWithRow {
 	_, span := tracer.Start(context.Background(), "Materializer.CoalescePageRanges")
 	defer span.End()
 
@@ -744,8 +751,7 @@ func (m *Materializer) CoalescePageRanges(pagedIdx map[int][]RowRange, offset pa
 	)
 
 	if len(pagedIdx) == 0 {
-		span.SetAttributes(attribute.Int("output_page_ranges_count", 0))
-		return []pageToReadWithRow{}
+		return []PageToReadWithRow{}
 	}
 	idxs := make([]int, 0, len(pagedIdx))
 	for idx := range pagedIdx {
@@ -758,20 +764,27 @@ func (m *Materializer) CoalescePageRanges(pagedIdx map[int][]RowRange, offset pa
 		return int(offset.Offset(idxs[i])), int(offset.Offset(idxs[i]) + offset.CompressedPageSize(idxs[i]))
 	})
 
-	r := make([]pageToReadWithRow, 0, len(parts))
+	r := make([]PageToReadWithRow, 0, len(parts))
 	totalBytes := int64(0)
 	for _, part := range parts {
-		pagesToRead := pageToReadWithRow{}
+		var rows []RowRange
 		for i := part.ElemRng[0]; i < part.ElemRng[1]; i++ {
-			pagesToRead.rows = append(pagesToRead.rows, pagedIdx[idxs[i]]...)
+			rows = append(rows, pagedIdx[idxs[i]]...)
 		}
-		pagesToRead.pfrom = int64(part.ElemRng[0])
-		pagesToRead.pto = int64(part.ElemRng[1])
-		pagesToRead.off = part.Start
-		pagesToRead.csz = part.End - part.Start
-		pagesToRead.rows = simplify(pagesToRead.rows)
-		r = append(r, pagesToRead)
-		totalBytes += int64(pagesToRead.csz)
+
+		pageToReadWithRow := NewPageToReadWithRow(
+			NewPageToRead(
+				0,
+				int64(part.ElemRng[0]),
+				int64(part.ElemRng[1]),
+				int64(part.Start),
+				int64(part.End-part.Start),
+			),
+			rows,
+		)
+
+		r = append(r, pageToReadWithRow)
+		totalBytes += pageToReadWithRow.CompressedSize()
 	}
 
 	span.SetAttributes(

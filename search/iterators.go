@@ -416,12 +416,12 @@ func newRowRangesValueIterator(
 	ctx context.Context,
 	file storage.ParquetFileView,
 	cc parquet.ColumnChunk,
-	pageRange pageToReadWithRow,
+	pageRange PageToReadWithRow,
 	dictOff uint64,
 	dictSz uint64,
 ) (*RowRangesValueIterator, error) {
-	minOffset := uint64(pageRange.off)
-	maxOffset := uint64(pageRange.off + pageRange.csz)
+	minOffset := uint64(pageRange.Offset())
+	maxOffset := uint64(pageRange.Offset() + pageRange.CompressedSize())
 
 	// if dictOff == 0, it means that the collum is not dictionary encoded
 	if dictOff > 0 && int(minOffset-(dictOff+dictSz)) < file.PagePartitioningMaxGapSize() {
@@ -536,7 +536,7 @@ type PageValueIterator struct {
 	p parquet.Page
 
 	cachedSymbols map[int32]parquet.Value
-	st            symbolTable
+	st            SymbolTable
 
 	vr parquet.ValueReader
 
