@@ -95,12 +95,12 @@ func TestMaterializeE2E(t *testing.T) {
 		// Test first column only
 		found := query(t, data.MinTime, data.MinTime+colDuration.Milliseconds()-1, shard, c1, c2)
 		require.Len(t, found, 1)
-		require.Len(t, found[0].(*concreteChunksSeries).chks, 1)
+		require.Len(t, found[0].(*ConcreteChunksSeries).chks, 1)
 
 		// Test first two columns
 		found = query(t, data.MinTime, data.MinTime+(2*colDuration).Milliseconds()-1, shard, c1, c2)
 		require.Len(t, found, 1)
-		require.Len(t, found[0].(*concreteChunksSeries).chks, 2)
+		require.Len(t, found[0].(*ConcreteChunksSeries).chks, 2)
 
 		// Query outside the range
 		found = query(t, data.MinTime+(9*colDuration).Milliseconds(), data.MinTime+(10*colDuration).Milliseconds()-1, shard, c1, c2)
@@ -272,7 +272,7 @@ func query(t *testing.T, mint, maxt int64, shard storage.ParquetShard, constrain
 
 		for seriesSetIter.Next() {
 			seriesIter := seriesSetIter.At()
-			concreteSeriesFromIter := &concreteChunksSeries{
+			concreteSeriesFromIter := &ConcreteChunksSeries{
 				lbls: seriesIter.Labels(),
 			}
 			seriesChunksIter := seriesIter.Iterator(nil)
@@ -329,7 +329,7 @@ func TestFilterSeries(t *testing.T) {
 			return nil, false
 		}
 
-		results, filteredRR := materializer.filterSeriesLabels(ctx, nil, sampleLabels, sampleRowRanges)
+		results, filteredRR := materializer.FilterSeriesLabels(ctx, nil, sampleLabels, sampleRowRanges)
 
 		// Should return all series without filtering
 		require.Len(t, results, len(sampleLabels))
@@ -348,7 +348,7 @@ func TestFilterSeries(t *testing.T) {
 			return &acceptAllFilter{}, true
 		}
 
-		results, filteredRR := materializer.filterSeriesLabels(ctx, nil, sampleLabels, sampleRowRanges)
+		results, filteredRR := materializer.FilterSeriesLabels(ctx, nil, sampleLabels, sampleRowRanges)
 
 		// Should return all series
 		require.Len(t, results, len(sampleLabels))
@@ -367,7 +367,7 @@ func TestFilterSeries(t *testing.T) {
 			return &rejectAllFilter{}, true
 		}
 
-		results, filteredRR := materializer.filterSeriesLabels(ctx, nil, sampleLabels, sampleRowRanges)
+		results, filteredRR := materializer.FilterSeriesLabels(ctx, nil, sampleLabels, sampleRowRanges)
 
 		// Should return no series
 		require.Len(t, results, 0)
@@ -380,7 +380,7 @@ func TestFilterSeries(t *testing.T) {
 			return &jobWebFilter{}, true
 		}
 
-		results, filteredRR := materializer.filterSeriesLabels(ctx, nil, sampleLabels, sampleRowRanges)
+		results, filteredRR := materializer.FilterSeriesLabels(ctx, nil, sampleLabels, sampleRowRanges)
 
 		// Should return only series with job="web" (indices 0 and 2)
 		require.Len(t, results, 2)
@@ -414,7 +414,7 @@ func TestFilterSeries(t *testing.T) {
 			return &firstTwoFilter{}, true
 		}
 
-		results, filteredRR := materializer.filterSeriesLabels(ctx, nil, sampleLabels, contiguousRowRanges)
+		results, filteredRR := materializer.FilterSeriesLabels(ctx, nil, sampleLabels, contiguousRowRanges)
 
 		// Should return first two series
 		require.Len(t, results, 2)
@@ -437,7 +437,7 @@ func TestFilterSeries(t *testing.T) {
 			return &acceptAllFilter{}, true
 		}
 
-		results, filteredRR := materializer.filterSeriesLabels(ctx, nil, nil, nil)
+		results, filteredRR := materializer.FilterSeriesLabels(ctx, nil, nil, nil)
 
 		require.Len(t, results, 0)
 		require.Len(t, filteredRR, 0)
@@ -455,7 +455,7 @@ func TestFilterSeries(t *testing.T) {
 			return filter, true
 		}
 
-		_, _ = materializer.filterSeriesLabels(ctx, nil, sampleLabels, sampleRowRanges)
+		_, _ = materializer.FilterSeriesLabels(ctx, nil, sampleLabels, sampleRowRanges)
 
 		require.True(t, closeCalled, "Filter Close() should have been called")
 	})

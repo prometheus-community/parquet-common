@@ -149,29 +149,29 @@ func (m *Materializer) Materialize(ctx context.Context, hints *prom_storage.Sele
 	if err := m.checkRowCountQuota(rr); err != nil {
 		return nil, err
 	}
-	sLbls, err := m.materializeAllLabels(ctx, rgi, rr)
+	sLbls, err := m.MaterializeAllLabels(ctx, rgi, rr)
 	if err != nil {
 		return nil, errors.Wrapf(err, "error materializing labels")
 	}
 
-	seriesSetLabels, rr := m.filterSeriesLabels(ctx, hints, sLbls, rr)
+	seriesSetLabels, rr := m.FilterSeriesLabels(ctx, hints, sLbls, rr)
 
 	if skipChunks {
-		return newNoChunksConcreteLabelsSeriesSet(seriesSetLabels), nil
+		return NewNoChunksConcreteLabelsSeriesSet(seriesSetLabels), nil
 	}
 
-	chksIter, err := m.materializeChunks(ctx, rgi, mint, maxt, rr)
+	chksIter, err := m.MaterializeChunks(ctx, rgi, mint, maxt, rr)
 	if err != nil {
 		return nil, errors.Wrap(err, "materializer failed to create chunks iterator")
 	}
 
-	seriesSetIter := newFilterEmptyChunkSeriesSet(ctx, seriesSetLabels, chksIter, m.materializedSeriesCallback)
+	seriesSetIter := NewFilterEmptyChunkSeriesSet(ctx, seriesSetLabels, chksIter, m.materializedSeriesCallback)
 
 	span.SetAttributes(attribute.Int("materialized_series_count", len(seriesSetLabels)))
 	return seriesSetIter, nil
 }
 
-func (m *Materializer) filterSeriesLabels(ctx context.Context, hints *prom_storage.SelectHints, sLbls [][]labels.Label, rr []RowRange) ([]labels.Labels, []RowRange) {
+func (m *Materializer) FilterSeriesLabels(ctx context.Context, hints *prom_storage.SelectHints, sLbls [][]labels.Label, rr []RowRange) ([]labels.Labels, []RowRange) {
 	seriesLabels := make([]labels.Labels, 0, len(sLbls))
 	labelsFilter, ok := m.materializedLabelsFilterCallback(ctx, hints)
 	if !ok {
@@ -374,8 +374,8 @@ func (m *Materializer) MaterializeAllLabelValues(ctx context.Context, name strin
 	return r, nil
 }
 
-func (m *Materializer) materializeAllLabels(ctx context.Context, rgi int, rr []RowRange) ([][]labels.Label, error) {
-	ctx, span := tracer.Start(ctx, "Materializer.materializeAllLabels")
+func (m *Materializer) MaterializeAllLabels(ctx context.Context, rgi int, rr []RowRange) ([][]labels.Label, error) {
+	ctx, span := tracer.Start(ctx, "Materializer.MaterializeAllLabels")
 	var err error
 	defer func() {
 		if err != nil {
@@ -508,9 +508,9 @@ func totalRows(rr []RowRange) int64 {
 	return res
 }
 
-func (m *Materializer) materializeChunks(ctx context.Context, rgi int, mint, maxt int64, rr []RowRange) (ChunksIteratorIterator, error) {
+func (m *Materializer) MaterializeChunks(ctx context.Context, rgi int, mint, maxt int64, rr []RowRange) (ChunksIteratorIterator, error) {
 	var err error
-	ctx, span := tracer.Start(ctx, "Materializer.materializeChunks")
+	ctx, span := tracer.Start(ctx, "Materializer.MaterializeChunks")
 	defer func() {
 		if err != nil {
 			span.RecordError(err)
@@ -535,7 +535,7 @@ func (m *Materializer) materializeChunks(ctx context.Context, rgi int, mint, max
 		attribute.Int("total_rows", int(totalRows(rr))),
 	)
 
-	var columnValueIterators []*columnValueIterator
+	var columnValueIterators []*ColumnValueIterator
 	for i := minDataCol; i <= min(maxDataCol, len(m.dataColToIndex)-1); i++ {
 		cc := rg.ColumnChunks()[m.dataColToIndex[i]]
 		columnValueIter, err := m.materializeColumnIter(ctx, m.b.ChunksFile(), rgi, rr, cc, true)
@@ -544,7 +544,7 @@ func (m *Materializer) materializeChunks(ctx context.Context, rgi int, mint, max
 		}
 		columnValueIterators = append(columnValueIterators, columnValueIter)
 	}
-	return &multiColumnChunksDecodingIterator{
+	return &MultiColumnChunksDecodingIterator{
 		mint:                 mint,
 		maxt:                 maxt,
 		columnValueIterators: columnValueIterators,
@@ -559,15 +559,15 @@ func (m *Materializer) materializeColumnIter(
 	rr []RowRange,
 	cc parquet.ColumnChunk,
 	chunkColumn bool,
-) (*columnValueIterator, error) {
-	pageRanges, err := m.getPageRangesForColummn(cc, file, rgi, rr, chunkColumn)
+) (*ColumnValueIterator, error) {
+	pageRanges, err := m.GetPageRangesForColummn(cc, file, rgi, rr, chunkColumn)
 	if err != nil {
 		return nil, err
 	}
 
 	dictOff, dictSz := file.DictionaryPageBounds(rgi, cc.Column())
 
-	rowRangesValueIterators := make([]*rowRangesValueIterator, len(pageRanges))
+	rowRangesValueIterators := make([]*RowRangesValueIterator, len(pageRanges))
 	for i, pageRange := range pageRanges {
 		rowRangesValueIter, err := newRowRangesValueIterator(
 			ctx, file, cc, pageRange, dictOff, dictSz,
@@ -577,7 +577,7 @@ func (m *Materializer) materializeColumnIter(
 		}
 		rowRangesValueIterators[i] = rowRangesValueIter
 	}
-	return &columnValueIterator{
+	return &ColumnValueIterator{
 		rowRangesIterators: rowRangesValueIterators,
 	}, nil
 }
@@ -590,7 +590,7 @@ func (m *Materializer) materializeColumnSlice(
 	cc parquet.ColumnChunk,
 	chunkColumn bool,
 ) ([]parquet.Value, error) {
-	pageRanges, err := m.getPageRangesForColummn(cc, file, rgi, rr, chunkColumn)
+	pageRanges, err := m.GetPageRangesForColummn(cc, file, rgi, rr, chunkColumn)
 	if err != nil || len(pageRanges) == 0 {
 		return nil, err
 	}
@@ -637,7 +637,7 @@ type pageToReadWithRow struct {
 	rows []RowRange
 }
 
-func (m *Materializer) getPageRangesForColummn(cc parquet.ColumnChunk, file storage.ParquetFileView, rgi int, rr []RowRange, chunkColumn bool) ([]pageToReadWithRow, error) {
+func (m *Materializer) GetPageRangesForColummn(cc parquet.ColumnChunk, file storage.ParquetFileView, rgi int, rr []RowRange, chunkColumn bool) ([]pageToReadWithRow, error) {
 	if len(rr) == 0 {
 		return nil, nil
 	}
@@ -675,13 +675,13 @@ func (m *Materializer) getPageRangesForColummn(cc parquet.ColumnChunk, file stor
 		return nil, err
 	}
 
-	pageRanges := m.coalescePageRanges(pagesToRowsMap, oidx)
+	pageRanges := m.CoalescePageRanges(pagesToRowsMap, oidx)
 	return pageRanges, nil
 }
 
-// Merge nearby pages to enable efficient sequential reads.
+// CoalescePageRanges merges nearby pages to enable efficient sequential reads.
 // Pages that are not close to each other will be scheduled for concurrent reads.
-func (m *Materializer) coalescePageRanges(pagedIdx map[int][]RowRange, offset parquet.OffsetIndex) []pageToReadWithRow {
+func (m *Materializer) CoalescePageRanges(pagedIdx map[int][]RowRange, offset parquet.OffsetIndex) []pageToReadWithRow {
 	if len(pagedIdx) == 0 {
 		return []pageToReadWithRow{}
 	}

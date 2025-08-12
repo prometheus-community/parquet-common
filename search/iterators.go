@@ -29,31 +29,31 @@ import (
 	"github.com/prometheus-community/parquet-common/storage"
 )
 
-var _ prom_storage.ChunkSeries = &concreteChunksSeries{}
+var _ prom_storage.ChunkSeries = &ConcreteChunksSeries{}
 
-type concreteChunksSeries struct {
+type ConcreteChunksSeries struct {
 	lbls labels.Labels
 	chks []chunks.Meta
 }
 
-func (c concreteChunksSeries) Labels() labels.Labels {
+func (c ConcreteChunksSeries) Labels() labels.Labels {
 	return c.lbls
 }
 
-func (c concreteChunksSeries) Iterator(_ chunks.Iterator) chunks.Iterator {
+func (c ConcreteChunksSeries) Iterator(_ chunks.Iterator) chunks.Iterator {
 	return prom_storage.NewListChunkSeriesIterator(c.chks...)
 }
 
-type iteratorChunksSeries struct {
+type IteratorChunksSeries struct {
 	lbls labels.Labels
 	chks chunks.Iterator
 }
 
-func (i *iteratorChunksSeries) Labels() labels.Labels {
+func (i *IteratorChunksSeries) Labels() labels.Labels {
 	return i.lbls
 }
 
-func (i *iteratorChunksSeries) Iterator(_ chunks.Iterator) chunks.Iterator {
+func (i *IteratorChunksSeries) Iterator(_ chunks.Iterator) chunks.Iterator {
 	return i.chks
 }
 
@@ -66,27 +66,27 @@ type ChunkSeriesSetCloser interface {
 	Close() error
 }
 
-type noChunksConcreteLabelsSeriesSet struct {
-	seriesSet        []*concreteChunksSeries
+type NoChunksConcreteLabelsSeriesSet struct {
+	seriesSet        []*ConcreteChunksSeries
 	currentSeriesIdx int
 }
 
-func newNoChunksConcreteLabelsSeriesSet(sLbls []labels.Labels) *noChunksConcreteLabelsSeriesSet {
-	seriesSet := make([]*concreteChunksSeries, len(sLbls))
+func NewNoChunksConcreteLabelsSeriesSet(sLbls []labels.Labels) *NoChunksConcreteLabelsSeriesSet {
+	seriesSet := make([]*ConcreteChunksSeries, len(sLbls))
 	for i, lbls := range sLbls {
-		seriesSet[i] = &concreteChunksSeries{lbls: lbls}
+		seriesSet[i] = &ConcreteChunksSeries{lbls: lbls}
 	}
-	return &noChunksConcreteLabelsSeriesSet{
+	return &NoChunksConcreteLabelsSeriesSet{
 		seriesSet:        seriesSet,
 		currentSeriesIdx: -1,
 	}
 }
 
-func (s *noChunksConcreteLabelsSeriesSet) At() prom_storage.ChunkSeries {
+func (s *NoChunksConcreteLabelsSeriesSet) At() prom_storage.ChunkSeries {
 	return s.seriesSet[s.currentSeriesIdx]
 }
 
-func (s *noChunksConcreteLabelsSeriesSet) Next() bool {
+func (s *NoChunksConcreteLabelsSeriesSet) Next() bool {
 	if s.currentSeriesIdx+1 == len(s.seriesSet) {
 		return false
 	}
@@ -94,39 +94,39 @@ func (s *noChunksConcreteLabelsSeriesSet) Next() bool {
 	return true
 }
 
-func (s *noChunksConcreteLabelsSeriesSet) Err() error {
+func (s *NoChunksConcreteLabelsSeriesSet) Err() error {
 	return nil
 }
 
-func (s *noChunksConcreteLabelsSeriesSet) Warnings() annotations.Annotations {
+func (s *NoChunksConcreteLabelsSeriesSet) Warnings() annotations.Annotations {
 	return nil
 }
 
-func (s *noChunksConcreteLabelsSeriesSet) Close() error {
+func (s *NoChunksConcreteLabelsSeriesSet) Close() error {
 	return nil
 }
 
-// filterEmptyChunkSeriesSet is a ChunkSeriesSet that lazily filters out series with no chunks.
+// FilterEmptyChunkSeriesSet is a ChunkSeriesSet that lazily filters out series with no chunks.
 // It takes a set of materialized labels and a lazy iterator of chunks.Iterators;
 // the labels and iterators are iterated in tandem to yield series with chunks.
 // The materialized series callback is applied to each series when the iterator advances during Next().
-type filterEmptyChunkSeriesSet struct {
+type FilterEmptyChunkSeriesSet struct {
 	ctx     context.Context
 	lblsSet []labels.Labels
 	chnkSet ChunksIteratorIterator
 
-	currentSeries              *iteratorChunksSeries
+	currentSeries              *IteratorChunksSeries
 	materializedSeriesCallback MaterializedSeriesFunc
 	err                        error
 }
 
-func newFilterEmptyChunkSeriesSet(
+func NewFilterEmptyChunkSeriesSet(
 	ctx context.Context,
 	lblsSet []labels.Labels,
 	chnkSet ChunksIteratorIterator,
 	materializeSeriesCallback MaterializedSeriesFunc,
-) *filterEmptyChunkSeriesSet {
-	return &filterEmptyChunkSeriesSet{
+) *FilterEmptyChunkSeriesSet {
+	return &FilterEmptyChunkSeriesSet{
 		ctx:                        ctx,
 		lblsSet:                    lblsSet,
 		chnkSet:                    chnkSet,
@@ -134,11 +134,11 @@ func newFilterEmptyChunkSeriesSet(
 	}
 }
 
-func (s *filterEmptyChunkSeriesSet) At() prom_storage.ChunkSeries {
+func (s *FilterEmptyChunkSeriesSet) At() prom_storage.ChunkSeries {
 	return s.currentSeries
 }
 
-func (s *filterEmptyChunkSeriesSet) Next() bool {
+func (s *FilterEmptyChunkSeriesSet) Next() bool {
 	for s.chnkSet.Next() {
 		if len(s.lblsSet) == 0 {
 			s.err = errors.New("less labels than chunks, this should not happen")
@@ -150,9 +150,9 @@ func (s *filterEmptyChunkSeriesSet) Next() bool {
 		if iter.Next() {
 			// The series has chunks, keep it
 			meta := iter.At()
-			s.currentSeries = &iteratorChunksSeries{
+			s.currentSeries = &IteratorChunksSeries{
 				lbls: lbls,
-				chks: &peekedChunksIterator{
+				chks: &PeekedChunksIterator{
 					inner:       iter,
 					peekedValue: &meta,
 				},
@@ -176,32 +176,32 @@ func (s *filterEmptyChunkSeriesSet) Next() bool {
 	return false
 }
 
-func (s *filterEmptyChunkSeriesSet) Err() error {
+func (s *FilterEmptyChunkSeriesSet) Err() error {
 	if s.err != nil {
 		return s.err
 	}
 	return s.chnkSet.Err()
 }
 
-func (s *filterEmptyChunkSeriesSet) Warnings() annotations.Annotations {
+func (s *FilterEmptyChunkSeriesSet) Warnings() annotations.Annotations {
 	return nil
 }
 
-func (s *filterEmptyChunkSeriesSet) Close() error {
+func (s *FilterEmptyChunkSeriesSet) Close() error {
 	return s.chnkSet.Close()
 }
 
-// peekedChunksIterator is used to yield the first chunk of chunks.Iterator
+// PeekedChunksIterator is used to yield the first chunk of chunks.Iterator
 // which has already had its Next() method called to check if it has any chunks.
 // The already-consumed chunks.Meta is stored in peekedValue and returned on the first call to At().
 // Subsequent calls to Next then continue with the inner chunks.Iterator.
-type peekedChunksIterator struct {
+type PeekedChunksIterator struct {
 	inner       chunks.Iterator
 	peekedValue *chunks.Meta
 	nextCalled  bool
 }
 
-func (i *peekedChunksIterator) Next() bool {
+func (i *PeekedChunksIterator) Next() bool {
 	if !i.nextCalled {
 		i.nextCalled = true
 		return true
@@ -213,14 +213,14 @@ func (i *peekedChunksIterator) Next() bool {
 	return i.inner.Next()
 }
 
-func (i *peekedChunksIterator) At() chunks.Meta {
+func (i *PeekedChunksIterator) At() chunks.Meta {
 	if i.peekedValue != nil {
 		return *i.peekedValue
 	}
 	return i.inner.At()
 }
 
-func (i *peekedChunksIterator) Err() error {
+func (i *PeekedChunksIterator) Err() error {
 	return i.inner.Err()
 }
 
@@ -231,7 +231,7 @@ type ChunksIteratorIterator interface {
 	Close() error
 }
 
-// multiColumnChunksDecodingIterator yields a prometheus chunks.Iterator from multiple parquet Columns.
+// MultiColumnChunksDecodingIterator yields a prometheus chunks.Iterator from multiple parquet Columns.
 // The column iterators are called in order for each column and zipped together,
 // yielding a single iterator that in turn can yield all chunks for the same row.
 //
@@ -239,24 +239,24 @@ type ChunksIteratorIterator interface {
 // 1. in order of the columns in the parquet file
 // 2. initialized with the same set of pages and row ranges
 // An error is returned if the iterators have different lengths.
-type multiColumnChunksDecodingIterator struct {
+type MultiColumnChunksDecodingIterator struct {
 	mint int64
 	maxt int64
 
-	columnValueIterators []*columnValueIterator
+	columnValueIterators []*ColumnValueIterator
 	d                    *schema.PrometheusParquetChunksDecoder
 
 	// current is a chunk-decoding iterator for the materialized parquet Values
 	// combined by calling and zipping all column iterators in order
-	current *valueDecodingChunkIterator
+	current *ValueDecodingChunkIterator
 	err     error
 }
 
-func (i *multiColumnChunksDecodingIterator) At() chunks.Iterator {
+func (i *MultiColumnChunksDecodingIterator) At() chunks.Iterator {
 	return i.current
 }
 
-func (i *multiColumnChunksDecodingIterator) Next() bool {
+func (i *MultiColumnChunksDecodingIterator) Next() bool {
 	if i.err != nil || len(i.columnValueIterators) == 0 {
 		return false
 	}
@@ -277,7 +277,7 @@ func (i *multiColumnChunksDecodingIterator) Next() bool {
 		return false
 	}
 
-	i.current = &valueDecodingChunkIterator{
+	i.current = &ValueDecodingChunkIterator{
 		mint:   i.mint,
 		maxt:   i.maxt,
 		values: multiColumnValues,
@@ -286,11 +286,11 @@ func (i *multiColumnChunksDecodingIterator) Next() bool {
 	return true
 }
 
-func (i *multiColumnChunksDecodingIterator) Err() error {
+func (i *MultiColumnChunksDecodingIterator) Err() error {
 	return i.err
 }
 
-func (i *multiColumnChunksDecodingIterator) Close() error {
+func (i *MultiColumnChunksDecodingIterator) Close() error {
 	err := &multierror.Error{}
 	for _, iter := range i.columnValueIterators {
 		err = multierror.Append(err, iter.Close())
@@ -298,8 +298,8 @@ func (i *multiColumnChunksDecodingIterator) Close() error {
 	return err.ErrorOrNil()
 }
 
-// valueDecodingChunkIterator decodes and yields chunks from a parquet Values slice.
-type valueDecodingChunkIterator struct {
+// ValueDecodingChunkIterator decodes and yields chunks from a parquet Values slice.
+type ValueDecodingChunkIterator struct {
 	mint   int64
 	maxt   int64
 	values []parquet.Value
@@ -310,11 +310,11 @@ type valueDecodingChunkIterator struct {
 	err     error
 }
 
-func (i *valueDecodingChunkIterator) At() chunks.Meta {
+func (i *ValueDecodingChunkIterator) At() chunks.Meta {
 	return i.current
 }
 
-func (i *valueDecodingChunkIterator) Next() bool {
+func (i *ValueDecodingChunkIterator) Next() bool {
 	if i.err != nil {
 		return false
 	}
@@ -333,27 +333,27 @@ func (i *valueDecodingChunkIterator) Next() bool {
 	return i.Next()
 }
 
-func (i *valueDecodingChunkIterator) Err() error {
+func (i *ValueDecodingChunkIterator) Err() error {
 	return i.err
 }
 
-func (c concreteChunksSeries) ChunkCount() (int, error) {
+func (c ConcreteChunksSeries) ChunkCount() (int, error) {
 	return len(c.chks), nil
 }
 
-type columnValueIterator struct {
+type ColumnValueIterator struct {
 	currentIteratorIndex int
-	rowRangesIterators   []*rowRangesValueIterator
+	rowRangesIterators   []*RowRangesValueIterator
 
 	current parquet.Value
 	err     error
 }
 
-func (i *columnValueIterator) At() parquet.Value {
+func (i *ColumnValueIterator) At() parquet.Value {
 	return i.current
 }
 
-func (i *columnValueIterator) Next() bool {
+func (i *ColumnValueIterator) Next() bool {
 	if i.err != nil {
 		return false
 	}
@@ -384,11 +384,11 @@ func (i *columnValueIterator) Next() bool {
 	return found
 }
 
-func (i *columnValueIterator) Err() error {
+func (i *ColumnValueIterator) Err() error {
 	return i.err
 }
 
-func (i *columnValueIterator) Close() error {
+func (i *ColumnValueIterator) Close() error {
 	err := &multierror.Error{}
 	for _, iter := range i.rowRangesIterators {
 		err = multierror.Append(err, iter.Close())
@@ -396,10 +396,10 @@ func (i *columnValueIterator) Close() error {
 	return err.ErrorOrNil()
 }
 
-// rowRangesValueIterator yields individual parquet Values from specified row ranges in its FilePages
-type rowRangesValueIterator struct {
+// RowRangesValueIterator yields individual parquet Values from specified row ranges in its FilePages
+type RowRangesValueIterator struct {
 	pgs          parquet.Pages
-	pageIterator *pageValueIterator
+	pageIterator *PageValueIterator
 
 	remainingRr []RowRange
 	currentRr   RowRange
@@ -419,7 +419,7 @@ func newRowRangesValueIterator(
 	pageRange pageToReadWithRow,
 	dictOff uint64,
 	dictSz uint64,
-) (*rowRangesValueIterator, error) {
+) (*RowRangesValueIterator, error) {
 	minOffset := uint64(pageRange.off)
 	maxOffset := uint64(pageRange.off + pageRange.csz)
 
@@ -450,9 +450,9 @@ func newRowRangesValueIterator(
 	currentRow := currentRr.From
 
 	remainingRr = remainingRr[1:]
-	return &rowRangesValueIterator{
+	return &RowRangesValueIterator{
 		pgs:          pgs,
-		pageIterator: new(pageValueIterator),
+		pageIterator: new(PageValueIterator),
 
 		remainingRr: remainingRr,
 		currentRr:   currentRr,
@@ -462,11 +462,11 @@ func newRowRangesValueIterator(
 	}, nil
 }
 
-func (i *rowRangesValueIterator) At() parquet.Value {
+func (i *RowRangesValueIterator) At() parquet.Value {
 	return i.buffer[i.currentBufferIndex]
 }
 
-func (i *rowRangesValueIterator) Next() bool {
+func (i *RowRangesValueIterator) Next() bool {
 	if i.err != nil {
 		return false
 	}
@@ -523,16 +523,16 @@ func (i *rowRangesValueIterator) Next() bool {
 	return found
 }
 
-func (i *rowRangesValueIterator) Err() error {
+func (i *RowRangesValueIterator) Err() error {
 	return i.err
 }
 
-func (i *rowRangesValueIterator) Close() error {
+func (i *RowRangesValueIterator) Close() error {
 	return i.pgs.Close()
 }
 
-// pageValueIterator yields individual parquet Values from its Page.
-type pageValueIterator struct {
+// PageValueIterator yields individual parquet Values from its Page.
+type PageValueIterator struct {
 	p parquet.Page
 
 	cachedSymbols map[int32]parquet.Value
@@ -546,7 +546,7 @@ type pageValueIterator struct {
 	err                error
 }
 
-func (i *pageValueIterator) At() parquet.Value {
+func (i *PageValueIterator) At() parquet.Value {
 	if i.vr == nil {
 		dicIndex := i.st.GetIndex(i.current)
 		// Cache a clone of the current symbol table entry.
@@ -559,7 +559,7 @@ func (i *pageValueIterator) At() parquet.Value {
 	return i.buffer[i.currentBufferIndex].Clone()
 }
 
-func (i *pageValueIterator) Next() bool {
+func (i *PageValueIterator) Next() bool {
 	if i.err != nil {
 		return false
 	}
@@ -583,7 +583,7 @@ func (i *pageValueIterator) Next() bool {
 	return true
 }
 
-func (i *pageValueIterator) Reset(p parquet.Page) {
+func (i *PageValueIterator) Reset(p parquet.Page) {
 	i.p = p
 	i.vr = nil
 	if p.Dictionary() != nil {
@@ -601,6 +601,6 @@ func (i *pageValueIterator) Reset(p parquet.Page) {
 	i.current = -1
 }
 
-func (i *pageValueIterator) Err() error {
+func (i *PageValueIterator) Err() error {
 	return i.err
 }
