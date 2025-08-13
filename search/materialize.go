@@ -649,7 +649,7 @@ func (m *Materializer) materializeColumnSlice(
 	dictOff, dictSz := file.DictionaryPageBounds(rgi, cc.Column())
 	errGroup := &errgroup.Group{}
 	errGroup.SetLimit(m.concurrency)
-	
+
 	span.SetAttributes(attribute.Int("goroutine_pool_limit", m.concurrency))
 
 	for i, pageRange := range pageRanges {
@@ -736,7 +736,7 @@ func (m *Materializer) GetPageRangesForColummn(cc parquet.ColumnChunk, file stor
 // CoalescePageRanges merges nearby pages to enable efficient sequential reads.
 // Pages that are not close to each other will be scheduled for concurrent reads.
 func (m *Materializer) CoalescePageRanges(pagedIdx map[int][]RowRange, offset parquet.OffsetIndex) []pageToReadWithRow {
-	ctx, span := tracer.Start(context.Background(), "Materializer.CoalescePageRanges")
+	_, span := tracer.Start(context.Background(), "Materializer.CoalescePageRanges")
 	defer span.End()
 
 	span.SetAttributes(
