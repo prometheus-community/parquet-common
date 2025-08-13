@@ -57,6 +57,24 @@ func (i *IteratorChunksSeries) Iterator(_ chunks.Iterator) chunks.Iterator {
 	return i.chks
 }
 
+// ChunkCount returns the number of chunks in the series, consuming the inner iterator.
+// The current implementation is an expensive operation which reads the chunks from storage.
+// It is implemented only to satisfy the Mimir Prometheus fork's extended ChunkSeries interface.
+// It may be optimized in the future with extended metadata and indexes in the parquet chunks file.
+func (i *IteratorChunksSeries) ChunkCount() (int, error) {
+	if i.chks == nil {
+		return 0, nil
+	}
+	count := 0
+	for i.chks.Next() {
+		count++
+	}
+	if err := i.chks.Err(); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 type ChunkSeriesSetCloser interface {
 	prom_storage.ChunkSeriesSet
 
