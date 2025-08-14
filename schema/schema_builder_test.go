@@ -43,7 +43,7 @@ func Test_DataCols(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(fmt.Sprintf("%d,%d,%d", tc.mint, tc.maxt, tc.dataColDuration), func(t *testing.T) {
-			b := NewBuilder(tc.mint, tc.maxt, tc.dataColDuration)
+			b := NewBuilder(tc.mint, tc.maxt, tc.dataColDuration, false)
 			s, err := b.Build()
 			require.NoError(t, err)
 			require.Len(t, s.DataColsIndexes, tc.expected)
@@ -52,7 +52,7 @@ func Test_DataCols(t *testing.T) {
 }
 
 func Test_LabelCols(t *testing.T) {
-	b := NewBuilder(0, time.Hour.Milliseconds(), time.Hour.Milliseconds())
+	b := NewBuilder(0, time.Hour.Milliseconds(), time.Hour.Milliseconds(), false)
 	b.AddLabelNameColumn("test", labels.MetricName)
 	s, err := b.Build()
 	require.NoError(t, err)
@@ -107,7 +107,7 @@ func Test_DataColumIdx(t *testing.T) {
 
 	for i, tc := range testCases {
 		t.Run(fmt.Sprintf("case-%d", i), func(t *testing.T) {
-			b := NewBuilder(tc.mint, tc.maxt, tc.dataColDuration)
+			b := NewBuilder(tc.mint, tc.maxt, tc.dataColDuration, false)
 			s, err := b.Build()
 			require.NoError(t, err)
 
