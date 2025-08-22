@@ -363,7 +363,17 @@ func NewTsdbRowReader(ctx context.Context, mint, maxt, colDuration int64, blks [
 	var (
 		seriesSets = make([]storage.ChunkSeriesSet, 0, len(blks))
 		closers    = make([]io.Closer, 0, len(blks))
+		ok         = false
 	)
+	// If we fail to build the row reader, make sure we release resources.
+	// This could be either a controlled error or a panic.
+	defer func() {
+		if !ok {
+			for i := range closers {
+				_ = closers[i].Close()
+			}
+		}
+	}()
 
 	b := schema.NewBuilder(mint, maxt, colDuration)
 
@@ -415,7 +425,7 @@ func NewTsdbRowReader(ctx context.Context, mint, maxt, colDuration int64, blks [
 		return nil, fmt.Errorf("unable to build index reader from block: %w", err)
 	}
 
-	return &TsdbRowReader{
+	rr := &TsdbRowReader{
 		ctx:         ctx,
 		seriesSet:   cseriesSet,
 		closers:     closers,
@@ -424,7 +434,9 @@ func NewTsdbRowReader(ctx context.Context, mint, maxt, colDuration int64, blks [
 
 		rowBuilder: parquet.NewRowBuilder(s.Schema),
 		encoder:    schema.NewPrometheusParquetChunksEncoder(s, ops.maxSamplesPerChunk),
-	}, nil
+	}
+	ok = true
+	return rr, nil
 }
 
 func (rr *TsdbRowReader) Close() error {
