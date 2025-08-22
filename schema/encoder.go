@@ -39,6 +39,11 @@ func NewPrometheusParquetChunksEncoder(schema *TSDBSchema, samplesPerChunk int) 
 	}
 }
 
+type ChunkTimerange struct {
+	MinTime int64
+	MaxTime int64
+}
+
 // Encode re-encodes Prometheus chunks from the given iterator into a format optimized for Parquet storage.
 // It takes chunks (typically for one day) and redistributes the samples across data columns based on the schema's
 // time-based partitioning. The function handles three chunk encodings: XOR (float), Histogram, and FloatHistogram.
@@ -49,10 +54,11 @@ func NewPrometheusParquetChunksEncoder(schema *TSDBSchema, samplesPerChunk int) 
 // 3. Redistributes samples from input chunks to appropriate data column chunks based on timestamp
 // 4. Cuts new chunks when samplesPerChunk limit is reached
 // 5. Serializes the re-encoded chunks into binary format with metadata
+// 6. Collects and returns the timeranges of the encoded chunks
 //
 // Returns a slice of byte slices, where each element corresponds to a data column containing
 // serialized chunk data with encoding type, min/max timestamps, size, and chunk bytes.
-func (e *PrometheusParquetChunksEncoder) Encode(it chunks.Iterator) ([][]byte, error) {
+func (e *PrometheusParquetChunksEncoder) Encode(it chunks.Iterator) ([][]byte, []ChunkTimerange, error) {
 	// NOTE: usually 'it' should hold chunks for one day. Chunks are usually length 2h so we should get 12 of them.
 	chks := make([]chunks.Meta, 0, 12)
 	for it.Next() {
@@ -75,7 +81,7 @@ func (e *PrometheusParquetChunksEncoder) Encode(it chunks.Iterator) ([][]byte, e
 		for _, enc := range []chunkenc.Encoding{chunkenc.EncXOR, chunkenc.EncHistogram, chunkenc.EncFloatHistogram} {
 			nChunk, app, err := e.cutNewChunk(enc)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			reEncodedChunks[i][enc] = append(reEncodedChunks[i][enc], nChunk)
 			reEncodedChunksAppenders[i][enc] = app
@@ -89,7 +95,7 @@ func (e *PrometheusParquetChunksEncoder) Encode(it chunks.Iterator) ([][]byte, e
 		case chunkenc.EncXOR:
 			for vt := sampleIt.Next(); vt != chunkenc.ValNone; vt = sampleIt.Next() {
 				if vt != chunkenc.ValFloat {
-					return nil, fmt.Errorf("found value type %v in float chunk", vt)
+					return nil, nil, fmt.Errorf("found value type %v in float chunk", vt)
 				}
 				t, v := sampleIt.At()
 
@@ -105,7 +111,7 @@ func (e *PrometheusParquetChunksEncoder) Encode(it chunks.Iterator) ([][]byte, e
 				if chunk.Chunk.NumSamples() >= e.samplesPerChunk {
 					nChunk, app, err := e.cutNewChunk(chunkenc.EncXOR)
 					if err != nil {
-						return nil, err
+						return nil, nil, err
 					}
 
 					reEncodedChunks[chkIdx][chunkenc.EncXOR] = append(reEncodedChunks[chkIdx][chunkenc.EncXOR], nChunk)
@@ -115,14 +121,14 @@ func (e *PrometheusParquetChunksEncoder) Encode(it chunks.Iterator) ([][]byte, e
 		case chunkenc.EncFloatHistogram:
 			for vt := sampleIt.Next(); vt != chunkenc.ValNone; vt = sampleIt.Next() {
 				if vt != chunkenc.ValFloatHistogram {
-					return nil, fmt.Errorf("found value type %v in float histogram chunk", vt)
+					return nil, nil, fmt.Errorf("found value type %v in float histogram chunk", vt)
 				}
 				t, v := sampleIt.AtFloatHistogram(nil)
 
 				chkIdx := e.schema.DataColumIdx(t)
 				newC, recoded, app, err := reEncodedChunksAppenders[chkIdx][chunkenc.EncFloatHistogram].AppendFloatHistogram(nil, t, v, false)
 				if err != nil {
-					return nil, err
+					return nil, nil, err
 				}
 				reEncodedChunksAppenders[chkIdx][chunkenc.EncFloatHistogram] = app
 				if newC != nil {
@@ -145,7 +151,7 @@ func (e *PrometheusParquetChunksEncoder) Encode(it chunks.Iterator) ([][]byte, e
 				if chunk.Chunk.NumSamples() >= e.samplesPerChunk {
 					nChunk, app, err := e.cutNewChunk(chunkenc.EncFloatHistogram)
 					if err != nil {
-						return nil, err
+						return nil, nil, err
 					}
 
 					reEncodedChunks[chkIdx][chunkenc.EncFloatHistogram] = append(reEncodedChunks[chkIdx][chunkenc.EncFloatHistogram], nChunk)
@@ -155,14 +161,14 @@ func (e *PrometheusParquetChunksEncoder) Encode(it chunks.Iterator) ([][]byte, e
 		case chunkenc.EncHistogram:
 			for vt := sampleIt.Next(); vt != chunkenc.ValNone; vt = sampleIt.Next() {
 				if vt != chunkenc.ValHistogram {
-					return nil, fmt.Errorf("found value type %v in histogram chunk", vt)
+					return nil, nil, fmt.Errorf("found value type %v in histogram chunk", vt)
 				}
 				t, v := sampleIt.AtHistogram(nil)
 
 				chkIdx := e.schema.DataColumIdx(t)
 				newC, recoded, app, err := reEncodedChunksAppenders[chkIdx][chunkenc.EncHistogram].AppendHistogram(nil, t, v, false)
 				if err != nil {
-					return nil, err
+					return nil, nil, err
 				}
 				reEncodedChunksAppenders[chkIdx][chunkenc.EncHistogram] = app
 				if newC != nil {
@@ -185,7 +191,7 @@ func (e *PrometheusParquetChunksEncoder) Encode(it chunks.Iterator) ([][]byte, e
 				if chunk.Chunk.NumSamples() >= e.samplesPerChunk {
 					nChunk, app, err := e.cutNewChunk(chunkenc.EncHistogram)
 					if err != nil {
-						return nil, err
+						return nil, nil, err
 					}
 
 					reEncodedChunks[chkIdx][chunkenc.EncHistogram] = append(reEncodedChunks[chkIdx][chunkenc.EncHistogram], nChunk)
@@ -193,11 +199,12 @@ func (e *PrometheusParquetChunksEncoder) Encode(it chunks.Iterator) ([][]byte, e
 				}
 			}
 		default:
-			return nil, fmt.Errorf("unknown encoding %v", chk.Chunk.Encoding())
+			return nil, nil, fmt.Errorf("unknown encoding %v", chk.Chunk.Encoding())
 		}
 	}
 
 	result := make([][]byte, dataColSize)
+	timeranges := make([]ChunkTimerange, 0, dataColSize) // At least a chunk per column, but likely more
 
 	for i, chunks := range reEncodedChunks {
 		for _, enc := range []chunkenc.Encoding{chunkenc.EncXOR, chunkenc.EncHistogram, chunkenc.EncFloatHistogram} {
@@ -215,10 +222,14 @@ func (e *PrometheusParquetChunksEncoder) Encode(it chunks.Iterator) ([][]byte, e
 				n = binary.PutUvarint(b[:], uint64(len(chk.Chunk.Bytes())))
 				result[i] = append(result[i], b[:n]...)
 				result[i] = append(result[i], chk.Chunk.Bytes()...)
+				timeranges = append(timeranges, ChunkTimerange{
+					MinTime: chk.MinTime,
+					MaxTime: chk.MaxTime,
+				})
 			}
 		}
 	}
-	return result, nil
+	return result, timeranges, nil
 }
 
 func (e *PrometheusParquetChunksEncoder) cutNewChunk(enc chunkenc.Encoding) (*chunks.Meta, chunkenc.Appender, error) {
@@ -324,7 +335,7 @@ func (e *PrometheusParquetChunksDecoder) Decode(data []byte, mint, maxt int64) (
 	return result, nil
 }
 
-func EncodeIntSlice(s []int) []byte {
+func EncodeIntSlice[T int64 | int](s []T) []byte {
 	l := make([]byte, binary.MaxVarintLen32)
 	r := make([]byte, 0, len(s)*binary.MaxVarintLen32)
 
@@ -343,7 +354,7 @@ func EncodeIntSlice(s []int) []byte {
 	return r
 }
 
-func DecodeUintSlice(b []byte) ([]int, error) {
+func DecodeUintSlice[T int64 | int](b []byte) ([]T, error) {
 	buffer := bytes.NewBuffer(b)
 
 	// size
@@ -352,14 +363,14 @@ func DecodeUintSlice(b []byte) ([]int, error) {
 		return nil, err
 	}
 
-	r := make([]int, 0, s)
+	r := make([]T, 0, s)
 
 	for i := int64(0); i < s; i++ {
 		v, err := binary.ReadVarint(buffer)
 		if err != nil {
 			return nil, err
 		}
-		r = append(r, int(v))
+		r = append(r, T(v))
 	}
 
 	return r, nil
