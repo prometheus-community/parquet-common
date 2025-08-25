@@ -103,7 +103,7 @@ func (st *acceptanceTestStorage) Querier(from, to int64) (prom_storage.Querier, 
 	data := util.TestData{MinTime: h.MinTime(), MaxTime: h.MaxTime()}
 	block := convertToParquet(st.t, context.Background(), bkt, data, h, nil)
 
-	q, err := createQueryable(block)
+	q, err := createQueryable([]storage.ParquetShard{block})
 	if err != nil {
 		st.t.Fatalf("unable to create queryable: %s", err)
 	}
@@ -257,7 +257,7 @@ func TestQueryable(t *testing.T) {
 			})
 
 			t.Run("LabelNames", func(t *testing.T) {
-				queryable, err := createQueryable(shard)
+				queryable, err := createQueryable([]storage.ParquetShard{shard})
 				require.NoError(t, err)
 				querier, err := queryable.Querier(data.MinTime, data.MaxTime)
 				require.NoError(t, err)
@@ -282,7 +282,7 @@ func TestQueryable(t *testing.T) {
 			})
 
 			t.Run("LabelValues", func(t *testing.T) {
-				queryable, err := createQueryable(shard)
+				queryable, err := createQueryable([]storage.ParquetShard{shard})
 				require.NoError(t, err)
 				querier, err := queryable.Querier(data.MinTime, data.MaxTime)
 				require.NoError(t, err)
@@ -308,7 +308,7 @@ func TestQueryable(t *testing.T) {
 				limitedRowQuota := func(ctx context.Context) int64 {
 					return 10 // Only allow 10 rows
 				}
-				queryable, err := createQueryable(shard, WithRowCountLimitFunc(limitedRowQuota))
+				queryable, err := createQueryable([]storage.ParquetShard{shard}, WithRowCountLimitFunc(limitedRowQuota))
 				require.NoError(t, err)
 				querier, err := queryable.Querier(data.MinTime, data.MaxTime)
 				require.NoError(t, err)
@@ -329,7 +329,7 @@ func TestQueryable(t *testing.T) {
 				sufficientRowQuota := func(ctx context.Context) int64 {
 					return 1000 // Allow 1000 rows
 				}
-				queryable, err = createQueryable(shard, WithRowCountLimitFunc(sufficientRowQuota))
+				queryable, err = createQueryable([]storage.ParquetShard{shard}, WithRowCountLimitFunc(sufficientRowQuota))
 				require.NoError(t, err)
 				querier, err = queryable.Querier(data.MinTime, data.MaxTime)
 				require.NoError(t, err)
@@ -348,7 +348,7 @@ func TestQueryable(t *testing.T) {
 				limitedChunkQuota := func(ctx context.Context) int64 {
 					return 100 // Only allow 100 bytes
 				}
-				queryable, err := createQueryable(shard, WithChunkBytesLimitFunc(limitedChunkQuota))
+				queryable, err := createQueryable([]storage.ParquetShard{shard}, WithChunkBytesLimitFunc(limitedChunkQuota))
 				require.NoError(t, err)
 				querier, err := queryable.Querier(data.MinTime, data.MaxTime)
 				require.NoError(t, err)
@@ -369,7 +369,7 @@ func TestQueryable(t *testing.T) {
 				sufficientChunkQuota := func(ctx context.Context) int64 {
 					return 1000000 // Allow 1MB
 				}
-				queryable, err = createQueryable(shard, WithChunkBytesLimitFunc(sufficientChunkQuota))
+				queryable, err = createQueryable([]storage.ParquetShard{shard}, WithChunkBytesLimitFunc(sufficientChunkQuota))
 				require.NoError(t, err)
 				querier, err = queryable.Querier(data.MinTime, data.MaxTime)
 				require.NoError(t, err)
@@ -388,7 +388,7 @@ func TestQueryable(t *testing.T) {
 				limitedDataQuota := func(ctx context.Context) int64 {
 					return 100 // Only allow 100 bytes
 				}
-				queryable, err := createQueryable(shard, WithDataBytesLimitFunc(limitedDataQuota))
+				queryable, err := createQueryable([]storage.ParquetShard{shard}, WithDataBytesLimitFunc(limitedDataQuota))
 				require.NoError(t, err)
 				querier, err := queryable.Querier(data.MinTime, data.MaxTime)
 				require.NoError(t, err)
@@ -409,7 +409,7 @@ func TestQueryable(t *testing.T) {
 				sufficientDataQuota := func(ctx context.Context) int64 {
 					return 1000000 // Allow 1MB
 				}
-				queryable, err = createQueryable(shard, WithDataBytesLimitFunc(sufficientDataQuota))
+				queryable, err = createQueryable([]storage.ParquetShard{shard}, WithDataBytesLimitFunc(sufficientDataQuota))
 				require.NoError(t, err)
 				querier, err = queryable.Querier(data.MinTime, data.MaxTime)
 				require.NoError(t, err)
@@ -434,7 +434,7 @@ func TestQueryable(t *testing.T) {
 					return nil
 				}
 
-				queryable, err := createQueryable(shard, WithMaterializedSeriesCallback(seriesCallback))
+				queryable, err := createQueryable([]storage.ParquetShard{shard}, WithMaterializedSeriesCallback(seriesCallback))
 				require.NoError(t, err)
 				querier, err := queryable.Querier(data.MinTime, data.MaxTime)
 				require.NoError(t, err)
@@ -456,7 +456,7 @@ func TestQueryable(t *testing.T) {
 					return fmt.Errorf("callback error")
 				}
 
-				queryable, err = createQueryable(shard, WithMaterializedSeriesCallback(errorCallback))
+				queryable, err = createQueryable([]storage.ParquetShard{shard}, WithMaterializedSeriesCallback(errorCallback))
 				require.NoError(t, err)
 				querier, err = queryable.Querier(data.MinTime, data.MaxTime)
 				require.NoError(t, err)
@@ -478,7 +478,7 @@ func TestQueryable(t *testing.T) {
 					return &allRejectingFilter{}, true
 				}
 
-				queryable, err := createQueryable(shard, WithMaterializedLabelsFilterCallback(emptyFilter))
+				queryable, err := createQueryable([]storage.ParquetShard{shard}, WithMaterializedLabelsFilterCallback(emptyFilter))
 				require.NoError(t, err)
 				querier, err := queryable.Querier(data.MinTime, data.MaxTime)
 				require.NoError(t, err)
@@ -496,7 +496,7 @@ func TestQueryable(t *testing.T) {
 					return &randomName0RejectingFilter{}, true
 				}
 
-				queryable, err = createQueryable(shard, WithMaterializedLabelsFilterCallback(specificFilter))
+				queryable, err = createQueryable([]storage.ParquetShard{shard}, WithMaterializedLabelsFilterCallback(specificFilter))
 				require.NoError(t, err)
 				querier, err = queryable.Querier(data.MinTime, data.MaxTime)
 				require.NoError(t, err)
@@ -518,7 +518,7 @@ func TestQueryable(t *testing.T) {
 					return nil, false
 				}
 
-				queryable, err = createQueryable(shard, WithMaterializedLabelsFilterCallback(noopFilter))
+				queryable, err = createQueryable([]storage.ParquetShard{shard}, WithMaterializedLabelsFilterCallback(noopFilter))
 				require.NoError(t, err)
 				querier, err = queryable.Querier(data.MinTime, data.MaxTime)
 				require.NoError(t, err)
@@ -587,7 +587,7 @@ eval instant at 60s http_requests_total{route=~".+"}
 
 func queryWithQueryable(t *testing.T, mint, maxt int64, shard storage.ParquetShard, hints *prom_storage.SelectHints, matchers ...*labels.Matcher) []prom_storage.Series {
 	ctx := context.Background()
-	queryable, err := createQueryable(shard)
+	queryable, err := createQueryable([]storage.ParquetShard{shard})
 	require.NoError(t, err)
 	querier, err := queryable.Querier(mint, maxt)
 	require.NoError(t, err)
@@ -600,10 +600,10 @@ func queryWithQueryable(t *testing.T, mint, maxt int64, shard storage.ParquetSha
 	return found
 }
 
-func createQueryable(shard storage.ParquetShard, opts ...QueryableOpts) (prom_storage.Queryable, error) {
+func createQueryable(shards []storage.ParquetShard, opts ...QueryableOpts) (prom_storage.Queryable, error) {
 	d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
 	return NewParquetQueryable(d, func(ctx context.Context, mint, maxt int64) ([]storage.ParquetShard, error) {
-		return []storage.ParquetShard{shard}, nil
+		return shards, nil
 	}, opts...)
 }
 
@@ -750,7 +750,7 @@ func BenchmarkSelect(b *testing.B) {
 	cbkt := newCountingBucket(bkt)
 	data := util.TestData{MinTime: h.MinTime(), MaxTime: h.MaxTime()}
 	block := convertToParquetForBenchWithCountingBucket(b, ctx, bkt, cbkt, data, h, nil)
-	queryable, err := createQueryable(block)
+	queryable, err := createQueryable([]storage.ParquetShard{block})
 	require.NoError(b, err, "unable to create queryable")
 
 	q, err := queryable.Querier(0, 120)
@@ -793,6 +793,10 @@ var defaultConvertOpts = []convert.ConvertOption{
 }
 
 func convertToParquet(t *testing.T, ctx context.Context, bkt *bucket, data util.TestData, h convert.Convertible, convertOpts []convert.ConvertOption, opts ...storage.FileOption) storage.ParquetShard {
+	return convertToParquetWithName(t, ctx, bkt, data, h, "shard", convertOpts, opts...)
+}
+
+func convertToParquetWithName(t *testing.T, ctx context.Context, bkt *bucket, data util.TestData, h convert.Convertible, shardName string, convertOpts []convert.ConvertOption, opts ...storage.FileOption) storage.ParquetShard {
 	if convertOpts == nil {
 		convertOpts = defaultConvertOpts
 	}
@@ -814,7 +818,7 @@ func convertToParquet(t *testing.T, ctx context.Context, bkt *bucket, data util.
 
 	bucketOpener := storage.NewParquetBucketOpener(bkt)
 	shard, err := storage.NewParquetShardOpener(
-		ctx, "shard", bucketOpener, bucketOpener, 0, opts...,
+		ctx, shardName, bucketOpener, bucketOpener, 0, opts...,
 	)
 	if err != nil {
 		t.Fatalf("error opening parquet shard: %v", err)
@@ -875,4 +879,202 @@ func (f *randomName0RejectingFilter) Filter(ls labels.Labels) bool {
 
 func (f *randomName0RejectingFilter) Close() {
 	// No cleanup needed
+}
+
+func TestQueryableWithMultipleShards(t *testing.T) {
+	ctx := context.Background()
+
+	// Create first storage with some series
+	st1 := teststorage.New(t)
+	t.Cleanup(func() { _ = st1.Close() })
+
+	app1 := st1.Appender(ctx)
+	seriesLabels1 := []labels.Labels{
+		labels.FromStrings("ENV", "beta", "__name__", "test_metric2", "instance", "instance-1", "region", "region-a"),
+		labels.FromStrings("ENV", "gamma", "__name__", "test_metric1", "instance", "instance-2", "region", "region-a"),
+		labels.FromStrings("ENV", "prod", "__name__", "test_metric1", "instance", "instance-1", "region", "region-b"),
+	}
+
+	for _, lbls := range seriesLabels1 {
+		for i := 0; i < 10; i++ {
+			_, err := app1.Append(0, lbls, int64(i*1000), float64(i))
+			require.NoError(t, err)
+		}
+	}
+	require.NoError(t, app1.Commit())
+
+	// Create second storage with overlapping and distinct series
+	st2 := teststorage.New(t)
+	t.Cleanup(func() { _ = st2.Close() })
+
+	app2 := st2.Appender(ctx)
+	seriesLabels2 := []labels.Labels{
+		labels.FromStrings("ENV", "beta", "__name__", "test_metric2", "instance", "instance-1", "region", "region-a"),  // Overlapping
+		labels.FromStrings("ENV", "gamma", "__name__", "test_metric1", "instance", "instance-2", "region", "region-a"), // Overlapping
+		labels.FromStrings("ENV", "beta", "__name__", "test_metric2", "instance", "instance-3", "region", "region-a"),  // Distinct
+		labels.FromStrings("ENV", "prod", "__name__", "test_metric1", "instance", "instance-3", "region", "region-b"),  // Distinct
+	}
+
+	for _, lbls := range seriesLabels2 {
+		for i := 0; i < 10; i++ {
+			_, err := app2.Append(0, lbls, int64(i*1000), float64(i))
+			require.NoError(t, err)
+		}
+	}
+	require.NoError(t, app2.Commit())
+
+	bkt, err := newBucket(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = bkt.Close() })
+
+	// Convert both storages to parquet shards with different names
+	h1 := st1.Head()
+	data1 := util.TestData{MinTime: h1.MinTime(), MaxTime: h1.MaxTime()}
+	// Set row group 1 to test merging series from multiple row groups.
+	shard1Opts := append(defaultConvertOpts, convert.WithName("shard1"), convert.WithRowGroupSize(1))
+	shard1 := convertToParquetWithName(t, ctx, bkt, data1, h1, "shard1", shard1Opts)
+
+	h2 := st2.Head()
+	data2 := util.TestData{MinTime: h2.MinTime(), MaxTime: h2.MaxTime()}
+	// Set row group 1 to test merging series from multiple row groups.
+	shard2Opts := append(defaultConvertOpts, convert.WithName("shard2"), convert.WithRowGroupSize(1))
+	shard2 := convertToParquetWithName(t, ctx, bkt, data2, h2, "shard2", shard2Opts)
+
+	// Calculate expected total series (unique across both shards)
+	allSeriesLabels := make(map[string]labels.Labels)
+	for _, lbls := range seriesLabels1 {
+		allSeriesLabels[lbls.String()] = lbls
+	}
+	for _, lbls := range seriesLabels2 {
+		allSeriesLabels[lbls.String()] = lbls
+	}
+	expectedTotalSeries := len(allSeriesLabels)
+
+	// Calculate expected series for region-a only
+	regionASeries := 0
+	for _, lbls := range allSeriesLabels {
+		if lbls.Get("region") == "region-a" {
+			regionASeries++
+		}
+	}
+
+	// Test with single shard - sorting should work normally
+	t.Run("SingleShardBehavior", func(t *testing.T) {
+		queryable, err := createQueryable([]storage.ParquetShard{shard1})
+		require.NoError(t, err)
+		querier, err := queryable.Querier(data1.MinTime, data1.MaxTime)
+		require.NoError(t, err)
+
+		// Query with sorted=false
+		matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchRegexp, "__name__", "test_metric[1-2]")}
+		ss := querier.Select(ctx, false, nil, matchers...)
+
+		var series []prom_storage.Series
+		for ss.Next() {
+			series = append(series, ss.At())
+		}
+		require.NoError(t, ss.Err())
+		require.NotEmpty(t, series)
+
+		require.Equal(t, len(seriesLabels1), len(series))
+	})
+
+	// Test with multiple shards - should force sorting to true internally
+	t.Run("MultipleShardsForceSorting", func(t *testing.T) {
+		queryable, err := createQueryable([]storage.ParquetShard{shard1, shard2})
+		require.NoError(t, err)
+		querier, err := queryable.Querier(data1.MinTime, data1.MaxTime)
+		require.NoError(t, err)
+
+		// Query with sorted=false, but should be forced to true internally
+		matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchRegexp, "__name__", "test_metric[1-2]")}
+		ss := querier.Select(ctx, false, nil, matchers...)
+
+		var series []prom_storage.Series
+		for ss.Next() {
+			series = append(series, ss.At())
+		}
+		require.NoError(t, ss.Err())
+		require.NotEmpty(t, series)
+
+		// Verify we get the expected number of series (should be deduplicated)
+		require.Equal(t, expectedTotalSeries, len(series))
+
+		// Verify that series are properly sorted by labels
+		// The series should be sorted according to labels.Compare
+		for i := 1; i < len(series); i++ {
+			prevLabels := series[i-1].Labels()
+			currLabels := series[i].Labels()
+			require.LessOrEqual(t, labels.Compare(prevLabels, currLabels), 0,
+				"Series should be sorted: %v should come before %v", prevLabels, currLabels)
+		}
+	})
+
+	// Test with multiple shards and sorted already true
+	t.Run("MultipleShardsWithSortingAlreadyTrue", func(t *testing.T) {
+		queryable, err := createQueryable([]storage.ParquetShard{shard1, shard2})
+		require.NoError(t, err)
+		querier, err := queryable.Querier(data1.MinTime, data1.MaxTime)
+		require.NoError(t, err)
+
+		// Query with sorted=true, should remain true
+		matchers := []*labels.Matcher{labels.MustNewMatcher(labels.MatchRegexp, "__name__", "test_metric[1-2]")}
+		ss := querier.Select(ctx, true, nil, matchers...)
+
+		var series []prom_storage.Series
+		for ss.Next() {
+			series = append(series, ss.At())
+		}
+		require.NoError(t, ss.Err())
+		require.NotEmpty(t, series)
+
+		// Verify we get the expected number of series
+		require.Equal(t, expectedTotalSeries, len(series))
+
+		// Verify that series are properly sorted
+		for i := 1; i < len(series); i++ {
+			prevLabels := series[i-1].Labels()
+			currLabels := series[i].Labels()
+			require.LessOrEqual(t, labels.Compare(prevLabels, currLabels), 0,
+				"Series should be sorted: %v should come before %v", prevLabels, currLabels)
+		}
+	})
+
+	// Test with multiple shards and specific matchers
+	t.Run("MultipleShardsWithSpecificMatchers", func(t *testing.T) {
+		queryable, err := createQueryable([]storage.ParquetShard{shard1, shard2})
+		require.NoError(t, err)
+		querier, err := queryable.Querier(data1.MinTime, data1.MaxTime)
+		require.NoError(t, err)
+
+		// Query with specific matchers that should match subset of series
+		matchers := []*labels.Matcher{
+			labels.MustNewMatcher(labels.MatchRegexp, "__name__", "test_metric[1-2]"),
+			labels.MustNewMatcher(labels.MatchEqual, "region", "region-a"),
+		}
+		ss := querier.Select(ctx, false, nil, matchers...)
+
+		var series []prom_storage.Series
+		for ss.Next() {
+			series = append(series, ss.At())
+		}
+		require.NoError(t, ss.Err())
+		require.NotEmpty(t, series)
+
+		// Should get regionASeries series (instance-1, instance-2, instance-3 in region-a)
+		require.Equal(t, regionASeries, len(series))
+
+		// Verify all series have region-a
+		for _, s := range series {
+			require.Equal(t, "region-a", s.Labels().Get("region"))
+		}
+
+		// Verify that series are properly sorted
+		for i := 1; i < len(series); i++ {
+			prevLabels := series[i-1].Labels()
+			currLabels := series[i].Labels()
+			require.LessOrEqual(t, labels.Compare(prevLabels, currLabels), 0,
+				"Series should be sorted: %v should come before %v", prevLabels, currLabels)
+		}
+	})
 }
