@@ -530,7 +530,7 @@ func (i *RowRangesValueIterator) Next() bool {
 					i.remainingRr = i.remainingRr[1:]
 				}
 			}
-			if i.pageIterator.CanSkip() && i.remaining > 0 {
+			if i.remaining > 0 {
 				i.currentRow += i.pageIterator.Skip(i.next - i.currentRow - 1)
 			}
 			i.currentRow++
@@ -590,6 +590,11 @@ func (i *PageValueIterator) Next() bool {
 		return false
 	}
 
+	// End early if no value reader available.
+	if i.vr == nil {
+		return true
+	}
+
 	i.currentBufferIndex++
 
 	if i.currentBufferIndex == len(i.buffer) {
@@ -604,13 +609,24 @@ func (i *PageValueIterator) Next() bool {
 	return true
 }
 
-func (i *PageValueIterator) CanSkip() bool {
-	return i.vr == nil
-}
+func (vi *PageValueIterator) Skip(n int64) int64 {
+	r := min(n, vi.p.NumRows()-int64(vi.current)-1)
+	// Move the row index cursor.
+	vi.current += int(r)
+	if vi.vr != nil {
+		// Move the page values index cursor.
+		vi.currentBufferIndex += int(r)
+		// Read more values if the current buffer is exhausted.
+		for vi.currentBufferIndex >= len(vi.buffer) {
+			vi.currentBufferIndex = vi.currentBufferIndex - len(vi.buffer)
+			num, err := vi.vr.ReadValues(vi.buffer[:cap(vi.buffer)])
+			if err != nil && err != io.EOF {
+				vi.err = err
+			}
+			vi.buffer = vi.buffer[:num]
+		}
+	}
 
-func (i *PageValueIterator) Skip(n int64) int64 {
-	r := min(n, i.p.NumRows()-int64(i.current)-1)
-	i.current += int(r)
 	return r
 }
 
