@@ -114,6 +114,10 @@ func Test_Convert_TSDB(t *testing.T) {
 			require.Equal(t, st.DB.Head().NumSeries(), uint64(len(series)))
 			require.Equal(t, st.DB.Head().NumSeries(), uint64(len(chunks)))
 
+			// Verify series hash column exists and is accessible in working context
+			seriesHashIdx, ok := shard.LabelsFile().Schema().Lookup(schema.SeriesHashColumn)
+			require.True(t, ok, "series hash column should exist")
+
 			// Make sure the chunk page bounds are empty
 			for _, ci := range shard.ChunksFile().ColumnIndexes() {
 				for _, value := range append(ci.MinValues, ci.MaxValues...) {
@@ -123,7 +127,7 @@ func Test_Convert_TSDB(t *testing.T) {
 
 			colIdx, ok := shard.LabelsFile().Schema().Lookup(schema.ColIndexes)
 			require.True(t, ok)
-			seriesHashIdx, ok := shard.LabelsFile().Schema().Lookup(schema.SeriesHash)
+			seriesHashIdx, ok = shard.LabelsFile().Schema().Lookup(schema.SeriesHashColumn)
 			require.True(t, ok)
 			// Make sure labels pages bounds are populated
 			for i, ci := range shard.LabelsFile().ColumnIndexes() {
@@ -145,6 +149,11 @@ func Test_Convert_TSDB(t *testing.T) {
 					totalSamples += c.Chunk.NumSamples()
 				}
 				require.Equal(t, tt.numberOfSamples, totalSamples)
+
+				// Verify series hash functionality is working
+				// The series hash should match one of the hashes we actually inserted
+				actualHash := s.Hash()
+				require.Contains(t, seriesHash, actualHash, "series hash should exist in the original set of inserted hashes")
 			}
 		})
 	}

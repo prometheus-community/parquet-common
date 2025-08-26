@@ -25,25 +25,10 @@ import (
 )
 
 const (
-	// LabelColumnPrefix is the prefix used for all Prometheus label columns in the Parquet schema.
-	// Each label becomes a column named "l_{label_name}" (e.g., "l___name__", "l_job", "l_instance").
-	// These columns store label values as optional strings with dictionary encoding for compression.
 	LabelColumnPrefix = "l_"
-
-	// DataColumnPrefix is the prefix used for time-partitioned data columns that store encoded chunks.
-	// Data columns are named "s_data_{index}" (e.g., "s_data_0", "s_data_1") where each column
-	// represents a time range based on the configured column duration (default 8 hours).
-	DataColumnPrefix = "s_data_"
-
-	// ColIndexes is the column name that stores which label columns contain values for each row.
-	// This column contains a compressed list of column indexes, allowing efficient reconstruction
-	// of the labelset without scanning all label columns. Uses delta byte array encoding.
-	ColIndexes = "s_col_indexes"
-
-	// SeriesHash is the column name that stores the hash of the complete Prometheus labelset.
-	// Contains the result of labels.Hash() encoded as an 8-byte array in big-endian format.
-	// Used for fast series identification, deduplication, and joins across Parquet files.
-	SeriesHash = "s_series_hash"
+	DataColumnPrefix  = "s_data_"
+	ColIndexes        = "s_col_indexes"
+	SeriesHashColumn  = "s_series_hash"
 
 	DataColSizeMd = "data_col_duration_ms"
 	MinTMd        = "minT"

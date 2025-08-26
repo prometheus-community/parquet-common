@@ -558,7 +558,7 @@ func (rr *TsdbRowReader) ReadRows(buf []parquet.Row) (int, error) {
 	if !ok {
 		return 0, fmt.Errorf("unable to find indexes")
 	}
-	seriesHashIndex, ok := rr.tsdbSchema.Schema.Lookup(schema.SeriesHash)
+	seriesHashIndex, ok := rr.tsdbSchema.Schema.Lookup(schema.SeriesHashColumn)
 	if !ok {
 		return 0, fmt.Errorf("unable to find series hash column")
 	}
