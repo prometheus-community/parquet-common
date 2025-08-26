@@ -123,10 +123,12 @@ func Test_Convert_TSDB(t *testing.T) {
 
 			colIdx, ok := shard.LabelsFile().Schema().Lookup(schema.ColIndexes)
 			require.True(t, ok)
+			seriesHashIdx, ok := shard.LabelsFile().Schema().Lookup(schema.SeriesHash)
+			require.True(t, ok)
 			// Make sure labels pages bounds are populated
 			for i, ci := range shard.LabelsFile().ColumnIndexes() {
 				for _, value := range append(ci.MinValues, ci.MaxValues...) {
-					if colIdx.ColumnIndex == i {
+					if colIdx.ColumnIndex == i || seriesHashIdx.ColumnIndex == i {
 						require.Empty(t, value)
 					} else {
 						require.NotEmpty(t, value)
@@ -196,8 +198,8 @@ func Test_CreateParquetWithReducedTimestampSamples(t *testing.T) {
 		require.Equal(t, schema.MetadataToMap(file.Metadata().KeyValueMetadata)[schema.DataColSizeMd], strconv.FormatInt(datColDuration.Milliseconds(), 10))
 	}
 
-	// 2 labels + col indexes
-	require.Len(t, shard.LabelsFile().Schema().Columns(), 3)
+	// 2 labels + col indexes + series hash
+	require.Len(t, shard.LabelsFile().Schema().Columns(), 4)
 	// 6 data cols with 10 min duration
 	require.Len(t, shard.ChunksFile().Schema().Columns(), 6)
 	series, chunks, err := readSeries(t, shard)

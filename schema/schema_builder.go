@@ -106,6 +106,7 @@ func (b *Builder) Build() (*TSDBSchema, error) {
 	colIdx := 0
 
 	b.g[ColIndexes] = parquet.Encoded(parquet.Leaf(parquet.ByteArrayType), &parquet.DeltaByteArray)
+	b.g[SeriesHash] = parquet.Leaf(parquet.ByteArrayType)
 	for i := b.mint; i <= b.maxt; i += b.dataColDurationMs {
 		b.g[DataColumn(colIdx)] = parquet.Encoded(parquet.Leaf(parquet.ByteArrayType), &parquet.DeltaLengthByteArray)
 		colIdx++
@@ -174,6 +175,12 @@ func (s *TSDBSchema) LabelsProjection(opts ...CompressionOpts) (*TSDBProjection,
 	}
 	g[ColIndexes] = lc.Node
 
+	lhc, ok := s.Schema.Lookup(SeriesHash)
+	if !ok {
+		return nil, fmt.Errorf("column %v not found", SeriesHash)
+	}
+	g[SeriesHash] = lhc.Node
+
 	for _, c := range s.Schema.Columns() {
 		if _, ok := ExtractLabelFromColumn(c[0]); !ok {
 			continue
@@ -189,7 +196,7 @@ func (s *TSDBSchema) LabelsProjection(opts ...CompressionOpts) (*TSDBProjection,
 			return LabelsPfileNameForShard(name, shard)
 		},
 		Schema:       WithCompression(parquet.NewSchema("labels-projection", g), opts...),
-		ExtraOptions: []parquet.WriterOption{parquet.SkipPageBounds(ColIndexes)},
+		ExtraOptions: []parquet.WriterOption{parquet.SkipPageBounds(ColIndexes), parquet.SkipPageBounds(SeriesHash)},
 	}, nil
 }
 
