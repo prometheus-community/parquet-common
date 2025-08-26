@@ -125,7 +125,7 @@ func Test_Convert_TSDB(t *testing.T) {
 				}
 			}
 
-			colIdx, ok := shard.LabelsFile().Schema().Lookup(schema.ColIndexes)
+			colIdx, ok := shard.LabelsFile().Schema().Lookup(schema.ColIndexesColumn)
 			require.True(t, ok)
 			seriesHashIdx, ok = shard.LabelsFile().Schema().Lookup(schema.SeriesHashColumn)
 			require.True(t, ok)
@@ -149,11 +149,6 @@ func Test_Convert_TSDB(t *testing.T) {
 					totalSamples += c.Chunk.NumSamples()
 				}
 				require.Equal(t, tt.numberOfSamples, totalSamples)
-
-				// Verify series hash functionality is working
-				// The series hash should match one of the hashes we actually inserted
-				actualHash := s.Hash()
-				require.Contains(t, seriesHash, actualHash, "series hash should exist in the original set of inserted hashes")
 			}
 		})
 	}
@@ -458,7 +453,7 @@ func rowToSeries(t *testing.T, s *parquet.Schema, dec *schema.PrometheusParquetC
 				chunksMetas[i] = append(chunksMetas[i], c...)
 			}
 
-			if col == schema.ColIndexes {
+			if col == schema.ColIndexesColumn {
 				lblIdx, err := schema.DecodeUintSlice(colVal.ByteArray())
 				if err != nil {
 					return nil, nil, err

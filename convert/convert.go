@@ -554,7 +554,7 @@ func (rr *TsdbRowReader) ReadRows(buf []parquet.Row) (int, error) {
 
 	i, j := 0, 0
 	lblsIdxs := []int{}
-	colIndex, ok := rr.tsdbSchema.Schema.Lookup(schema.ColIndexes)
+	colIndex, ok := rr.tsdbSchema.Schema.Lookup(schema.ColIndexesColumn)
 	if !ok {
 		return 0, fmt.Errorf("unable to find indexes")
 	}
