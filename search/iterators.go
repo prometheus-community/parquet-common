@@ -134,7 +134,7 @@ func (s *FilterEmptyChunkSeriesSet) Next() bool {
 		lbls := s.lblsSet[0]
 		s.lblsSet = s.lblsSet[1:]
 		iter := s.chnkSet.At()
-		metas := make([]chunks.Meta, 0, 1)
+		var metas []chunks.Meta
 		for iter.Next() {
 			metas = append(metas, iter.At())
 		}
