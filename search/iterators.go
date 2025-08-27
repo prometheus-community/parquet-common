@@ -126,6 +126,7 @@ func (s *FilterEmptyChunkSeriesSet) At() prom_storage.ChunkSeries {
 }
 
 func (s *FilterEmptyChunkSeriesSet) Next() bool {
+	metas := make([]chunks.Meta, 0, 128)
 	for s.chnkSet.Next() {
 		if len(s.lblsSet) == 0 {
 			s.err = errors.New("less labels than chunks, this should not happen")
@@ -134,7 +135,6 @@ func (s *FilterEmptyChunkSeriesSet) Next() bool {
 		lbls := s.lblsSet[0]
 		s.lblsSet = s.lblsSet[1:]
 		iter := s.chnkSet.At()
-		var metas []chunks.Meta
 		for iter.Next() {
 			metas = append(metas, iter.At())
 		}
@@ -148,10 +148,12 @@ func (s *FilterEmptyChunkSeriesSet) Next() bool {
 			// This series has no chunks, skip it and continue to the next
 			continue
 		}
+		metasCpy := make([]chunks.Meta, len(metas))
+		copy(metasCpy, metas) // copying prevents metas from escaping to heap
 
 		s.currentSeries = &ConcreteChunksSeries{
 			lbls: lbls,
-			chks: metas,
+			chks: metasCpy,
 		}
 		s.err = s.materializedSeriesCallback(s.ctx, s.currentSeries)
 		return s.err == nil
