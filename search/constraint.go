@@ -54,6 +54,9 @@ func MatchersToConstraints(matchers ...*labels.Matcher) ([]Constraint, error) {
 		case labels.MatchNotEqual:
 			c = Not(Equal(schema.LabelToColumn(matcher.Name), parquet.ValueOf(matcher.Value)))
 		case labels.MatchRegexp:
+			if matcher.GetRegexString() == ".*" {
+				continue
+			}
 			if matcher.GetRegexString() == ".+" {
 				c = Not(Equal(schema.LabelToColumn(matcher.Name), parquet.ValueOf("")))
 				break S

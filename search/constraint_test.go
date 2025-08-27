@@ -273,6 +273,14 @@ func TestFilter(t *testing.T) {
 							{From: 2, Count: 2},
 						},
 					},
+					{
+						constraints: []Constraint{
+							mustRegexConstraint(t, "C", mustNewMatcher(t, ".*")),
+						},
+						expect: []RowRange{
+							{From: 0, Count: 8},
+						},
+					},
 				},
 			},
 			{
