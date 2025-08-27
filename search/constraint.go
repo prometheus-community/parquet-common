@@ -87,7 +87,6 @@ func MatchersToConstraints(matchers ...*labels.Matcher) ([]Constraint, error) {
 		r = append(r, c)
 	}
 	return r, nil
-
 }
 
 // Initialize prepares the given constraints for use with the specified parquet file.
@@ -676,7 +675,6 @@ func (rc *regexConstraint) init(f storage.ParquetFileView) error {
 	}
 
 	return nil
-
 }
 
 func (rc *regexConstraint) path() string {
