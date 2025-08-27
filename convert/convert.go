@@ -586,7 +586,7 @@ func (rr *TsdbRowReader) ReadRows(buf []parquet.Row) (int, error) {
 		rr.rowBuilder.Add(colIndex.ColumnIndex, parquet.ValueOf(schema.EncodeIntSlice(lblsIdxs)))
 
 		// Compute and store the series hash as a byte slice in big-endian format
-		seriesHashValue := seriesLabels.Hash()
+		seriesHashValue := labels.StableHash(seriesLabels)
 		seriesHashBytes := make([]byte, 8)
 		binary.BigEndian.PutUint64(seriesHashBytes, seriesHashValue)
 		rr.rowBuilder.Add(seriesHashIndex.ColumnIndex, parquet.ValueOf(seriesHashBytes))
