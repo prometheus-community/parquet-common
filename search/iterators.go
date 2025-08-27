@@ -44,37 +44,6 @@ func (c ConcreteChunksSeries) Iterator(_ chunks.Iterator) chunks.Iterator {
 	return prom_storage.NewListChunkSeriesIterator(c.chks...)
 }
 
-type IteratorChunksSeries struct {
-	lbls labels.Labels
-	chks chunks.Iterator
-}
-
-func (i *IteratorChunksSeries) Labels() labels.Labels {
-	return i.lbls
-}
-
-func (i *IteratorChunksSeries) Iterator(_ chunks.Iterator) chunks.Iterator {
-	return i.chks
-}
-
-// ChunkCount returns the number of chunks in the series, consuming the inner iterator.
-// The current implementation is an expensive operation which reads the chunks from storage.
-// It is implemented only to satisfy the Mimir Prometheus fork's extended ChunkSeries interface.
-// It may be optimized in the future with extended metadata and indexes in the parquet chunks file.
-func (i *IteratorChunksSeries) ChunkCount() (int, error) {
-	if i.chks == nil {
-		return 0, nil
-	}
-	count := 0
-	for i.chks.Next() {
-		count++
-	}
-	if err := i.chks.Err(); err != nil {
-		return 0, err
-	}
-	return count, nil
-}
-
 type ChunkSeriesSetCloser interface {
 	prom_storage.ChunkSeriesSet
 
@@ -133,7 +102,7 @@ type FilterEmptyChunkSeriesSet struct {
 	lblsSet []labels.Labels
 	chnkSet ChunksIteratorIterator
 
-	currentSeries              *IteratorChunksSeries
+	currentSeries              *ConcreteChunksSeries
 	materializedSeriesCallback MaterializedSeriesFunc
 	err                        error
 }
@@ -165,24 +134,27 @@ func (s *FilterEmptyChunkSeriesSet) Next() bool {
 		lbls := s.lblsSet[0]
 		s.lblsSet = s.lblsSet[1:]
 		iter := s.chnkSet.At()
-		if iter.Next() {
-			// The series has chunks, keep it
-			meta := iter.At()
-			s.currentSeries = &IteratorChunksSeries{
-				lbls: lbls,
-				chks: &PeekedChunksIterator{
-					inner:       iter,
-					peekedValue: &meta,
-				},
-			}
-			s.err = s.materializedSeriesCallback(s.ctx, s.currentSeries)
-			return s.err == nil
+		metas := make([]chunks.Meta, 0, 1)
+		for iter.Next() {
+			metas = append(metas, iter.At())
 		}
 
 		if iter.Err() != nil {
 			s.err = iter.Err()
 			return false
 		}
+
+		if len(metas) == 0 {
+			// This series has no chunks, skip it and continue to the next
+			continue
+		}
+
+		s.currentSeries = &ConcreteChunksSeries{
+			lbls: lbls,
+			chks: metas,
+		}
+		s.err = s.materializedSeriesCallback(s.ctx, s.currentSeries)
+		return s.err == nil
 		// This series has no chunks, skip it and continue to the next
 	}
 	if s.chnkSet.Err() != nil {
@@ -207,39 +179,6 @@ func (s *FilterEmptyChunkSeriesSet) Warnings() annotations.Annotations {
 
 func (s *FilterEmptyChunkSeriesSet) Close() error {
 	return s.chnkSet.Close()
-}
-
-// PeekedChunksIterator is used to yield the first chunk of chunks.Iterator
-// which has already had its Next() method called to check if it has any chunks.
-// The already-consumed chunks.Meta is stored in peekedValue and returned on the first call to At().
-// Subsequent calls to Next then continue with the inner chunks.Iterator.
-type PeekedChunksIterator struct {
-	inner       chunks.Iterator
-	peekedValue *chunks.Meta
-	nextCalled  bool
-}
-
-func (i *PeekedChunksIterator) Next() bool {
-	if !i.nextCalled {
-		i.nextCalled = true
-		return true
-	}
-	if i.peekedValue != nil {
-		// This is the second call to Next, discard the peeked value
-		i.peekedValue = nil
-	}
-	return i.inner.Next()
-}
-
-func (i *PeekedChunksIterator) At() chunks.Meta {
-	if i.peekedValue != nil {
-		return *i.peekedValue
-	}
-	return i.inner.At()
-}
-
-func (i *PeekedChunksIterator) Err() error {
-	return i.inner.Err()
 }
 
 type ChunksIteratorIterator interface {
