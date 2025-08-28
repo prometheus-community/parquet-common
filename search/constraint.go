@@ -705,8 +705,9 @@ func (rc *regexConstraint) init(f storage.ParquetFileView) error {
 		rc.maxv = slices.MaxFunc(sm, rc.comp)
 	} else if len(rc.r.Prefix()) > 0 {
 		rc.minv = parquet.ValueOf(rc.r.Prefix())
-		// 16 is the default prefix length, maybe we should read the actual value from somewhere?
-		rc.maxv = parquet.ValueOf(append([]byte(rc.r.Prefix()), bytes.Repeat([]byte{0xff}, 16)...))
+		// 16 is the default prefix length and the schema builder uses it by default, if we ever change it this would
+		//  break, and we'd need to read the length from the schema or from the metadata.
+		rc.maxv = parquet.ValueOf(append([]byte(rc.r.Prefix()), bytes.Repeat([]byte{0xff}, parquet.DefaultColumnIndexSizeLimit)...))
 	}
 
 	return nil
