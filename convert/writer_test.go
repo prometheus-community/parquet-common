@@ -164,7 +164,7 @@ func TestParquetWriter(t *testing.T) {
 
 				// Should not have any label
 				for _, l := range series {
-					require.Len(t, l, 0)
+					require.True(t, l.IsEmpty())
 				}
 
 				remainingRows -= n

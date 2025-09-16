@@ -289,7 +289,7 @@ func TestQueryable(t *testing.T) {
 				t.Run("Without Matchers", func(t *testing.T) {
 					lValues, _, err := querier.LabelValues(context.Background(), labels.MetricName, nil)
 					require.NoError(t, err)
-					expectedLabelValues, err := ir.SortedLabelValues(context.Background(), labels.MetricName)
+					expectedLabelValues, err := ir.SortedLabelValues(context.Background(), labels.MetricName, nil)
 					require.NoError(t, err)
 					require.Equal(t, expectedLabelValues, lValues)
 				})
@@ -297,7 +297,7 @@ func TestQueryable(t *testing.T) {
 				t.Run("With Matchers", func(t *testing.T) {
 					lValues, _, err := querier.LabelValues(context.Background(), labels.MetricName, nil, labels.MustNewMatcher(labels.MatchEqual, "random_name_0", "random_value_0"))
 					require.NoError(t, err)
-					expectedLabelValues, err := ir.SortedLabelValues(context.Background(), labels.MetricName, labels.MustNewMatcher(labels.MatchEqual, "random_name_0", "random_value_0"))
+					expectedLabelValues, err := ir.SortedLabelValues(context.Background(), labels.MetricName, nil, labels.MustNewMatcher(labels.MatchEqual, "random_name_0", "random_value_0"))
 					require.NoError(t, err)
 					require.Equal(t, expectedLabelValues, lValues)
 				})
