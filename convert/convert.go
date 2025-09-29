@@ -568,19 +568,27 @@ func sortedUniqueLabelsPostings(
 	// TODO:
 	//   We should be able to partition the postings here now.
 	//   We know:
-	//  	1. the total unique series, each of which is a rows
+	//  	1. the total unique series, each of which is a row
 	//      2. the max number of row groups per shard (c.numRowGroups * c.rowGroupSize)
-	//   That gives us shard count N - create N lists of postings.
+	//   That gives us shard count N; create N lists of postings.
 	//   Starting at shard 0, we then iterate through the sorted allSeries.
 	//   For each series:
 	//  	1. Append to the current shard's postings list.
 	//      2. If it is a new unique series (not equal to previous series' labels), increment current unique series counter
 	//      3. If current unique series counter >= max unique series per shard,
 	//      	move on to the next shard's postings list and reset the unique series counter.
-	//   Now we have N postings lists, each of which is contains sorted postings for all unique series for that shard.
-	//   In practice, each postings list is in fact probably a map of blocks -> lists, since we need to track block IDs
-	//   in order to initialize readers and to create the tsdb.NewBlockChunkSeriesSet later.
+	//   Now we have N postings lists, each of which contains sorted postings for all unique series for that shard.
+	//   In practice, each "postings list" is in fact probably a map of blocks -> lists,
+	//   since we need to track block IDs in order to initialize readers and to create the tsdb.NewBlockChunkSeriesSet.
+	//   For each of the N postings lists, we then create tsdb.NewBlockChunkSeriesSets with all the same inputs as now,
+	//   except their postings lists are now the per-shard postings instead of the full postings list for each block.
 	//   For each shard, then the multiple seriesSets (one for each block) will be merged by NewMergeChunkSeriesSet.
+	//	 Finally we can return multiple sharded TSDBRowReaders each with their own MergeChunkSeriesSet
+	//	 and let them read/write in parallel.
+	//
+	//   TODO: figure out if each shard should have the same schema.
+	//   	Seems like queries should be faster and save space on the in-memory footer
+	//   	if each shard has only its specific columns, not all columns for the block time range.
 
 	return uniqueCount, nil
 }
