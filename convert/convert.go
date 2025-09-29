@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-multierror"
+	"github.com/oklog/ulid/v2"
 	"github.com/parquet-go/parquet-go"
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
@@ -446,7 +447,7 @@ func NewTsdbRowReader(ctx context.Context, mint, maxt, colDuration int64, blks [
 		return nil, fmt.Errorf("no series found in the specified time range")
 	}
 
-	//totalShards := int(math.Ceil(float64(totalNumberOfSeries) / float64(convertsOpts.numRowGroups*convertsOpts.rowGroupSize)))
+	// totalShards := int(math.Ceil(float64(totalNumberOfSeries) / float64(convertsOpts.numRowGroups*convertsOpts.rowGroupSize)))
 
 	cseriesSet := NewMergeChunkSeriesSet(seriesSets, compareFunc, storage.NewConcatenatingChunkSeriesMerger())
 
@@ -492,6 +493,7 @@ func sortedUniqueLabelsPostings(
 	}
 
 	type reader struct {
+		blockID      ulid.ULID // TODO add this so we can create separate tsdb.NewBlockChunkSeriesSet for merge later
 		indexr       tsdb.IndexReader
 		postingsIter index.Postings
 	}
@@ -504,13 +506,15 @@ func sortedUniqueLabelsPostings(
 		}
 	}
 
-	type seriesLabels struct {
-		idx    int
-		labels labels.Labels
+	type series struct {
+		blockID ulid.ULID // TODO add this so we can create separate tsdb.NewBlockChunkSeriesSet for merge later
+		idx     int
+		ref     storage.SeriesRef
+		labels  labels.Labels
 	}
 
 	chks := make([]chunks.Meta, 0, 128)
-	allSeriesLabels := make([]seriesLabels, 0, 128*len(readers))
+	allSeries := make([]series, 0, 128*len(readers))
 	for _, reader := range readers {
 		i := 0
 		scratchBuilder := labels.NewScratchBuilder(10)
@@ -533,15 +537,15 @@ func sortedUniqueLabelsPostings(
 
 			scratchBuilderLabels := scratchBuilder.Labels()
 			lb.Reset(scratchBuilderLabels)
-			allSeriesLabels = append(allSeriesLabels, seriesLabels{i, scratchBuilderLabels})
+			allSeries = append(allSeries, series{idx: i, labels: scratchBuilderLabels})
 		}
 	}
 
-	if len(allSeriesLabels) == 0 {
+	if len(allSeries) == 0 {
 		return 0, nil
 	}
 
-	slices.SortFunc(allSeriesLabels, func(a, b seriesLabels) int {
+	slices.SortFunc(allSeries, func(a, b series) int {
 		for _, lb := range ops.sortedLabels {
 			if c := strings.Compare(a.labels.Get(lb), b.labels.Get(lb)); c != 0 {
 				return c
@@ -556,11 +560,27 @@ func sortedUniqueLabelsPostings(
 	})
 
 	uniqueCount := 1
-	for i := 1; i < len(allSeriesLabels); i++ {
-		if labels.Compare(allSeriesLabels[i].labels, allSeriesLabels[i-1].labels) != 0 {
+	for i := 1; i < len(allSeries); i++ {
+		if labels.Compare(allSeries[i].labels, allSeries[i-1].labels) != 0 {
 			uniqueCount++
 		}
 	}
+	// TODO:
+	//   We should be able to partition the postings here now.
+	//   We know:
+	//  	1. the total unique series, each of which is a rows
+	//      2. the max number of row groups per shard (c.numRowGroups * c.rowGroupSize)
+	//   That gives us shard count N - create N lists of postings.
+	//   Starting at shard 0, we then iterate through the sorted allSeries.
+	//   For each series:
+	//  	1. Append to the current shard's postings list.
+	//      2. If it is a new unique series (not equal to previous series' labels), increment current unique series counter
+	//      3. If current unique series counter >= max unique series per shard,
+	//      	move on to the next shard's postings list and reset the unique series counter.
+	//   Now we have N postings lists, each of which is contains sorted postings for all unique series for that shard.
+	//   In practice, each postings list is in fact probably a map of blocks -> lists, since we need to track block IDs
+	//   in order to initialize readers and to create the tsdb.NewBlockChunkSeriesSet later.
+	//   For each shard, then the multiple seriesSets (one for each block) will be merged by NewMergeChunkSeriesSet.
 
 	return uniqueCount, nil
 }
