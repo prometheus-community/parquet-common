@@ -405,11 +405,13 @@ func NewTsdbRowReader(ctx context.Context, mint, maxt, colDuration int64, blks [
 		return labels.Compare(a, b)
 	}
 
+	indexReaders := make([]tsdb.IndexReader, 0, len(blks))
 	for _, blk := range blks {
 		indexr, err := blk.Index()
 		if err != nil {
 			return nil, fmt.Errorf("unable to get index reader from block: %w", err)
 		}
+		indexReaders = append(indexReaders, indexr)
 		closers = append(closers, indexr)
 
 		chunkr, err := blk.Chunks()
@@ -435,6 +437,16 @@ func NewTsdbRowReader(ctx context.Context, mint, maxt, colDuration int64, blks [
 
 		b.AddLabelNameColumn(lblns...)
 	}
+
+	uniqueSeriesCount, err := sortedUniqueLabelsPostings(ctx, indexReaders, mint, maxt, ops)
+	if err != nil {
+		return nil, fmt.Errorf("unable to get unique series count: %w", err)
+	}
+	if uniqueSeriesCount == 0 {
+		return nil, fmt.Errorf("no series found in the specified time range")
+	}
+
+	//totalShards := int(math.Ceil(float64(totalNumberOfSeries) / float64(convertsOpts.numRowGroups*convertsOpts.rowGroupSize)))
 
 	cseriesSet := NewMergeChunkSeriesSet(seriesSets, compareFunc, storage.NewConcatenatingChunkSeriesMerger())
 
@@ -467,6 +479,90 @@ func (rr *TsdbRowReader) Close() error {
 
 func (rr *TsdbRowReader) Schema() *schema.TSDBSchema {
 	return rr.tsdbSchema
+}
+
+func sortedUniqueLabelsPostings(
+	ctx context.Context,
+	indexReaders []tsdb.IndexReader,
+	mint, maxt int64,
+	ops convertOpts,
+) (int, error) {
+	if len(indexReaders) == 0 {
+		return 0, nil
+	}
+
+	type reader struct {
+		indexr       tsdb.IndexReader
+		postingsIter index.Postings
+	}
+
+	readers := make([]reader, len(indexReaders))
+	for i, indexr := range indexReaders {
+		readers[i] = reader{
+			indexr:       indexr,
+			postingsIter: tsdb.AllSortedPostings(ctx, indexr),
+		}
+	}
+
+	type seriesLabels struct {
+		idx    int
+		labels labels.Labels
+	}
+
+	chks := make([]chunks.Meta, 0, 128)
+	allSeriesLabels := make([]seriesLabels, 0, 128*len(readers))
+	for _, reader := range readers {
+		i := 0
+		scratchBuilder := labels.NewScratchBuilder(10)
+		lb := labels.NewBuilder(labels.EmptyLabels())
+
+		for reader.postingsIter.Next() {
+			scratchBuilder.Reset()
+			chks = chks[:0]
+
+			if err := reader.indexr.Series(reader.postingsIter.At(), &scratchBuilder, &chks); err != nil {
+				return 0, errors.Wrap(err, "unable to expand series")
+			}
+
+			hasChunks := slices.ContainsFunc(chks, func(chk chunks.Meta) bool {
+				return mint <= chk.MaxTime && chk.MinTime <= maxt
+			})
+			if !hasChunks {
+				continue
+			}
+
+			scratchBuilderLabels := scratchBuilder.Labels()
+			lb.Reset(scratchBuilderLabels)
+			allSeriesLabels = append(allSeriesLabels, seriesLabels{i, scratchBuilderLabels})
+		}
+	}
+
+	if len(allSeriesLabels) == 0 {
+		return 0, nil
+	}
+
+	slices.SortFunc(allSeriesLabels, func(a, b seriesLabels) int {
+		for _, lb := range ops.sortedLabels {
+			if c := strings.Compare(a.labels.Get(lb), b.labels.Get(lb)); c != 0 {
+				return c
+			}
+		}
+		if a.idx < b.idx {
+			return -1
+		} else if a.idx > b.idx {
+			return 1
+		}
+		return 0
+	})
+
+	uniqueCount := 1
+	for i := 1; i < len(allSeriesLabels); i++ {
+		if labels.Compare(allSeriesLabels[i].labels, allSeriesLabels[i-1].labels) != 0 {
+			uniqueCount++
+		}
+	}
+
+	return uniqueCount, nil
 }
 
 func sortedPostings(ctx context.Context, indexr tsdb.IndexReader, mint, maxt int64, sortedLabels ...string) index.Postings {
