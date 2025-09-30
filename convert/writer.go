@@ -32,20 +32,26 @@ import (
 )
 
 type PreShardedWriter struct {
-	name  string
 	shard int
 
 	rr                   parquet.RowReader
-	s                    *schema.TSDBSchema
+	schema               *schema.TSDBSchema
 	outSchemaProjections []*schema.TSDBProjection
 	pipeReaderWriter     PipeReaderWriter
 
 	opts *convertOpts
 }
 
+func (c *PreShardedWriter) Write(ctx context.Context) error {
+	if err := c.convertShard(ctx); err != nil {
+		return errors.Wrap(err, "failed to convert shard")
+	}
+	return nil
+}
+
 func (c *PreShardedWriter) convertShard(ctx context.Context) error {
-	outSchemas := outSchemasForShard(c.name, c.shard, c.outSchemaProjections)
-	_, err := writeFile(ctx, c.s, outSchemas, c.rr, c.pipeReaderWriter, c.opts)
+	outSchemas := outSchemasForShard(c.opts.name, c.shard, c.outSchemaProjections)
+	_, err := writeFile(ctx, c.schema, outSchemas, c.rr, c.pipeReaderWriter, c.opts)
 	return err
 }
 
