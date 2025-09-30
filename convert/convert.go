@@ -35,6 +35,7 @@ import (
 	"github.com/prometheus/prometheus/tsdb/index"
 	"github.com/prometheus/prometheus/tsdb/tombstones"
 	"github.com/thanos-io/objstore"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/prometheus-community/parquet-common/schema"
 )
@@ -49,7 +50,8 @@ var DefaultConvertOpts = convertOpts{
 	pageBufferSize:     parquet.DefaultPageBufferSize,
 	writeBufferSize:    parquet.DefaultWriteBufferSize,
 	columnPageBuffers:  parquet.DefaultWriterConfig().ColumnPageBuffers,
-	concurrency:        runtime.GOMAXPROCS(0),
+	readConcurrency:    runtime.GOMAXPROCS(0),
+	writeConcurrency:   runtime.GOMAXPROCS(0),
 	maxSamplesPerChunk: tsdb.DefaultSamplesPerChunk,
 }
 
@@ -70,7 +72,8 @@ type convertOpts struct {
 	pageBufferSize        int
 	writeBufferSize       int
 	columnPageBuffers     parquet.BufferPool
-	concurrency           int
+	readConcurrency       int
+	writeConcurrency      int
 	maxSamplesPerChunk    int
 	labelsCompressionOpts []schema.CompressionOpts
 	chunksCompressionOpts []schema.CompressionOpts
@@ -227,7 +230,7 @@ func WithRowGroupSize(size int) ConvertOption {
 	}
 }
 
-// WithConcurrency sets the number of concurrent goroutines used during conversion.
+// WithReadConcurrency sets the number of concurrent goroutines used to read TSDB series during conversion.
 // Higher concurrency can improve performance on multi-core systems but increases
 // memory usage. The optimal value depends on available CPU cores and memory.
 //
@@ -236,10 +239,26 @@ func WithRowGroupSize(size int) ConvertOption {
 //
 // Example:
 //
-//	WithConcurrency(8)  // Use 8 concurrent workers
-func WithConcurrency(concurrency int) ConvertOption {
+//	WithReadConcurrency(8)  // Use 8 concurrent workers
+func WithReadConcurrency(concurrency int) ConvertOption {
 	return func(opts *convertOpts) {
-		opts.concurrency = concurrency
+		opts.readConcurrency = concurrency
+	}
+}
+
+// WithWriteConcurrency sets the number of concurrent goroutines used to write Parquet shards during conversion.
+// Higher concurrency can improve conversion time on multi-core systems but increases
+// CPU and memory usage. The optimal value depends on available CPU cores and memory.
+//
+// Parameters:
+//   - concurrency: Number of concurrent workers (default: runtime.GOMAXPROCS(0))
+//
+// Example:
+//
+//	WithWriteConcurrency(8)  // Use 8 concurrent workers
+func WithWriteConcurrency(concurrency int) ConvertOption {
+	return func(opts *convertOpts) {
+		opts.writeConcurrency = concurrency
 	}
 }
 
@@ -361,6 +380,64 @@ func ConvertTSDBBlock(
 	return w.currentShard, errors.Wrap(w.Write(ctx), "error writing block")
 }
 
+func ConvertTSDBBlockParallel(
+	ctx context.Context,
+	bkt objstore.Bucket,
+	mint, maxt int64,
+	blks []Convertible,
+	opts ...ConvertOption,
+) (int, error) {
+	cfg := DefaultConvertOpts
+
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
+	shardedRowReaders, err := NewShardedTSDBRowReaders(ctx, mint, maxt, cfg.colDuration.Milliseconds(), blks, &cfg)
+	if err != nil {
+		return 0, errors.Wrap(err, "failed to create sharded TSDB row readers")
+	}
+	defer func() {
+		for _, rr := range shardedRowReaders {
+			_ = rr.Close()
+		}
+	}()
+
+	errGroup := &errgroup.Group{}
+	errGroup.SetLimit(cfg.writeConcurrency)
+	for shard, rr := range shardedRowReaders {
+		errGroup.Go(func() error {
+			labelsProjection, err := rr.Schema().LabelsProjection(cfg.labelsCompressionOpts...)
+			if err != nil {
+				return errors.Wrap(err, "error getting labels projection from tsdb schema")
+			}
+			chunksProjection, err := rr.Schema().ChunksProjection(cfg.chunksCompressionOpts...)
+			if err != nil {
+				return errors.Wrap(err, "error getting chunks projection from tsdb schema")
+			}
+			outSchemaProjections := []*schema.TSDBProjection{
+				labelsProjection, chunksProjection,
+			}
+
+			w := &PreShardedWriter{
+				shard:                shard,
+				rr:                   rr,
+				schema:               rr.Schema(),
+				outSchemaProjections: outSchemaProjections,
+				pipeReaderWriter:     NewPipeReaderBucketWriter(bkt),
+				opts:                 &cfg,
+			}
+			return errors.Wrap(w.Write(ctx), "error writing shard for block")
+		})
+	}
+
+	err = errGroup.Wait()
+	if err != nil {
+		return 0, errors.Wrap(err, "failed to convert shards in parallel")
+	}
+	return len(shardedRowReaders), nil
+}
+
 var _ parquet.RowReader = &TSDBRowReader{}
 
 type TSDBRowReader struct {
@@ -474,7 +551,7 @@ func NewShardedTSDBRowReaders(
 			seriesSet:   mergeSeriesSet,
 			closers:     closers,
 			tsdbSchema:  s,
-			concurrency: opts.concurrency,
+			concurrency: opts.readConcurrency,
 
 			rowBuilder: parquet.NewRowBuilder(s.Schema),
 			encoder:    schema.NewPrometheusParquetChunksEncoder(s, opts.maxSamplesPerChunk),
@@ -557,7 +634,7 @@ func NewTsdbRowReader(ctx context.Context, mint, maxt, colDuration int64, blks [
 		seriesSet:   cseriesSet,
 		closers:     closers,
 		tsdbSchema:  s,
-		concurrency: ops.concurrency,
+		concurrency: ops.readConcurrency,
 
 		rowBuilder: parquet.NewRowBuilder(s.Schema),
 		encoder:    schema.NewPrometheusParquetChunksEncoder(s, ops.maxSamplesPerChunk),

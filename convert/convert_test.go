@@ -98,7 +98,7 @@ func Test_Convert_TSDB(t *testing.T) {
 			require.NoError(t, app.Commit())
 
 			h := st.Head()
-			shards, err := ConvertTSDBBlock(ctx, bkt, h.MinTime(), h.MaxTime(), []Convertible{h}, WithColDuration(tt.dataColDuration), WithSortBy(labels.MetricName))
+			shards, err := ConvertTSDBBlockParallel(ctx, bkt, h.MinTime(), h.MaxTime(), []Convertible{h}, WithColDuration(tt.dataColDuration), WithSortBy(labels.MetricName))
 			require.NoError(t, err)
 			require.Equal(t, 1, shards)
 
@@ -178,7 +178,7 @@ func Test_CreateParquetWithReducedTimestampSamples(t *testing.T) {
 	mint, maxt := (time.Minute * 30).Milliseconds(), (time.Minute*90).Milliseconds()-1
 
 	datColDuration := time.Minute * 10
-	shards, err := ConvertTSDBBlock(
+	shards, err := ConvertTSDBBlockParallel(
 		ctx, bkt, mint, maxt,
 		[]Convertible{h},
 		WithColDuration(datColDuration),
@@ -267,7 +267,7 @@ func Test_BlockHasOnlySomeSeriesInConvertTime(t *testing.T) {
 
 	h := st.Head()
 
-	shards, err := ConvertTSDBBlock(
+	shards, err := ConvertTSDBBlockParallel(
 		ctx,
 		bkt,
 		10,
