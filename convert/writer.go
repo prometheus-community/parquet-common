@@ -31,6 +31,24 @@ import (
 	"github.com/prometheus-community/parquet-common/util"
 )
 
+type PreShardedWriter struct {
+	name  string
+	shard int
+
+	rr                   parquet.RowReader
+	s                    *schema.TSDBSchema
+	outSchemaProjections []*schema.TSDBProjection
+	pipeReaderWriter     PipeReaderWriter
+
+	opts *convertOpts
+}
+
+func (c *PreShardedWriter) convertShard(ctx context.Context) error {
+	outSchemas := outSchemasForShard(c.name, c.shard, c.outSchemaProjections)
+	_, err := writeFile(ctx, c.s, outSchemas, c.rr, c.pipeReaderWriter, c.opts)
+	return err
+}
+
 type ShardedWriter struct {
 	name string
 
@@ -86,49 +104,55 @@ func (c *ShardedWriter) convertShards(ctx context.Context) error {
 }
 
 func (c *ShardedWriter) convertShard(ctx context.Context) (bool, error) {
-	rowsToWrite := c.numRowGroups * c.rowGroupSize
-
-	n, err := c.writeFile(ctx, c.s, rowsToWrite)
+	outSchemas := outSchemasForShard(c.name, c.currentShard, c.outSchemaProjections)
+	n, err := writeFile(ctx, c.s, outSchemas, c.rr, c.pipeReaderWriter, c.opts)
 	if err != nil {
 		return false, err
 	}
 
 	c.currentShard++
 
-	if n < int64(rowsToWrite) {
+	if n < int64(c.opts.numRowGroups*c.opts.rowGroupSize) {
 		return false, nil
 	}
 
 	return true, nil
 }
 
-func (c *ShardedWriter) writeFile(ctx context.Context, schema *schema.TSDBSchema, rowsToWrite int) (int64, error) {
+func writeFile(
+	ctx context.Context,
+	inSchema *schema.TSDBSchema,
+	outSchemas map[string]*schema.TSDBProjection,
+	rr parquet.RowReader,
+	pipeReaderWriter PipeReaderWriter,
+	opts *convertOpts,
+) (int64, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	fileOpts := []parquet.WriterOption{
 		parquet.SortingWriterConfig(
-			parquet.SortingColumns(c.opts.buildSortingColumns()...),
+			parquet.SortingColumns(opts.buildSortingColumns()...),
 		),
-		parquet.MaxRowsPerRowGroup(int64(c.rowGroupSize)),
-		parquet.BloomFilters(c.opts.buildBloomfilterColumns()...),
-		parquet.PageBufferSize(c.opts.pageBufferSize),
-		parquet.WriteBufferSize(c.opts.writeBufferSize),
-		parquet.ColumnPageBuffers(c.opts.columnPageBuffers),
+		parquet.MaxRowsPerRowGroup(int64(opts.rowGroupSize)),
+		parquet.BloomFilters(opts.buildBloomfilterColumns()...),
+		parquet.PageBufferSize(opts.pageBufferSize),
+		parquet.WriteBufferSize(opts.writeBufferSize),
+		parquet.ColumnPageBuffers(opts.columnPageBuffers),
 	}
 
-	for k, v := range schema.Metadata {
+	for k, v := range inSchema.Metadata {
 		fileOpts = append(fileOpts, parquet.KeyValueMetadata(k, v))
 	}
 
 	writer, err := newSplitFileWriter(
-		ctx, schema.Schema, c.outSchemasForCurrentShard(), c.pipeReaderWriter, fileOpts...,
+		ctx, inSchema.Schema, outSchemas, pipeReaderWriter, fileOpts...,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("unable to create row writer: %w", err)
 	}
 
-	n, err := parquet.CopyRows(writer, newBufferedReader(ctx, newLimitReader(c.rr, rowsToWrite)))
+	n, err := parquet.CopyRows(writer, newBufferedReader(ctx, newLimitReader(rr, opts.numRowGroups*opts.rowGroupSize)))
 	if err != nil {
 		return 0, fmt.Errorf("unable to copy rows: %w", err)
 	}
@@ -141,11 +165,11 @@ func (c *ShardedWriter) writeFile(ctx context.Context, schema *schema.TSDBSchema
 	return n, nil
 }
 
-func (c *ShardedWriter) outSchemasForCurrentShard() map[string]*schema.TSDBProjection {
-	outSchemas := make(map[string]*schema.TSDBProjection, len(c.outSchemaProjections))
+func outSchemasForShard(name string, shard int, outSchemaProjections []*schema.TSDBProjection) map[string]*schema.TSDBProjection {
+	outSchemas := make(map[string]*schema.TSDBProjection, len(outSchemaProjections))
 
-	for _, projection := range c.outSchemaProjections {
-		outSchemas[projection.FilenameFunc(c.name, c.currentShard)] = projection
+	for _, projection := range outSchemaProjections {
+		outSchemas[projection.FilenameFunc(name, shard)] = projection
 	}
 	return outSchemas
 }

@@ -382,7 +382,7 @@ func NewShardedTSDBRowReaders(
 	ctx context.Context,
 	mint, maxt, colDuration int64,
 	blocks []Convertible,
-	opts convertOpts,
+	opts *convertOpts,
 ) ([]*TSDBRowReader, error) {
 	var (
 		closers = make([]io.Closer, 0, len(blocks))
@@ -777,7 +777,7 @@ func shardSeries(
 	ctx context.Context,
 	blockIndexReaders map[ulid.ULID]tsdb.IndexReader,
 	mint, maxt int64,
-	opts convertOpts,
+	opts *convertOpts,
 ) (int, []map[ulid.ULID][]blockSeries, error) {
 	type reader struct {
 		blockID      ulid.ULID
