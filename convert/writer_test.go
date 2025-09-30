@@ -334,6 +334,7 @@ func TestParquetWriterParallel(t *testing.T) {
 				cr := parquet.NewGenericReader[any](chunksFile)
 				n, err = cr.ReadRows(buf)
 				// Read the whole file
+				require.ErrorIs(t, err, io.EOF)
 				if i < totalShards-1 {
 					require.Equal(t, rowsPerShard, n)
 				} else {
