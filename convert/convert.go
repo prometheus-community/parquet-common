@@ -112,6 +112,23 @@ func WithSortBy(labels ...string) ConvertOption {
 	}
 }
 
+// WithBloomFilterLabels configures which labels should have bloom filters created during conversion.
+// Bloom filters enable fast filtering during queries by allowing quick elimination of row groups
+// that definitely don't contain a specific label value. This significantly improves query performance
+// for high-cardinality labels. By default, bloom filters are created for __name__.
+//
+// Parameters:
+//   - labels: Label names to create bloom filters for
+//
+// Example:
+//
+//	WithBloomFilterLabels("__name__", "job", "instance")
+func WithBloomFilterLabels(labels ...string) ConvertOption {
+	return func(opts *convertOpts) {
+		opts.bloomfilterLabels = labels
+	}
+}
+
 // WithColDuration sets the time duration for each column in the Parquet schema.
 // This determines how time series data is partitioned across columns, affecting
 // both storage efficiency and query performance. Shorter durations create more

@@ -390,6 +390,23 @@ func Test_SortedLabels(t *testing.T) {
 	}
 }
 
+func Test_WithBloomFilterLabels(t *testing.T) {
+	opts := DefaultConvertOpts
+
+	WithBloomFilterLabels("__name__", "job", "instance")(&opts)
+
+	require.Equal(t, []string{"__name__", "job", "instance"}, opts.bloomfilterLabels)
+
+	bloomFilterCols := opts.buildBloomfilterColumns()
+	require.Len(t, bloomFilterCols, 3)
+
+	WithBloomFilterLabels()(&opts)
+	require.Empty(t, opts.bloomfilterLabels)
+
+	bloomFilterCols = opts.buildBloomfilterColumns()
+	require.Empty(t, bloomFilterCols)
+}
+
 func readSeries(t *testing.T, shard storage.ParquetShard) ([]labels.Labels, [][]chunks.Meta, error) {
 	ctx := context.Background()
 	lr := parquet.NewGenericReader[any](shard.LabelsFile().WithContext(ctx))
