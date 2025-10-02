@@ -229,7 +229,7 @@ func BenchmarkConvertTSDB_Parallel(b *testing.B) {
 					const numRowGroups = 2
 					opts := []ConvertOption{
 						WithSortBy(labels.MetricName),
-						WithNumRowGroups(2),
+						WithNumRowGroups(numRowGroups),
 						// Read concurrency is per-shardWriter;
 						// With a 16-core or 32-core dev machine and test cases up to 8 shards written in parallel
 						// 4 readers per writer allows benchmark to show diminishing returns as CPU cores become saturated.
