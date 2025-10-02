@@ -100,9 +100,9 @@ func (c *ShardedWriter) Write(ctx context.Context) error {
 
 func (c *ShardedWriter) convertShards(ctx context.Context) error {
 	for {
-		if ok, err := c.convertShard(ctx); err != nil {
+		if done, err := c.convertShard(ctx); err != nil {
 			return fmt.Errorf("unable to convert shard: %w", err)
-		} else if !ok {
+		} else if done {
 			break
 		}
 	}
@@ -113,16 +113,16 @@ func (c *ShardedWriter) convertShard(ctx context.Context) (bool, error) {
 	outSchemas := outSchemasForShard(c.name, c.currentShard, c.outSchemaProjections)
 	n, err := writeFile(ctx, c.s, outSchemas, c.rr, c.pipeReaderWriter, c.opts)
 	if err != nil {
-		return false, err
+		return true, err
 	}
 
 	c.currentShard++
 
 	if n < int64(c.opts.numRowGroups*c.opts.rowGroupSize) {
-		return false, nil
+		return true, nil
 	}
 
-	return true, nil
+	return false, nil
 }
 
 func writeFile(

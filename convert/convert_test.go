@@ -154,6 +154,116 @@ func Test_Convert_TSDB(t *testing.T) {
 	}
 }
 
+func BenchmarkConvertTSDB_Parallel(b *testing.B) {
+	ctx := context.Background()
+
+	testCases := []struct {
+		shards int
+	}{
+		{shards: 1},
+		{shards: 2},
+		{shards: 4},
+		{shards: 6},
+		{shards: 8},
+	}
+
+	st := teststorage.New(b)
+	b.Cleanup(func() { _ = st.Close() })
+
+	bkt, err := filesystem.NewBucket(b.TempDir())
+	require.NoError(b, err)
+	b.Cleanup(func() { _ = bkt.Close() })
+
+	// 100,000 series
+	metrics := 50
+	instances := 2
+	regions := 4
+	zones := 2
+	services := 25
+	environments := 5
+
+	numSeries := metrics * instances * regions * zones * services * environments
+	b.Logf("Generating %d series (%d metrics × %d instances × %d regions × %d zones × %d services × %d environments)",
+		numSeries, metrics, instances, regions, zones, services, environments)
+
+	step := 15 * time.Second
+	blockDuration := 2 * time.Hour
+	numSamples := int(blockDuration / step)
+
+	app := st.Appender(ctx)
+	for metric := range metrics {
+		for instance := range instances {
+			for region := range regions {
+				for zone := range zones {
+					for service := range services {
+						for env := range environments {
+							lbls := labels.FromStrings(
+								"__name__", fmt.Sprintf("test_metric_%d", metric),
+								"instance", fmt.Sprintf("instance-%d", instance),
+								"region", fmt.Sprintf("region-%d", region),
+								"zone", fmt.Sprintf("zone-%d", zone),
+								"service", fmt.Sprintf("service-%d", service),
+								"environment", fmt.Sprintf("environment-%d", env),
+							)
+							for sample := range numSamples {
+								_, err := app.Append(0, lbls, (step * time.Duration(sample)).Milliseconds(), float64(instance))
+								require.NoError(b, err)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	require.NoError(b, app.Commit())
+
+	for _, tc := range testCases {
+		for _, method := range []string{"serial", "parallel"} {
+			b.Run(fmt.Sprintf("method=%s/shards=%d", method, tc.shards), func(b *testing.B) {
+				h := st.Head()
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					// Holding a constant number of row groups is the easiest way to pass
+					// the correct row group sizes to both the serial and parallel methods.
+					const numRowGroups = 2
+					opts := []ConvertOption{
+						WithSortBy(labels.MetricName),
+						WithNumRowGroups(2),
+						// Read concurrency is per-shardWriter;
+						// With a 16-core or 32-core dev machine and test cases up to 8 shards written in parallel
+						// 4 readers per writer allows benchmark to show diminishing returns as CPU cores become saturated.
+						// A 4:1 ratio of reader to writer concurrency minimizes total conversion time in this benchmark.
+						WithReadConcurrency(4),
+					}
+
+					shardRows := int(math.Ceil(float64(numSeries) / float64(tc.shards)))
+					rowGroupSize := int(math.Ceil(float64(shardRows) / float64(numRowGroups)))
+
+					var outputShards int
+					var err error
+
+					start := time.Now()
+					switch method {
+					case "serial":
+						// ConvertTSDBBlock has a bug where it reports incorrect shard counts
+						// when the number of rows is exactly divisible by the shard size (numRowGroups * rowGroupSize).
+						opts = append(opts, WithRowGroupSize(rowGroupSize+1))
+						outputShards, err = ConvertTSDBBlock(ctx, bkt, h.MinTime(), h.MaxTime(), []Convertible{h}, opts...)
+					case "parallel":
+						opts = append(opts, WithRowGroupSize(rowGroupSize))
+						outputShards, err = ConvertTSDBBlockParallel(ctx, bkt, h.MinTime(), h.MaxTime(), []Convertible{h}, opts...)
+					}
+					require.NoError(b, err)
+					dur := time.Since(start)
+					b.ReportMetric(float64(dur.Nanoseconds()/int64(b.N)), "conversion-ns/op")
+					require.Equal(b, tc.shards, outputShards)
+				}
+			})
+		}
+	}
+}
+
 func Test_CreateParquetWithReducedTimestampSamples(t *testing.T) {
 	ctx := context.Background()
 	st := teststorage.New(t)

@@ -919,8 +919,8 @@ func shardSeries(
 
 	totalShards := int(math.Ceil(float64(uniqueSeriesCount) / float64(opts.numRowGroups*opts.rowGroupSize)))
 	// Divide rows evenly across shards to avoid one small shard at the end;
-	// add 1 so floor division does not cut off the remainder series.
-	rowsPerShard := (uniqueSeriesCount / totalShards) + 1
+	// use floats & round up so integer division does not cut off the remainder series.
+	rowsPerShard := int(math.Ceil(float64(uniqueSeriesCount) / float64(totalShards)))
 
 	// For each shard index i, shardSeries[i] is a map of blockID -> []series.
 	shardSeries := make([]map[ulid.ULID][]blockSeries, totalShards)
