@@ -461,31 +461,20 @@ func NewShardedTSDBRowReaders(
 	blocks []Convertible,
 	opts *convertOpts,
 ) ([]*TSDBRowReader, error) {
-	var (
-		closers = make([]io.Closer, 0, len(blocks))
-		ok      = false
-	)
-	// If we fail to build the row reader, make sure we release resources.
-	// This could be either a controlled error or a panic.
-	defer func() {
-		if !ok {
-			for i := range closers {
-				_ = closers[i].Close()
-			}
-		}
-	}()
-
 	blocksByID := make(map[ulid.ULID]Convertible, len(blocks))
 	blockIndexRs := make(map[ulid.ULID]tsdb.IndexReader, len(blocks))
+	defer func() {
+		for i := range blockIndexRs {
+			_ = blockIndexRs[i].Close()
+		}
+	}()
 	for _, blk := range blocks {
 		blocksByID[blk.Meta().ULID] = blk
-
 		indexr, err := blk.Index()
 		if err != nil {
 			return nil, fmt.Errorf("unable to get index reader from block: %w", err)
 		}
 		blockIndexRs[blk.Meta().ULID] = indexr
-		closers = append(closers, indexr)
 	}
 
 	uniqueSeriesCount, shardedSeries, err := shardSeries(ctx, blockIndexRs, mint, maxt, opts)
@@ -501,6 +490,7 @@ func NewShardedTSDBRowReaders(
 	//	* a MergeChunkSeriesSet of all blocks' series sets for the shard
 	//	* a schema built from only the label names present in the shard
 	for shardIdx, shardSeries := range shardedSeries {
+		closers := make([]io.Closer, 0, len(shardSeries)*3) // index, chunk, and tombstone reader per block
 		seriesSets := make([]storage.ChunkSeriesSet, 0, len(blocks))
 		schemaBuilder := schema.NewBuilder(mint, maxt, colDuration)
 
@@ -510,7 +500,13 @@ func NewShardedTSDBRowReaders(
 			blk := blocksByID[blockID]
 
 			// Init all readers for block & add to closers
-			indexr := blockIndexRs[blockID] // already added to closers previously
+
+			// Init separate index readers from above blockIndexRs to simplify closing logic
+			indexr, err := blk.Index()
+			if err != nil {
+				return nil, fmt.Errorf("failed to get index reader from block: %w", err)
+			}
+			closers = append(closers, indexr)
 
 			chunkr, err := blk.Chunks()
 			if err != nil {
@@ -559,7 +555,6 @@ func NewShardedTSDBRowReaders(
 		shardTSDBRowReaders[shardIdx] = rr
 	}
 
-	ok = true
 	return shardTSDBRowReaders, nil
 }
 
