@@ -175,7 +175,7 @@ _, err := convert.ConvertTSDBBlock(
     convert.WithColumnDuration(4*time.Hour),             // Time span per column
     convert.WithSortBy("__name__", "instance"),          // Sort order for better compression
     convert.WithBloomFilterLabels("__name__", "job"),    // Labels to create bloom filters for
-    convert.WithConcurrency(8),                          // Parallel processing
+    convert.WithReadConcurrency(8),                          // Parallel processing
     convert.WithCompression(schema.CompressionZstd),     // Compression algorithm
 )
 ```

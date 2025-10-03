@@ -801,7 +801,7 @@ func convertToParquetWithName(t *testing.T, ctx context.Context, bkt *bucket, da
 		convertOpts = defaultConvertOpts
 	}
 
-	shards, err := convert.ConvertTSDBBlock(
+	shards, err := convert.ConvertTSDBBlockParallel(
 		ctx,
 		bkt,
 		data.MinTime,
@@ -832,7 +832,7 @@ func convertToParquetForBenchWithCountingBucket(tb testing.TB, ctx context.Conte
 		convertOpts = defaultConvertOpts
 	}
 
-	shards, err := convert.ConvertTSDBBlock(
+	shards, err := convert.ConvertTSDBBlockParallel(
 		ctx,
 		bkt,
 		data.MinTime,
