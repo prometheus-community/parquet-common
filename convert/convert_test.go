@@ -157,14 +157,88 @@ func Test_Convert_TSDB(t *testing.T) {
 func BenchmarkConvertTSDB_Parallel(b *testing.B) {
 	ctx := context.Background()
 
+	const serial, parallel = "serial", "parallel"
+
 	testCases := []struct {
-		shards int
+		method                string
+		shards                int
+		shardWriteParallelism int
 	}{
-		{shards: 1},
-		{shards: 2},
-		{shards: 4},
-		{shards: 6},
-		{shards: 8},
+		// serial cases; shard write parallelism is always effectively 1 regardless of configuration
+		{
+			method:                serial,
+			shards:                1,
+			shardWriteParallelism: 1,
+		},
+		{
+			method:                serial,
+			shards:                2,
+			shardWriteParallelism: 1,
+		},
+		{
+			method:                serial,
+			shards:                4,
+			shardWriteParallelism: 1,
+		},
+		{
+			method:                serial,
+			shards:                8,
+			shardWriteParallelism: 1,
+		},
+		// parallel cases; shard write parallelism is variable
+		// first set of cases uses parallelism=1 for head-to-head resource comparison against serial method
+		{
+			method:                parallel,
+			shards:                1,
+			shardWriteParallelism: 1,
+		},
+		{
+			method:                parallel,
+			shards:                2,
+			shardWriteParallelism: 1,
+		},
+		{
+			method:                parallel,
+			shards:                4,
+			shardWriteParallelism: 1,
+		},
+		{
+			method:                parallel,
+			shards:                8,
+			shardWriteParallelism: 1,
+		},
+		// remaining parallel cases seek to increase parallelism to reduce conversion time
+		// and demonstrate diminishing returns as CPU cores become saturated.
+		{
+			method:                parallel,
+			shards:                2,
+			shardWriteParallelism: 2,
+		},
+		{
+			method:                parallel,
+			shards:                4,
+			shardWriteParallelism: 2,
+		},
+		{
+			method:                parallel,
+			shards:                4,
+			shardWriteParallelism: 4,
+		},
+		{
+			method:                parallel,
+			shards:                8,
+			shardWriteParallelism: 2,
+		},
+		{
+			method:                parallel,
+			shards:                8,
+			shardWriteParallelism: 4,
+		},
+		{
+			method:                parallel,
+			shards:                8,
+			shardWriteParallelism: 8,
+		},
 	}
 
 	st := teststorage.New(b)
@@ -218,8 +292,12 @@ func BenchmarkConvertTSDB_Parallel(b *testing.B) {
 	require.NoError(b, app.Commit())
 
 	for _, tc := range testCases {
-		for _, method := range []string{"serial", "parallel"} {
-			b.Run(fmt.Sprintf("method=%s/shards=%d", method, tc.shards), func(b *testing.B) {
+		for _, readParallelismPerWrite := range []int{8, 16, 24, 32} {
+			tcName := fmt.Sprintf(
+				"method=%s/shards=%d/writeParallelism=%d/readParallelismPerWrite=%d",
+				tc.method, tc.shards, tc.shardWriteParallelism, readParallelismPerWrite,
+			)
+			b.Run(tcName, func(b *testing.B) {
 				h := st.Head()
 				b.ReportAllocs()
 				b.ResetTimer()
@@ -230,13 +308,15 @@ func BenchmarkConvertTSDB_Parallel(b *testing.B) {
 					opts := []ConvertOption{
 						WithSortBy(labels.MetricName),
 						WithNumRowGroups(numRowGroups),
+						WithWriteConcurrency(tc.shardWriteParallelism),
 						// Read concurrency is per-shardWriter;
 						// With a 16-core or 32-core dev machine and test cases up to 8 shards written in parallel
 						// 4 readers per writer allows benchmark to show diminishing returns as CPU cores become saturated.
 						// A 4:1 ratio of reader to writer concurrency minimizes total conversion time in this benchmark.
-						WithReadConcurrency(4),
+						WithReadConcurrency(readParallelismPerWrite),
 					}
 
+					// Calculate row group size limit to target shard count for the test case.
 					shardRows := int(math.Ceil(float64(numSeries) / float64(tc.shards)))
 					rowGroupSize := int(math.Ceil(float64(shardRows) / float64(numRowGroups)))
 
@@ -244,13 +324,13 @@ func BenchmarkConvertTSDB_Parallel(b *testing.B) {
 					var err error
 
 					start := time.Now()
-					switch method {
-					case "serial":
+					switch tc.method {
+					case serial:
 						// ConvertTSDBBlock has a bug where it reports incorrect shard counts
 						// when the number of rows is exactly divisible by the shard size (numRowGroups * rowGroupSize).
 						opts = append(opts, WithRowGroupSize(rowGroupSize+1))
 						outputShards, err = ConvertTSDBBlock(ctx, bkt, h.MinTime(), h.MaxTime(), []Convertible{h}, opts...)
-					case "parallel":
+					case parallel:
 						opts = append(opts, WithRowGroupSize(rowGroupSize))
 						outputShards, err = ConvertTSDBBlockParallel(ctx, bkt, h.MinTime(), h.MaxTime(), []Convertible{h}, opts...)
 					}
