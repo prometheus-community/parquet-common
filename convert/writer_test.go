@@ -23,6 +23,7 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 	"github.com/pkg/errors"
+	"github.com/prometheus/common/promslog"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/prometheus/tsdb/chunks"
@@ -267,6 +268,7 @@ func TestParquetWriterParallel(t *testing.T) {
 						outSchemaProjections: outSchemaProjections,
 						pipeReaderWriter:     NewPipeReaderBucketWriter(bkt),
 						opts:                 &convertsOpts,
+						logger:               promslog.NewNopLogger(),
 					}
 					return errors.Wrap(w.Write(ctx), "error writing shard for block")
 				})
