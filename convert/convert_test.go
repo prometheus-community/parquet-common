@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/parquet-go/parquet-go"
+	"github.com/prometheus/common/promslog"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/prometheus/tsdb/chunks"
@@ -98,7 +99,12 @@ func Test_Convert_TSDB(t *testing.T) {
 			require.NoError(t, app.Commit())
 
 			h := st.Head()
-			shards, err := ConvertTSDBBlockParallel(ctx, bkt, h.MinTime(), h.MaxTime(), []Convertible{h}, WithColDuration(tt.dataColDuration), WithSortBy(labels.MetricName))
+			shards, err := ConvertTSDBBlockParallel(
+				ctx, bkt,
+				h.MinTime(), h.MaxTime(), []Convertible{h},
+				promslog.NewNopLogger(),
+				WithColDuration(tt.dataColDuration), WithSortBy(labels.MetricName),
+			)
 			require.NoError(t, err)
 			require.Equal(t, 1, shards)
 
@@ -332,7 +338,12 @@ func BenchmarkConvertTSDB_Parallel(b *testing.B) {
 						outputShards, err = ConvertTSDBBlock(ctx, bkt, h.MinTime(), h.MaxTime(), []Convertible{h}, opts...)
 					case parallel:
 						opts = append(opts, WithRowGroupSize(rowGroupSize))
-						outputShards, err = ConvertTSDBBlockParallel(ctx, bkt, h.MinTime(), h.MaxTime(), []Convertible{h}, opts...)
+						outputShards, err = ConvertTSDBBlockParallel(
+							ctx, bkt,
+							h.MinTime(), h.MaxTime(), []Convertible{h},
+							promslog.NewNopLogger(),
+							opts...,
+						)
 					}
 					require.NoError(b, err)
 					dur := time.Since(start)
@@ -371,6 +382,7 @@ func Test_CreateParquetWithReducedTimestampSamples(t *testing.T) {
 	shards, err := ConvertTSDBBlockParallel(
 		ctx, bkt, mint, maxt,
 		[]Convertible{h},
+		promslog.NewNopLogger(),
 		WithColDuration(datColDuration),
 		WithSortBy(labels.MetricName),
 		WithColumnPageBuffers(parquet.NewFileBufferPool(t.TempDir(), "buffers.*")),
@@ -463,6 +475,7 @@ func Test_BlockHasOnlySomeSeriesInConvertTime(t *testing.T) {
 		10,
 		20-1,
 		[]Convertible{h},
+		promslog.NewNopLogger(),
 		WithColDuration(time.Millisecond*10),
 		WithColumnPageBuffers(parquet.NewFileBufferPool(t.TempDir(), "buffers.*")),
 	)

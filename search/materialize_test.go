@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/parquet-go/parquet-go"
+	"github.com/prometheus/common/promslog"
 	"github.com/prometheus/prometheus/model/labels"
 	prom_storage "github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
@@ -229,6 +230,7 @@ func convertToParquet(t testing.TB, ctx context.Context, bkt objstore.Bucket, da
 		data.MinTime,
 		data.MaxTime,
 		[]convert.Convertible{h},
+		promslog.NewNopLogger(),
 		convert.WithName("shard"),
 		convert.WithColDuration(colDuration), // let's force more than 1 data col
 		convert.WithRowGroupSize(500),

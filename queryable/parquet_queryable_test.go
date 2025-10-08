@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/parquet-go/parquet-go"
+	"github.com/prometheus/common/promslog"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/promql/promqltest"
@@ -807,6 +808,7 @@ func convertToParquetWithName(t *testing.T, ctx context.Context, bkt *bucket, da
 		data.MinTime,
 		data.MaxTime,
 		[]convert.Convertible{h},
+		promslog.NewNopLogger(),
 		convertOpts...,
 	)
 	if err != nil {
@@ -838,6 +840,7 @@ func convertToParquetForBenchWithCountingBucket(tb testing.TB, ctx context.Conte
 		data.MinTime,
 		data.MaxTime,
 		[]convert.Convertible{h},
+		promslog.NewNopLogger(),
 		convertOpts...,
 	)
 	if err != nil {
