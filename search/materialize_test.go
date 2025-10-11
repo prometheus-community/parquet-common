@@ -224,7 +224,7 @@ func TestMaterializeE2E(t *testing.T) {
 
 func convertToParquet(t testing.TB, ctx context.Context, bkt objstore.Bucket, data util.TestData, h convert.Convertible, opts ...storage.FileOption) storage.ParquetShard {
 	colDuration := time.Hour
-	shards, err := convert.ConvertTSDBBlockParallel(
+	shards, err := convert.ConvertTSDBBlock(
 		ctx,
 		bkt,
 		data.MinTime,
