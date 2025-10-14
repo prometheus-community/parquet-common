@@ -109,9 +109,9 @@ func Test_Convert_TSDB(t *testing.T) {
 				WithWriteConcurrency(2),
 			}
 			// build equivalent config for ease of assertion with methods that take cfg
-			cfg := &DefaultConvertOpts
+			cfg := DefaultConvertOpts
 			for _, opt := range opts {
-				opt(cfg)
+				opt(&cfg)
 			}
 
 			shardCount, err := ConvertTSDBBlock(
@@ -564,7 +564,7 @@ func Test_SortedLabels(t *testing.T) {
 
 	series, chunks, err := readSeries(t, shard)
 	require.NoError(t, err)
-	require.Equal(t, len(series), totalSeries, "series count mismatch")
+	require.Equal(t, totalSeries, len(series), "series count mismatch")
 
 	for i := 0; i < len(series)-1; i++ {
 		require.LessOrEqual(t, series[i].Get("zzz"), series[i+1].Get("zzz"))

@@ -353,13 +353,13 @@ func ConvertTSDBBlock(
 	logger *slog.Logger,
 	opts ...ConvertOption,
 ) (int, error) {
-	cfg := &DefaultConvertOpts
+	cfg := DefaultConvertOpts
 	for _, opt := range opts {
-		opt(cfg)
+		opt(&cfg)
 	}
 
 	logger.Info("sharding input series")
-	shardedRowReaders, err := shardedTSDBRowReaders(ctx, mint, maxt, cfg.colDuration.Milliseconds(), blocks, cfg)
+	shardedRowReaders, err := shardedTSDBRowReaders(ctx, mint, maxt, cfg.colDuration.Milliseconds(), blocks, &cfg)
 	if err != nil {
 		return 0, errors.Wrap(err, "failed to create sharded TSDB row readers")
 	}
@@ -392,7 +392,7 @@ func ConvertTSDBBlock(
 				schema:               rr.Schema(),
 				outSchemaProjections: outSchemaProjections,
 				pipeReaderWriter:     NewPipeReaderBucketWriter(bkt),
-				opts:                 cfg,
+				opts:                 &cfg,
 				logger:               logger,
 			}
 			err = w.Write(ctx)
@@ -410,30 +410,50 @@ func ConvertTSDBBlock(
 	return len(shardedRowReaders), nil
 }
 
+type blockIndexReader struct {
+	blockID  ulid.ULID
+	idx      int // index of the block in the input slice
+	reader   tsdb.IndexReader
+	postings index.Postings
+}
+
+type blockSeries struct {
+	blockID   ulid.ULID
+	blockIdx  int // index of the block in the input slice
+	seriesIdx int // index of the series in the block postings
+	ref       storage.SeriesRef
+	labels    labels.Labels
+}
+
 func shardedTSDBRowReaders(
 	ctx context.Context,
 	mint, maxt, colDuration int64,
 	blocks []Convertible,
 	opts *convertOpts,
 ) ([]*TSDBRowReader, error) {
-	blocksByID := make(map[ulid.ULID]Convertible, len(blocks))
-	blockIndexRs := make(map[ulid.ULID]tsdb.IndexReader, len(blocks))
+	// Blocks can have multiple entries with the same of ULID in the case of head blocks;
+	// track all blocks by their index in the input slice rather than assuming unique ULIDs.
+	indexReaders := make([]blockIndexReader, len(blocks))
 	// Simpler to track and close these readers separate from those used by shard conversion reader/writers.
 	defer func() {
-		for i := range blockIndexRs {
-			_ = blockIndexRs[i].Close()
+		for _, indexReader := range indexReaders {
+			_ = indexReader.reader.Close()
 		}
 	}()
-	for _, blk := range blocks {
-		blocksByID[blk.Meta().ULID] = blk
-		indexr, err := blk.Index()
+	for i, blk := range blocks {
+		indexReader, err := blk.Index()
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to get index reader from block")
 		}
-		blockIndexRs[blk.Meta().ULID] = indexr
+		indexReaders[i] = blockIndexReader{
+			blockID:  blk.Meta().ULID,
+			idx:      i,
+			reader:   indexReader,
+			postings: tsdb.AllSortedPostings(ctx, indexReader),
+		}
 	}
 
-	uniqueSeriesCount, shardedSeries, err := shardSeries(ctx, blockIndexRs, mint, maxt, opts)
+	uniqueSeriesCount, shardedSeries, err := shardSeries(indexReaders, mint, maxt, opts)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to determine unique series count")
 	}
@@ -454,12 +474,11 @@ func shardedTSDBRowReaders(
 
 		// For each block, init readers and postings list to create a tsdb.blockChunkSeriesSet;
 		// series sets from all blocks for the shard will be merged by NewMergeChunkSeriesSet.
-		for blockID, blockSeries := range shardSeries {
-			blk := blocksByID[blockID]
-
+		for _, blockSeries := range shardSeries {
+			blk := blocks[blockSeries[0].blockIdx]
 			// Init all readers for block & add to closers
 
-			// Init separate index readers from above blockIndexRs to simplify closing logic
+			// Init separate index readers from above indexReaders to simplify closing logic
 			indexr, err := blk.Index()
 			if err != nil {
 				return nil, errors.Wrap(err, "failed to get index reader from block")
@@ -508,38 +527,22 @@ func shardedTSDBRowReaders(
 }
 
 func shardSeries(
-	ctx context.Context,
-	blockIndexReaders map[ulid.ULID]tsdb.IndexReader,
+	blockIndexReaders []blockIndexReader,
 	mint, maxt int64,
 	opts *convertOpts,
-) (int, []map[ulid.ULID][]blockSeries, error) {
-	type reader struct {
-		blockID      ulid.ULID
-		indexr       tsdb.IndexReader
-		postingsIter index.Postings
-	}
-
-	readers := make([]reader, 0, len(blockIndexReaders))
-	for blockID, indexr := range blockIndexReaders {
-		readers = append(readers, reader{
-			blockID:      blockID,
-			indexr:       indexr,
-			postingsIter: tsdb.AllSortedPostings(ctx, indexr),
-		})
-	}
-
+) (int, []map[int][]blockSeries, error) {
 	chks := make([]chunks.Meta, 0, 128)
-	allSeries := make([]blockSeries, 0, 128*len(readers))
+	allSeries := make([]blockSeries, 0, 128*len(blockIndexReaders))
 	// Collect all series from all blocks with chunks in the time range
-	for _, reader := range readers {
+	for _, blockIndexReader := range blockIndexReaders {
 		i := 0
 		scratchBuilder := labels.NewScratchBuilder(10)
 
-		for reader.postingsIter.Next() {
+		for blockIndexReader.postings.Next() {
 			scratchBuilder.Reset()
 			chks = chks[:0]
 
-			if err := reader.indexr.Series(reader.postingsIter.At(), &scratchBuilder, &chks); err != nil {
+			if err := blockIndexReader.reader.Series(blockIndexReader.postings.At(), &scratchBuilder, &chks); err != nil {
 				return 0, nil, errors.Wrap(err, "unable to expand series")
 			}
 
@@ -552,10 +555,11 @@ func shardSeries(
 
 			scratchBuilderLabels := scratchBuilder.Labels()
 			allSeries = append(allSeries, blockSeries{
-				blockID: reader.blockID,
-				idx:     i,
-				ref:     reader.postingsIter.At(),
-				labels:  scratchBuilderLabels,
+				blockID:   blockIndexReader.blockID,
+				blockIdx:  blockIndexReader.idx,
+				seriesIdx: i,
+				ref:       blockIndexReader.postings.At(),
+				labels:    scratchBuilderLabels,
 			})
 		}
 	}
@@ -579,10 +583,10 @@ func shardSeries(
 	totalShards := int(math.Ceil(float64(uniqueSeriesCount) / float64(opts.numRowGroups*opts.rowGroupSize)))
 	rowsPerShard := int(math.Ceil(float64(uniqueSeriesCount) / float64(totalShards)))
 
-	// For each shard index i, shardSeries[i] is a map of blockID -> []series.
-	shardSeries := make([]map[ulid.ULID][]blockSeries, totalShards)
+	// For each shard index i, shardSeries[i] is a map of blockIdx -> []series.
+	shardSeries := make([]map[int][]blockSeries, totalShards)
 	for i := range shardSeries {
-		shardSeries[i] = make(map[ulid.ULID][]blockSeries)
+		shardSeries[i] = make(map[int][]blockSeries)
 	}
 
 	shardIdx := 0
@@ -592,8 +596,8 @@ func shardSeries(
 
 		// First series in a shard will always be unique.
 		uniqueCount := 1
-		shardSeries[shardIdx][seriesToShard[0].blockID] = append(
-			shardSeries[shardIdx][seriesToShard[0].blockID], seriesToShard[0],
+		shardSeries[shardIdx][seriesToShard[0].blockIdx] = append(
+			shardSeries[shardIdx][seriesToShard[0].blockIdx], seriesToShard[0],
 		)
 		allSeriesIdx++
 
@@ -602,7 +606,7 @@ func shardSeries(
 		for i := 1; i < len(seriesToShard); i++ {
 			prev := seriesToShard[i-1]
 			curr := seriesToShard[i]
-			shardSeries[shardIdx][curr.blockID] = append(shardSeries[shardIdx][curr.blockID], curr)
+			shardSeries[shardIdx][curr.blockIdx] = append(shardSeries[shardIdx][curr.blockIdx], curr)
 
 			if labels.Compare(curr.labels, prev.labels) != 0 {
 				uniqueCount++
@@ -618,13 +622,6 @@ func shardSeries(
 	return uniqueSeriesCount, shardSeries, nil
 }
 
-type blockSeries struct {
-	blockID ulid.ULID
-	idx     int
-	ref     storage.SeriesRef
-	labels  labels.Labels
-}
-
 func compareBlockSeriesBySortedLabelsFunc(sortedLabels []string) func(a, b blockSeries) int {
 	return func(a, b blockSeries) int {
 		for _, lb := range sortedLabels {
@@ -632,18 +629,8 @@ func compareBlockSeriesBySortedLabelsFunc(sortedLabels []string) func(a, b block
 				return c
 			}
 		}
-		if a.blockID.Compare(b.blockID) < 0 {
-			return -1
-		} else if a.blockID.Compare(b.blockID) > 0 {
-			return 1
-		}
 
-		if a.idx < b.idx {
-			return -1
-		} else if a.idx > b.idx {
-			return 1
-		}
-		return 0
+		return labels.Compare(a.labels, b.labels)
 	}
 }
 
