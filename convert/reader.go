@@ -36,7 +36,7 @@ func newTSDBRowReader(
 	closers []io.Closer,
 	seriesSet storage.ChunkSeriesSet,
 	tsdbSchema *schema.TSDBSchema,
-	opts *convertOpts,
+	opts convertOpts,
 ) *TSDBRowReader {
 	return &TSDBRowReader{
 		ctx:         ctx,

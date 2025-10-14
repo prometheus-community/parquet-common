@@ -359,7 +359,7 @@ func ConvertTSDBBlock(
 	}
 
 	logger.Info("sharding input series")
-	shardedRowReaders, err := shardedTSDBRowReaders(ctx, mint, maxt, cfg.colDuration.Milliseconds(), blocks, &cfg)
+	shardedRowReaders, err := shardedTSDBRowReaders(ctx, mint, maxt, cfg.colDuration.Milliseconds(), blocks, cfg)
 	if err != nil {
 		return 0, errors.Wrap(err, "failed to create sharded TSDB row readers")
 	}
@@ -418,7 +418,6 @@ type blockIndexReader struct {
 }
 
 type blockSeries struct {
-	blockID   ulid.ULID
 	blockIdx  int // index of the block in the input slice
 	seriesIdx int // index of the series in the block postings
 	ref       storage.SeriesRef
@@ -429,7 +428,7 @@ func shardedTSDBRowReaders(
 	ctx context.Context,
 	mint, maxt, colDuration int64,
 	blocks []Convertible,
-	opts *convertOpts,
+	opts convertOpts,
 ) ([]*TSDBRowReader, error) {
 	// Blocks can have multiple entries with the same of ULID in the case of head blocks;
 	// track all blocks by their index in the input slice rather than assuming unique ULIDs.
@@ -529,7 +528,7 @@ func shardedTSDBRowReaders(
 func shardSeries(
 	blockIndexReaders []blockIndexReader,
 	mint, maxt int64,
-	opts *convertOpts,
+	opts convertOpts,
 ) (int, []map[int][]blockSeries, error) {
 	chks := make([]chunks.Meta, 0, 128)
 	allSeries := make([]blockSeries, 0, 128*len(blockIndexReaders))
@@ -555,7 +554,6 @@ func shardSeries(
 
 			scratchBuilderLabels := scratchBuilder.Labels()
 			allSeries = append(allSeries, blockSeries{
-				blockID:   blockIndexReader.blockID,
 				blockIdx:  blockIndexReader.idx,
 				seriesIdx: i,
 				ref:       blockIndexReader.postings.At(),
