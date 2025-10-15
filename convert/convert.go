@@ -471,8 +471,9 @@ func shardedTSDBRowReaders(
 		seriesSets := make([]storage.ChunkSeriesSet, 0, len(blocks))
 		schemaBuilder := schema.NewBuilder(mint, maxt, colDuration)
 
-		// For each block, init readers and postings list to create a tsdb.blockChunkSeriesSet;
-		// series sets from all blocks for the shard will be merged by NewMergeChunkSeriesSet.
+		// For each block with series in the shard,
+		// init readers and postings list required to create a tsdb.blockChunkSeriesSet;
+		// series sets from all blocks for the shard will be merged by mergeChunkSeriesSet.
 		for _, blockSeries := range shardSeries {
 			blk := blocks[blockSeries[0].blockIdx]
 			// Init all readers for block & add to closers
@@ -599,8 +600,10 @@ func shardSeries(
 		)
 		allSeriesIdx++
 
-		// Split all series into shards, counting unique series until we reach rowsPerShard.
-		// Nothing gets dropped here as all series are already unique per block; merge happens later.
+		// Add series into shard, counting unique series until we reach rowsPerShard.
+		// If multiple blocks have series with the same labelset,
+		// all matching series are added to the shard but only counted once towards the row limit;
+		// they will be merged by the mergeChunkSeriesSet as they are iterated during the write.
 		for i := 1; i < len(seriesToShard); i++ {
 			prev := seriesToShard[i-1]
 			curr := seriesToShard[i]
