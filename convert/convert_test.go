@@ -325,8 +325,8 @@ func BenchmarkConvertTSDBParallel(b *testing.B) {
 					}
 
 					// Calculate row group size limit to target shard count for the test case.
-					shardRows := int(math.Ceil(float64(numSeries) / float64(tc.shards)))
-					rowGroupSize := int(math.Ceil(float64(shardRows) / float64(numRowGroups)))
+					shardRows := (numSeries + tc.shards - 1) / tc.shards
+					rowGroupSize := (shardRows + numRowGroups - 1) / numRowGroups
 					opts = append(opts, WithRowGroupSize(rowGroupSize))
 
 					var outputShards int
@@ -541,8 +541,14 @@ func Test_SortedLabels(t *testing.T) {
 		totalSeries++
 	}
 
+	require.Equal(t, totalSeries, 2640)
+	numRowGroups := 1
+	rowGroupSize := 1000
+	expectedShardCount := (totalSeries + (numRowGroups * rowGroupSize) - 1) / (numRowGroups * rowGroupSize)
+	expectedRowsPerShard := (totalSeries + expectedShardCount - 1) / expectedShardCount
+
 	// lets sort first by `zzz` as its not the default sorting on TSDB
-	shards, err := ConvertTSDBBlock(
+	shardCount, err := ConvertTSDBBlock(
 		ctx,
 		bkt,
 		0,
@@ -552,41 +558,54 @@ func Test_SortedLabels(t *testing.T) {
 		WithColDuration(time.Minute*10),
 		WithSortBy("zzz", labels.MetricName),
 		WithColumnPageBuffers(parquet.NewFileBufferPool(t.TempDir(), "buffers.*")),
+		WithNumRowGroups(numRowGroups),
+		WithRowGroupSize(rowGroupSize),
 	)
 	require.NoError(t, err)
-	require.Equal(t, 1, shards)
+	require.Equal(t, expectedShardCount, shardCount)
 
-	bucketOpener := storage.NewParquetBucketOpener(bkt)
-	shard, err := storage.NewParquetShardOpener(
-		ctx, DefaultConvertOpts.name, bucketOpener, bucketOpener, 0,
-	)
-	require.NoError(t, err)
+	remainingRows := totalSeries
+	for i := range shardCount {
+		bucketOpener := storage.NewParquetBucketOpener(bkt)
+		shard, err := storage.NewParquetShardOpener(
+			ctx, DefaultConvertOpts.name, bucketOpener, bucketOpener, i,
+		)
+		require.NoError(t, err)
 
-	series, chunks, err := readSeries(t, shard)
-	require.NoError(t, err)
-	require.Equal(t, totalSeries, len(series), "series count mismatch")
-
-	for i := 0; i < len(series)-1; i++ {
-		require.LessOrEqual(t, series[i].Get("zzz"), series[i+1].Get("zzz"))
-		if series[i].Get("zzz") == series[i+1].Get("zzz") {
-			require.LessOrEqual(t, series[i].Get(labels.MetricName), series[i+1].Get(labels.MetricName))
+		series, chunks, err := readSeries(t, shard)
+		require.NoError(t, err)
+		if i < shardCount-1 {
+			require.Equal(t, expectedRowsPerShard, len(series))
+			require.Equal(t, expectedRowsPerShard, len(chunks))
+		} else {
+			require.Equal(t, remainingRows, len(series))
+			require.Equal(t, remainingRows, len(chunks))
 		}
-		require.Len(t, chunks[i], 1)
-		st := chunks[i][0].Chunk.Iterator(nil)
-		expectedSamples := 1
-		if series[i].Get("type") == "duplicated" {
-			expectedSamples++
+		remainingRows -= len(series)
+
+		for i := 0; i < len(series)-1; i++ {
+			require.LessOrEqual(t, series[i].Get("zzz"), series[i+1].Get("zzz"))
+			if series[i].Get("zzz") == series[i+1].Get("zzz") {
+				require.LessOrEqual(t, series[i].Get(labels.MetricName), series[i+1].Get(labels.MetricName))
+			}
+			require.Len(t, chunks[i], 1)
+			st := chunks[i][0].Chunk.Iterator(nil)
+			expectedSamples := 1
+			if series[i].Get("type") == "duplicated" {
+				expectedSamples++
+			}
+			totalSamples := 0
+
+			for st.Next() != chunkenc.ValNone {
+				totalSamples++
+			}
+
+			require.Equal(t, expectedSamples, totalSamples, "series", series[i])
+
+			require.NoError(t, st.Err())
 		}
-		totalSamples := 0
-
-		for st.Next() != chunkenc.ValNone {
-			totalSamples++
-		}
-
-		require.Equal(t, expectedSamples, totalSamples, "series", series[i])
-
-		require.NoError(t, st.Err())
 	}
+	require.Equal(t, 0, remainingRows)
 }
 
 func Test_WithBloomFilterLabels(t *testing.T) {
