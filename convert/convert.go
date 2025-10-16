@@ -589,13 +589,11 @@ func shardSeries(
 		shardSeries[i] = make(map[int][]blockSeries)
 	}
 
-	shardIdx := 0
-	allSeriesIdx := 0
+	shardIdx, allSeriesIdx := 0, 0
 	for shardIdx < totalShards {
 		seriesToShard := allSeries[allSeriesIdx:]
 
-		uniqueCount := 0
-		i := 0
+		i, uniqueCount := 0, 0
 		matchLabels := labels.Labels{}
 		for i < len(seriesToShard) {
 			current := seriesToShard[i]
@@ -607,7 +605,8 @@ func shardSeries(
 					// Do not increment, we will start the next shard with this series.
 					break
 				}
-				// Otherwise, add it.
+
+				// Unique series limit is not hit yet for the shard; add the series.
 				shardSeries[shardIdx][current.blockIdx] = append(shardSeries[shardIdx][current.blockIdx], current)
 				// Increment unique count, update labels to compare against, and move on to next series
 				uniqueCount++
