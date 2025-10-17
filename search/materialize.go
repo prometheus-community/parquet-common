@@ -488,10 +488,9 @@ func (m *Materializer) MaterializeAllLabels(ctx context.Context, rgi int, rr []R
 	return results, nil
 }
 
-// MaterializeLabels creates labels for series respecting projection hints when enabled.
-// If honorProjectionHints is false or hints is nil, it behaves like MaterializeAllLabels.
-// If honorProjectionHints is true and ProjectionLabels are specified, it only materializes
-// the requested labels. The s_series_hash column is only included if explicitly requested.
+// MaterializeLabels retrieves series labels, optionally filtered by projection hints.
+// Returns all labels when projection is disabled, or only requested labels in the hints when enabled.
+// The s_series_hash column is included only when explicitly requested.
 func (m *Materializer) MaterializeLabels(ctx context.Context, hints *prom_storage.SelectHints, rgi int, rr []RowRange) ([][]labels.Label, error) {
 	ctx, span := tracer.Start(ctx, "Materializer.MaterializeLabels")
 	var err error
