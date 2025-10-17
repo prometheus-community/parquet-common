@@ -111,8 +111,7 @@ func TestMaterializeE2E(t *testing.T) {
 	t.Run("ContextCancelled", func(t *testing.T) {
 		s, err := shard.TSDBSchema()
 		require.NoError(t, err)
-		d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
-		m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback)
+		m, err := NewMaterializer(s, schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool()), shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback, false)
 		require.NoError(t, err)
 		rr := []RowRange{{From: int64(0), Count: shard.LabelsFile().RowGroups()[0].NumRows()}}
 		ctx, cancel := context.WithCancel(ctx)
@@ -129,8 +128,7 @@ func TestMaterializeE2E(t *testing.T) {
 		require.NoError(t, err)
 		s, err := shard.TSDBSchema()
 		require.NoError(t, err)
-		d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
-		m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback)
+		m, err := NewMaterializer(s, schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool()), shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback, false)
 		require.NoError(t, err)
 		rr := []RowRange{{From: int64(0), Count: shard.LabelsFile().RowGroups()[0].NumRows()}}
 		_, err = m.Materialize(ctx, nil, 0, data.MinTime, data.MaxTime, false, rr)
@@ -144,7 +142,7 @@ func TestMaterializeE2E(t *testing.T) {
 
 		// Test with limited row count quota
 		limitedRowCountQuota := NewQuota(10) // Only allow 10 rows
-		m, err := NewMaterializer(s, d, shard, 10, limitedRowCountQuota, UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback)
+		m, err := NewMaterializer(s, d, shard, 10, limitedRowCountQuota, UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback, false)
 		require.NoError(t, err)
 
 		// Try to materialize more rows than quota allows
@@ -156,7 +154,7 @@ func TestMaterializeE2E(t *testing.T) {
 
 		// Test with sufficient quota
 		sufficientRowCountQuota := NewQuota(1000) // Allow 1000 rows
-		m, err = NewMaterializer(s, d, shard, 10, sufficientRowCountQuota, UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback)
+		m, err = NewMaterializer(s, d, shard, 10, sufficientRowCountQuota, UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback, false)
 		require.NoError(t, err)
 
 		rr = []RowRange{{From: int64(0), Count: 50}} // 50 rows
@@ -172,7 +170,7 @@ func TestMaterializeE2E(t *testing.T) {
 
 		// Test with limited chunk bytes quota
 		limitedChunkBytesQuota := NewQuota(100) // Only allow 100 bytes
-		m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), limitedChunkBytesQuota, UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback)
+		m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), limitedChunkBytesQuota, UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback, false)
 		require.NoError(t, err)
 
 		// Try to materialize chunks that exceed the quota
@@ -184,7 +182,7 @@ func TestMaterializeE2E(t *testing.T) {
 
 		// Test with sufficient quota
 		sufficientChunkBytesQuota := NewQuota(1000000) // Allow 1MB
-		m, err = NewMaterializer(s, d, shard, 10, UnlimitedQuota(), sufficientChunkBytesQuota, UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback)
+		m, err = NewMaterializer(s, d, shard, 10, UnlimitedQuota(), sufficientChunkBytesQuota, UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback, false)
 		require.NoError(t, err)
 
 		rr = []RowRange{{From: int64(0), Count: 10}} // Small range
@@ -200,7 +198,7 @@ func TestMaterializeE2E(t *testing.T) {
 
 		// Test with limited data bytes quota
 		limitedDataBytesQuota := NewQuota(100) // Only allow 100 bytes
-		m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), limitedDataBytesQuota, NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback)
+		m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), limitedDataBytesQuota, NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback, false)
 		require.NoError(t, err)
 
 		// Try to materialize data that exceeds the quota
@@ -212,7 +210,7 @@ func TestMaterializeE2E(t *testing.T) {
 
 		// Test with sufficient quota
 		sufficientDataBytesQuota := NewQuota(1000000) // Allow 1MB
-		m, err = NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), sufficientDataBytesQuota, NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback)
+		m, err = NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), sufficientDataBytesQuota, NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback, false)
 		require.NoError(t, err)
 
 		rr = []RowRange{{From: int64(0), Count: 10}} // Small range
@@ -257,7 +255,7 @@ func query(t *testing.T, mint, maxt int64, shard storage.ParquetShard, constrain
 	s, err := shard.TSDBSchema()
 	require.NoError(t, err)
 	d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
-	m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback)
+	m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback, false)
 	require.NoError(t, err)
 
 	results := make([]prom_storage.ChunkSeries, 0, 100)
@@ -509,4 +507,164 @@ func (f *trackingFilter) Filter(ls labels.Labels) bool {
 
 func (f *trackingFilter) Close() {
 	*f.closeCalled = true
+}
+
+func TestProjectionHints(t *testing.T) {
+	st := teststorage.New(t)
+	ctx := context.Background()
+	t.Cleanup(func() { _ = st.Close() })
+
+	bkt, err := filesystem.NewBucket(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = bkt.Close() })
+
+	cfg := util.DefaultTestConfig()
+	data := util.GenerateTestData(t, st, ctx, cfg)
+
+	// Convert to Parquet
+	shard := convertToParquet(t, ctx, bkt, data, st.Head())
+
+	s, err := shard.TSDBSchema()
+	require.NoError(t, err)
+
+	t.Run("ProjectionIncludeWithHash", func(t *testing.T) {
+		// Test projection with include including s_series_hash
+		m, err := NewMaterializer(s, schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool()), shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback, true)
+		require.NoError(t, err)
+
+		hints := &prom_storage.SelectHints{
+			ProjectionLabels:  []string{"__name__", "unique", "s_series_hash"},
+			ProjectionInclude: true,
+		}
+
+		rr := []RowRange{{From: 0, Count: 10}}
+
+		result, err := m.MaterializeLabels(ctx, hints, 0, rr)
+		require.NoError(t, err)
+		require.NotEmpty(t, result)
+
+		// Verify that only projected labels are present
+		for _, seriesLabels := range result {
+			for _, lbl := range seriesLabels {
+				// Should only contain __name__, unique, or s_series_hash
+				require.True(t,
+					lbl.Name == "__name__" || lbl.Name == "unique" || lbl.Name == "s_series_hash",
+					"Unexpected label %s found in projected result", lbl.Name)
+			}
+		}
+	})
+
+	t.Run("ProjectionIncludeWithoutHash", func(t *testing.T) {
+		m, err := NewMaterializer(s, schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool()), shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback, true)
+		require.NoError(t, err)
+
+		hints := &prom_storage.SelectHints{
+			ProjectionLabels:  []string{"__name__", "unique"},
+			ProjectionInclude: true,
+		}
+
+		rr := []RowRange{{From: 0, Count: 10}}
+
+		result, err := m.MaterializeLabels(ctx, hints, 0, rr)
+		require.NoError(t, err)
+		require.NotEmpty(t, result)
+
+		for _, seriesLabels := range result {
+			for _, lbl := range seriesLabels {
+				require.True(t,
+					lbl.Name == "__name__" || lbl.Name == "unique",
+					"Unexpected label %s found in projected result (s_series_hash should not be present)", lbl.Name)
+				require.NotEqual(t, "s_series_hash", lbl.Name, "s_series_hash should not be present when not explicitly requested")
+			}
+		}
+
+		m2, err := NewMaterializer(s, schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool()), shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback, false)
+		require.NoError(t, err)
+
+		resultAll, err := m2.MaterializeLabels(ctx, hints, 0, rr)
+		require.NoError(t, err)
+
+		for i := range result {
+			if len(result[i]) > 0 && len(resultAll[i]) > 0 {
+				require.LessOrEqual(t, len(result[i]), len(resultAll[i]),
+					"Projected result should have fewer or equal labels")
+			}
+		}
+	})
+
+	t.Run("ProjectionExclude", func(t *testing.T) {
+		m, err := NewMaterializer(s, schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool()), shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback, true)
+		require.NoError(t, err)
+
+		hints := &prom_storage.SelectHints{
+			ProjectionLabels:  []string{"label_name_0"},
+			ProjectionInclude: false,
+		}
+
+		rr := []RowRange{{From: 0, Count: 10}}
+
+		result, err := m.MaterializeLabels(ctx, hints, 0, rr)
+		require.NoError(t, err)
+		require.NotEmpty(t, result)
+
+		for _, seriesLabels := range result {
+			foundHash := false
+			for _, lbl := range seriesLabels {
+				require.NotEqual(t, "label_name_0", lbl.Name, "Excluded label 'label_name_0' should not be present")
+				if lbl.Name == "s_series_hash" {
+					foundHash = true
+				}
+			}
+			if len(seriesLabels) > 0 {
+				require.True(t, foundHash, "s_series_hash should be present when not explicitly excluded")
+			}
+		}
+	})
+
+	t.Run("ProjectionExcludeWithHash", func(t *testing.T) {
+		m, err := NewMaterializer(s, schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool()), shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback, true)
+		require.NoError(t, err)
+
+		hints := &prom_storage.SelectHints{
+			ProjectionLabels:  []string{"label_name_0", "s_series_hash"},
+			ProjectionInclude: false,
+		}
+
+		rr := []RowRange{{From: 0, Count: 10}}
+
+		result, err := m.MaterializeLabels(ctx, hints, 0, rr)
+		require.NoError(t, err)
+		require.NotEmpty(t, result)
+
+		for _, seriesLabels := range result {
+			for _, lbl := range seriesLabels {
+				require.NotEqual(t, "label_name_0", lbl.Name, "Excluded label 'label_name_0' should not be present")
+				require.NotEqual(t, "s_series_hash", lbl.Name, "Excluded label 's_series_hash' should not be present")
+			}
+		}
+	})
+
+	t.Run("NoProjectionHints", func(t *testing.T) {
+		m, err := NewMaterializer(s, schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool()), shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback, false)
+		require.NoError(t, err)
+
+		hints := &prom_storage.SelectHints{
+			ProjectionLabels:  []string{"unique"},
+			ProjectionInclude: true,
+		}
+
+		rr := []RowRange{{From: 0, Count: 10}}
+
+		result, err := m.MaterializeLabels(ctx, hints, 0, rr)
+		require.NoError(t, err)
+
+		resultAll, err := m.MaterializeAllLabels(ctx, 0, rr)
+		require.NoError(t, err)
+
+		require.Equal(t, len(result), len(resultAll))
+		for i := range result {
+			require.Equal(t, len(result[i]), len(resultAll[i]),
+				"Should have same number of labels when projection hints are disabled")
+		}
+	})
 }
