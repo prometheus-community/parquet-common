@@ -101,7 +101,7 @@ func BenchmarkMaterialize(b *testing.B) {
 
 	for _, tc := range testCases {
 		d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
-		m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback)
+		m, err := NewMaterializer(s, d, shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback, false)
 		if err != nil {
 			b.Fatal("error creating materializer: ", err)
 		}
