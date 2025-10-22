@@ -26,6 +26,7 @@ import (
 	"github.com/parquet-go/parquet-go"
 	"github.com/prometheus/common/promslog"
 	"github.com/prometheus/prometheus/model/labels"
+	"github.com/prometheus/prometheus/tsdb"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/prometheus/tsdb/chunks"
 	"github.com/prometheus/prometheus/util/teststorage"
@@ -606,6 +607,50 @@ func Test_SortedLabels(t *testing.T) {
 		}
 	}
 	require.Equal(t, 0, remainingRows)
+}
+
+// Test_TooManyColumnsPanic reproduces a panic that occurs when the Parquet file
+// would exceed the maximum number of columns supported by parquet-go (around 32k).
+// This catches a bug where the conversion did not correctly release resources on errors
+// during schema building, leading to a deadlock. If the column limit issue is fixed,
+// this test should be updated to still trigger an error during schema building that leads to
+// resource cleanup.
+func Test_TooManyColumnsPanic(t *testing.T) {
+	ctx := context.Background()
+	st := teststorage.New(t)
+	t.Cleanup(func() { _ = st.Close() })
+
+	bkt, err := filesystem.NewBucket(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = bkt.Close() })
+
+	// Just a single series, but with too many columns
+	const tooManyColumns = 33000
+	app := st.Appender(ctx)
+	lbls := make([]string, tooManyColumns*2)
+	for i := range tooManyColumns {
+		lbls[2*i] = fmt.Sprintf("key_%d ", i)
+		lbls[2*i+1] = "value"
+	}
+	_, err = app.Append(0, labels.FromStrings(lbls...), 1, 2.0)
+	require.NoError(t, err)
+	require.NoError(t, app.Commit())
+
+	// This is important and is what reproduces the deadlock: we don't convert
+	// the head, we convert a compacted on-disk block. That way, if the underlying
+	// block is opened and not closed properly, a deadlock occurs when closing the
+	// storage.
+	err = st.CompactHead(tsdb.NewRangeHead(st.Head(), 0, 2))
+	require.NoError(t, err)
+	require.Len(t, st.Blocks(), 1)
+
+	require.Panics(t, func() {
+		_, err = ConvertTSDBBlock(
+			ctx, bkt, 0, 2,
+			[]Convertible{st.Blocks()[0]},
+			promslog.NewNopLogger(),
+		)
+	})
 }
 
 func Test_WithBloomFilterLabels(t *testing.T) {
