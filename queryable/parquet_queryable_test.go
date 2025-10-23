@@ -688,7 +688,7 @@ var benchmarkCases = []struct {
 		name: "ExpensiveRegexMultipleMetrics",
 		matchers: []*labels.Matcher{
 			labels.MustNewMatcher(labels.MatchRegexp, "__name__", "test_metric_[1-3]"),
-			labels.MustNewMatcher(labels.MatchRegexp, "instance", "(container-1|container-2|container-3|container-4|container-5)"),
+			labels.MustNewMatcher(labels.MatchRegexp, "instance", "(instance-1|instance-2|instance-3|instance-4|instance-5)"),
 		},
 	},
 }
