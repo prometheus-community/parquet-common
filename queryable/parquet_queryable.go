@@ -45,6 +45,8 @@ type queryableOpts struct {
 	dataBytesLimitFunc               search.QuotaLimitFunc
 	materializedSeriesCallback       search.MaterializedSeriesFunc
 	materializedLabelsFilterCallback search.MaterializedLabelsFilterCallback
+
+	cacheRowRangesForConstraints bool
 }
 
 var DefaultQueryableOpts = queryableOpts{
@@ -54,6 +56,8 @@ var DefaultQueryableOpts = queryableOpts{
 	dataBytesLimitFunc:               search.NoopQuotaLimitFunc,
 	materializedSeriesCallback:       search.NoopMaterializedSeriesFunc,
 	materializedLabelsFilterCallback: search.NoopMaterializedLabelsFilterCallback,
+
+	cacheRowRangesForConstraints: false,
 }
 
 type QueryableOpts func(*queryableOpts)
@@ -99,6 +103,13 @@ func WithMaterializedSeriesCallback(fn search.MaterializedSeriesFunc) QueryableO
 func WithMaterializedLabelsFilterCallback(cb search.MaterializedLabelsFilterCallback) QueryableOpts {
 	return func(opts *queryableOpts) {
 		opts.materializedLabelsFilterCallback = cb
+	}
+}
+
+// WithCacheRowRangesForConstraints set the concurrency that can be used to run the query
+func WithCacheRowRangesForConstraints(cache bool) QueryableOpts {
+	return func(opts *queryableOpts) {
+		opts.cacheRowRangesForConstraints = cache
 	}
 }
 
@@ -335,9 +346,10 @@ func (p parquetQuerier) queryableShards(ctx context.Context, mint, maxt int64) (
 }
 
 type queryableShard struct {
-	shard       storage.ParquetShard
-	m           *search.Materializer
-	concurrency int
+	shard           storage.ParquetShard
+	m               *search.Materializer
+	concurrency     int
+	constraintCache search.RowRangesForConstraintsCache
 }
 
 func newQueryableShard(opts *queryableOpts, block storage.ParquetShard, d *schema.PrometheusParquetChunksDecoder, rowCountQuota *search.Quota, chunkBytesQuota *search.Quota, dataBytesQuota *search.Quota) (*queryableShard, error) {
@@ -350,10 +362,16 @@ func newQueryableShard(opts *queryableOpts, block storage.ParquetShard, d *schem
 		return nil, err
 	}
 
+	var constraintCache search.RowRangesForConstraintsCache
+	if opts.cacheRowRangesForConstraints {
+		constraintCache = search.NewConstraintRowRangeCacheSyncMap()
+	}
+
 	return &queryableShard{
-		shard:       block,
-		m:           m,
-		concurrency: opts.concurrency,
+		shard:           block,
+		m:               m,
+		concurrency:     opts.concurrency,
+		constraintCache: constraintCache,
 	}, nil
 }
 
@@ -377,7 +395,7 @@ func (b queryableShard) Query(ctx context.Context, sorted bool, sp *prom_storage
 			if err != nil {
 				return err
 			}
-			rr, err := search.Filter(ctx, b.shard, rgi, cs...)
+			rr, err := search.Filter(ctx, b.shard, rgi, b.constraintCache, cs...)
 			if err != nil {
 				return err
 			}
@@ -441,7 +459,7 @@ func (b queryableShard) LabelNames(ctx context.Context, limit int64, matchers []
 			if err != nil {
 				return err
 			}
-			rr, err := search.Filter(ctx, b.shard, rgi, cs...)
+			rr, err := search.Filter(ctx, b.shard, rgi, b.constraintCache, cs...)
 			if err != nil {
 				return err
 			}
@@ -481,7 +499,7 @@ func (b queryableShard) LabelValues(ctx context.Context, name string, limit int6
 			if err != nil {
 				return err
 			}
-			rr, err := search.Filter(ctx, b.shard, rgi, cs...)
+			rr, err := search.Filter(ctx, b.shard, rgi, b.constraintCache, cs...)
 			if err != nil {
 				return err
 			}

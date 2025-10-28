@@ -100,48 +100,89 @@ func BenchmarkConstraints(b *testing.B) {
 	shard := buildFile(b, rows)
 
 	tests := []struct {
-		c []Constraint
+		cs    []Constraint
+		cache bool
 	}{
 		{
-			c: []Constraint{
+			cs: []Constraint{
 				Equal("A", parquet.ValueOf(rows[0].A)),
 				Equal("B", parquet.ValueOf(rows[0].B)),
 				Equal("Random", parquet.ValueOf(rows[0].Random)),
 			},
+			cache: false,
 		},
 		{
-			c: []Constraint{
+			cs: []Constraint{
+				Equal("A", parquet.ValueOf(rows[0].A)),
+				Equal("B", parquet.ValueOf(rows[0].B)),
+				Equal("Random", parquet.ValueOf(rows[0].Random)),
+			},
+			cache: true,
+		},
+		{
+			cs: []Constraint{
 				Equal("A", parquet.ValueOf(rows[len(rows)-1].A)),
 				Equal("B", parquet.ValueOf(rows[len(rows)-1].B)),
 				Equal("Random", parquet.ValueOf(rows[len(rows)-1].Random)),
 			},
+			cache: false,
 		},
 		{
-			c: []Constraint{
+			cs: []Constraint{
+				Equal("A", parquet.ValueOf(rows[len(rows)-1].A)),
+				Equal("B", parquet.ValueOf(rows[len(rows)-1].B)),
+				Equal("Random", parquet.ValueOf(rows[len(rows)-1].Random)),
+			},
+			cache: true,
+		},
+		{
+			cs: []Constraint{
 				Equal("A", parquet.ValueOf(rows[0].A)),
 				Equal("B", parquet.ValueOf(rows[0].B)),
 				mustRegexConstraint(b, "Random", mustNewMatcher(b, rows[0].Random)),
 			},
+			cache: false,
 		},
 		{
-			c: []Constraint{
+			cs: []Constraint{
+				Equal("A", parquet.ValueOf(rows[0].A)),
+				Equal("B", parquet.ValueOf(rows[0].B)),
+				mustRegexConstraint(b, "Random", mustNewMatcher(b, rows[0].Random)),
+			},
+			cache: true,
+		},
+		{
+			cs: []Constraint{
 				Equal("A", parquet.ValueOf(rows[len(rows)-1].A)),
 				Equal("B", parquet.ValueOf(rows[len(rows)-1].B)),
 				mustRegexConstraint(b, "Random", mustNewMatcher(b, rows[len(rows)-1].Random)),
 			},
+			cache: false,
+		},
+		{
+			cs: []Constraint{
+				Equal("A", parquet.ValueOf(rows[len(rows)-1].A)),
+				Equal("B", parquet.ValueOf(rows[len(rows)-1].B)),
+				mustRegexConstraint(b, "Random", mustNewMatcher(b, rows[len(rows)-1].Random)),
+			},
+			cache: true,
 		},
 	}
 
 	for _, tt := range tests {
-		b.Run(fmt.Sprintf("%s", tt.c), func(b *testing.B) {
+		b.Run(fmt.Sprintf("cs=%s/cache=%t", tt.cs, tt.cache), func(b *testing.B) {
+			var cache RowRangesForConstraintsCache
+			if tt.cache {
+				cache = NewConstraintRowRangeCacheSyncMap()
+			}
 			b.ResetTimer()
 			b.ReportAllocs()
 			for n := 0; n < b.N; n++ {
-				if err := Initialize(shard.LabelsFile(), tt.c...); err != nil {
+				if err := Initialize(shard.LabelsFile(), tt.cs...); err != nil {
 					b.Fatal(err)
 				}
 				for i := range shard.LabelsFile().RowGroups() {
-					rr, err := Filter(context.Background(), shard, i, tt.c...)
+					rr, err := Filter(context.Background(), shard, i, cache, tt.cs...)
 					if err != nil {
 						b.Fatal(err)
 					}
@@ -179,7 +220,7 @@ func TestContextCancelled(t *testing.T) {
 		for i := range shard.LabelsFile().RowGroups() {
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
-			_, err := Filter(ctx, shard, i, c)
+			_, err := Filter(ctx, shard, i, nil, c)
 			require.ErrorContains(t, err, "context canceled")
 		}
 	}
@@ -510,7 +551,7 @@ func TestFilter(t *testing.T) {
 						t.Fatal(err)
 					}
 					for i := range shard.LabelsFile().RowGroups() {
-						rr, err := Filter(context.Background(), shard, i, expectation.constraints...)
+						rr, err := Filter(context.Background(), shard, i, nil, expectation.constraints...)
 						if err != nil {
 							t.Fatal(err)
 						}

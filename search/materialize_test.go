@@ -262,7 +262,7 @@ func query(t *testing.T, mint, maxt int64, shard storage.ParquetShard, constrain
 
 	results := make([]prom_storage.ChunkSeries, 0, 100)
 	for i := range shard.LabelsFile().RowGroups() {
-		rr, err := Filter(context.Background(), shard, i, constraints...)
+		rr, err := Filter(context.Background(), shard, i, nil, constraints...)
 		total := int64(0)
 		for _, r := range rr {
 			total += r.Count
