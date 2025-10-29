@@ -100,10 +100,12 @@ func BenchmarkConstraints(b *testing.B) {
 	shard := buildFile(b, rows)
 
 	tests := []struct {
+		desc  string
 		cs    []Constraint
 		cache bool
 	}{
 		{
+			desc: "equal first of all cols",
 			cs: []Constraint{
 				Equal("A", parquet.ValueOf(rows[0].A)),
 				Equal("B", parquet.ValueOf(rows[0].B)),
@@ -112,6 +114,7 @@ func BenchmarkConstraints(b *testing.B) {
 			cache: false,
 		},
 		{
+			desc: "equal first of all cols",
 			cs: []Constraint{
 				Equal("A", parquet.ValueOf(rows[0].A)),
 				Equal("B", parquet.ValueOf(rows[0].B)),
@@ -120,6 +123,7 @@ func BenchmarkConstraints(b *testing.B) {
 			cache: true,
 		},
 		{
+			desc: "equal last of all cols",
 			cs: []Constraint{
 				Equal("A", parquet.ValueOf(rows[len(rows)-1].A)),
 				Equal("B", parquet.ValueOf(rows[len(rows)-1].B)),
@@ -128,6 +132,7 @@ func BenchmarkConstraints(b *testing.B) {
 			cache: false,
 		},
 		{
+			desc: "equal last of all cols",
 			cs: []Constraint{
 				Equal("A", parquet.ValueOf(rows[len(rows)-1].A)),
 				Equal("B", parquet.ValueOf(rows[len(rows)-1].B)),
@@ -136,6 +141,7 @@ func BenchmarkConstraints(b *testing.B) {
 			cache: true,
 		},
 		{
+			desc: "equal first of cols A-B, regex first of Random col",
 			cs: []Constraint{
 				Equal("A", parquet.ValueOf(rows[0].A)),
 				Equal("B", parquet.ValueOf(rows[0].B)),
@@ -144,6 +150,7 @@ func BenchmarkConstraints(b *testing.B) {
 			cache: false,
 		},
 		{
+			desc: "equal first of cols A-B, regex first of Random col",
 			cs: []Constraint{
 				Equal("A", parquet.ValueOf(rows[0].A)),
 				Equal("B", parquet.ValueOf(rows[0].B)),
@@ -152,6 +159,7 @@ func BenchmarkConstraints(b *testing.B) {
 			cache: true,
 		},
 		{
+			desc: "equal last of cols A-B, regex last of Random col",
 			cs: []Constraint{
 				Equal("A", parquet.ValueOf(rows[len(rows)-1].A)),
 				Equal("B", parquet.ValueOf(rows[len(rows)-1].B)),
@@ -160,6 +168,7 @@ func BenchmarkConstraints(b *testing.B) {
 			cache: false,
 		},
 		{
+			desc: "equal last of cols A-B, regex last of Random col",
 			cs: []Constraint{
 				Equal("A", parquet.ValueOf(rows[len(rows)-1].A)),
 				Equal("B", parquet.ValueOf(rows[len(rows)-1].B)),
@@ -170,7 +179,7 @@ func BenchmarkConstraints(b *testing.B) {
 	}
 
 	for _, tt := range tests {
-		b.Run(fmt.Sprintf("cs=%s/cache=%t", tt.cs, tt.cache), func(b *testing.B) {
+		b.Run(fmt.Sprintf("desc=%s/cache=%t", tt.desc, tt.cache), func(b *testing.B) {
 			var cache RowRangesForConstraintsCache
 			if tt.cache {
 				cache = NewConstraintRowRangeCacheSyncMap()
