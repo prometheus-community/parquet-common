@@ -38,6 +38,8 @@ var tracer = otel.Tracer("parquet-common")
 
 type ShardsFinderFunction func(ctx context.Context, mint, maxt int64) ([]storage.ParquetShard, error)
 
+type ConstraintCacheFunction func(ctx context.Context) (search.RowRangesForConstraintsCache, error)
+
 type queryableOpts struct {
 	concurrency                      int
 	rowCountLimitFunc                search.QuotaLimitFunc
@@ -114,12 +116,18 @@ func WithCacheRowRangesForConstraints(cache bool) QueryableOpts {
 }
 
 type parquetQueryable struct {
-	shardsFinder ShardsFinderFunction
-	d            *schema.PrometheusParquetChunksDecoder
-	opts         *queryableOpts
+	shardsFinder        ShardsFinderFunction
+	constraintCacheFunc ConstraintCacheFunction
+	chunksDecoder       *schema.PrometheusParquetChunksDecoder
+	opts                *queryableOpts
 }
 
-func NewParquetQueryable(d *schema.PrometheusParquetChunksDecoder, shardFinder ShardsFinderFunction, opts ...QueryableOpts) (prom_storage.Queryable, error) {
+func NewParquetQueryable(
+	shardFinder ShardsFinderFunction,
+	constraintCacheFunc ConstraintCacheFunction,
+	chunksDecoder *schema.PrometheusParquetChunksDecoder,
+	opts ...QueryableOpts,
+) (prom_storage.Queryable, error) {
 	cfg := DefaultQueryableOpts
 
 	for _, opt := range opts {
@@ -127,27 +135,30 @@ func NewParquetQueryable(d *schema.PrometheusParquetChunksDecoder, shardFinder S
 	}
 
 	return &parquetQueryable{
-		shardsFinder: shardFinder,
-		d:            d,
-		opts:         &cfg,
+		shardsFinder:        shardFinder,
+		constraintCacheFunc: constraintCacheFunc,
+		chunksDecoder:       chunksDecoder,
+		opts:                &cfg,
 	}, nil
 }
 
 func (p parquetQueryable) Querier(mint, maxt int64) (prom_storage.Querier, error) {
 	return &parquetQuerier{
-		mint:         mint,
-		maxt:         maxt,
-		shardsFinder: p.shardsFinder,
-		d:            p.d,
-		opts:         p.opts,
+		mint:                mint,
+		maxt:                maxt,
+		shardsFinder:        p.shardsFinder,
+		constraintCacheFunc: p.constraintCacheFunc,
+		chunksDecoder:       p.chunksDecoder,
+		opts:                p.opts,
 	}, nil
 }
 
 type parquetQuerier struct {
-	mint, maxt   int64
-	shardsFinder ShardsFinderFunction
-	d            *schema.PrometheusParquetChunksDecoder
-	opts         *queryableOpts
+	mint, maxt          int64
+	shardsFinder        ShardsFinderFunction
+	constraintCacheFunc ConstraintCacheFunction
+	chunksDecoder       *schema.PrometheusParquetChunksDecoder
+	opts                *queryableOpts
 }
 
 func (p parquetQuerier) LabelValues(ctx context.Context, name string, hints *prom_storage.LabelHints, matchers ...*labels.Matcher) (result []string, annotations annotations.Annotations, err error) {
@@ -336,7 +347,20 @@ func (p parquetQuerier) queryableShards(ctx context.Context, mint, maxt int64) (
 	chunkBytesQuota := search.NewQuota(p.opts.chunkBytesLimitFunc(ctx))
 	dataBytesQuota := search.NewQuota(p.opts.dataBytesLimitFunc(ctx))
 	for i, shard := range shards {
-		qb, err := newQueryableShard(p.opts, shard, p.d, rowCountQuota, chunkBytesQuota, dataBytesQuota)
+		var err error
+
+		var constraintCache search.RowRangesForConstraintsCache
+		if p.constraintCacheFunc != nil {
+			constraintCache, err = p.constraintCacheFunc(ctx)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		qb, err := newQueryableShard(
+			shard, constraintCache, p.chunksDecoder,
+			p.opts, rowCountQuota, chunkBytesQuota, dataBytesQuota,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -347,31 +371,35 @@ func (p parquetQuerier) queryableShards(ctx context.Context, mint, maxt int64) (
 
 type queryableShard struct {
 	shard           storage.ParquetShard
-	m               *search.Materializer
-	concurrency     int
 	constraintCache search.RowRangesForConstraintsCache
+	materializer    *search.Materializer
+	concurrency     int
 }
 
-func newQueryableShard(opts *queryableOpts, block storage.ParquetShard, d *schema.PrometheusParquetChunksDecoder, rowCountQuota *search.Quota, chunkBytesQuota *search.Quota, dataBytesQuota *search.Quota) (*queryableShard, error) {
-	s, err := block.TSDBSchema()
+func newQueryableShard(
+	shard storage.ParquetShard,
+	constraintCache search.RowRangesForConstraintsCache,
+	chunksDecoder *schema.PrometheusParquetChunksDecoder,
+	opts *queryableOpts,
+	rowCountQuota *search.Quota,
+	chunkBytesQuota *search.Quota,
+	dataBytesQuota *search.Quota,
+) (*queryableShard, error) {
+	shardSchema, err := shard.TSDBSchema()
 	if err != nil {
 		return nil, err
 	}
-	m, err := search.NewMaterializer(s, d, block, opts.concurrency, rowCountQuota, chunkBytesQuota, dataBytesQuota, opts.materializedSeriesCallback, opts.materializedLabelsFilterCallback)
+	materializer, err := search.NewMaterializer(
+		shardSchema, chunksDecoder, shard, opts.concurrency, rowCountQuota, chunkBytesQuota, dataBytesQuota, opts.materializedSeriesCallback, opts.materializedLabelsFilterCallback)
 	if err != nil {
 		return nil, err
-	}
-
-	var constraintCache search.RowRangesForConstraintsCache
-	if opts.cacheRowRangesForConstraints {
-		constraintCache = search.NewConstraintRowRangeCacheSyncMap()
 	}
 
 	return &queryableShard{
-		shard:           block,
-		m:               m,
-		concurrency:     opts.concurrency,
+		shard:           shard,
 		constraintCache: constraintCache,
+		materializer:    materializer,
+		concurrency:     opts.concurrency,
 	}, nil
 }
 
@@ -404,7 +432,7 @@ func (b queryableShard) Query(ctx context.Context, sorted bool, sp *prom_storage
 				return nil
 			}
 
-			seriesSetIter, err := b.m.Materialize(ctx, sp, rgi, mint, maxt, skipChunks, rr)
+			seriesSetIter, err := b.materializer.Materialize(ctx, sp, rgi, mint, maxt, skipChunks, rr)
 			if err != nil {
 				return err
 			}
@@ -441,7 +469,7 @@ func (b queryableShard) Query(ctx context.Context, sorted bool, sp *prom_storage
 
 func (b queryableShard) LabelNames(ctx context.Context, limit int64, matchers []*labels.Matcher) ([]string, error) {
 	if len(matchers) == 0 {
-		return b.m.MaterializeAllLabelNames(), nil
+		return b.materializer.MaterializeAllLabelNames(), nil
 	}
 
 	errGroup, ctx := errgroup.WithContext(ctx)
@@ -463,7 +491,7 @@ func (b queryableShard) LabelNames(ctx context.Context, limit int64, matchers []
 			if err != nil {
 				return err
 			}
-			series, err := b.m.MaterializeLabelNames(ctx, rgi, rr)
+			series, err := b.materializer.MaterializeLabelNames(ctx, rgi, rr)
 			if err != nil {
 				return err
 			}
@@ -503,7 +531,7 @@ func (b queryableShard) LabelValues(ctx context.Context, name string, limit int6
 			if err != nil {
 				return err
 			}
-			series, err := b.m.MaterializeLabelValues(ctx, name, rgi, rr)
+			series, err := b.materializer.MaterializeLabelValues(ctx, name, rgi, rr)
 			if err != nil {
 				return err
 			}
@@ -527,7 +555,7 @@ func (b queryableShard) allLabelValues(ctx context.Context, name string, limit i
 
 	for i := range b.shard.LabelsFile().RowGroups() {
 		errGroup.Go(func() error {
-			series, err := b.m.MaterializeAllLabelValues(ctx, name, i)
+			series, err := b.materializer.MaterializeAllLabelValues(ctx, name, i)
 			if err != nil {
 				return err
 			}

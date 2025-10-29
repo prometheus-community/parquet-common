@@ -602,10 +602,11 @@ func queryWithQueryable(t *testing.T, mint, maxt int64, shard storage.ParquetSha
 }
 
 func createQueryable(shards []storage.ParquetShard, opts ...QueryableOpts) (prom_storage.Queryable, error) {
-	d := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
-	return NewParquetQueryable(d, func(ctx context.Context, mint, maxt int64) ([]storage.ParquetShard, error) {
+	shardsFinderFunc := func(ctx context.Context, mint, maxt int64) ([]storage.ParquetShard, error) {
 		return shards, nil
-	}, opts...)
+	}
+	chunksDecoder := schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool())
+	return NewParquetQueryable(shardsFinderFunc, nil, chunksDecoder, opts...)
 }
 
 var benchmarkCases = []struct {
