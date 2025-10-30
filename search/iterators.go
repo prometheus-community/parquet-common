@@ -44,6 +44,26 @@ func (c ConcreteChunksSeries) Iterator(_ chunks.Iterator) chunks.Iterator {
 	return prom_storage.NewListChunkSeriesIterator(c.chks...)
 }
 
+type SymbolizedChunksSeries struct {
+	//b            *labels.ScratchBuilder
+	//symbolsTable *SymbolsTable
+	stringifyFunc func([]SymbolizedLabel) labels.Labels
+	lbls          []SymbolizedLabel
+	chks          []chunks.Meta
+}
+
+func (c SymbolizedChunksSeries) Labels() labels.Labels {
+	//lbls, err := c.stringifyFunc(c.b, c.lbls)
+	//if err != nil {
+	//	panic(err)
+	//}
+	return c.stringifyFunc(c.lbls)
+}
+
+func (c SymbolizedChunksSeries) Iterator(_ chunks.Iterator) chunks.Iterator {
+	return prom_storage.NewListChunkSeriesIterator(c.chks...)
+}
+
 type ChunkSeriesSetCloser interface {
 	prom_storage.ChunkSeriesSet
 
@@ -51,6 +71,62 @@ type ChunkSeriesSetCloser interface {
 	// underlying ChunkSeries. It is not safe to use the ChunkSeriesSet
 	// or any of its ChunkSeries after calling Close.
 	Close() error
+}
+
+type NoChunksSymbolizedLabelsSeriesSet struct {
+	seriesSet        []*SymbolizedChunksSeries
+	currentSeriesIdx int
+}
+
+func NewNoChunksSymbolizedLabelsSeriesSet(
+	lb *labels.ScratchBuilder,
+	symbolizedLabels [][]SymbolizedLabel,
+	symbolsTable *SymbolsTable,
+) *NoChunksSymbolizedLabelsSeriesSet {
+	stringifyFunc := func(symbolizedLabels []SymbolizedLabel) labels.Labels {
+		lbls, err := symbolsTable.DesymbolizeLabels(lb, symbolizedLabels)
+		if err != nil {
+			panic(err)
+		}
+		return lbls
+	}
+	seriesSet := make([]*SymbolizedChunksSeries, len(symbolizedLabels))
+	for i, lbls := range symbolizedLabels {
+		seriesSet[i] = &SymbolizedChunksSeries{
+			//lb:            lb,
+			//symbolsTable: symbolsTable,
+			stringifyFunc: stringifyFunc,
+			lbls:          lbls,
+		}
+	}
+	return &NoChunksSymbolizedLabelsSeriesSet{
+		seriesSet:        seriesSet,
+		currentSeriesIdx: -1,
+	}
+}
+
+func (s *NoChunksSymbolizedLabelsSeriesSet) At() prom_storage.ChunkSeries {
+	return s.seriesSet[s.currentSeriesIdx]
+}
+
+func (s *NoChunksSymbolizedLabelsSeriesSet) Next() bool {
+	if s.currentSeriesIdx+1 == len(s.seriesSet) {
+		return false
+	}
+	s.currentSeriesIdx++
+	return true
+}
+
+func (s *NoChunksSymbolizedLabelsSeriesSet) Err() error {
+	return nil
+}
+
+func (s *NoChunksSymbolizedLabelsSeriesSet) Warnings() annotations.Annotations {
+	return nil
+}
+
+func (s *NoChunksSymbolizedLabelsSeriesSet) Close() error {
+	return nil
 }
 
 type NoChunksConcreteLabelsSeriesSet struct {
@@ -91,6 +167,114 @@ func (s *NoChunksConcreteLabelsSeriesSet) Warnings() annotations.Annotations {
 
 func (s *NoChunksConcreteLabelsSeriesSet) Close() error {
 	return nil
+}
+
+// FilterEmptyChunkSymbolizedLabelsSeriesSet is a ChunkSeriesSet that lazily filters out series with no chunks.
+// It takes a set of materialized labels and a lazy iterator of chunks.Iterators;
+// the labels and iterators are iterated in tandem to yield series with chunks.
+// The materialized series callback is applied to each series when the iterator advances during Next().
+type FilterEmptyChunkSymbolizedLabelsSeriesSet struct {
+	ctx context.Context
+	//b            *labels.ScratchBuilder
+	//symbolsTable *SymbolsTable
+	stringifyFunc func([]SymbolizedLabel) labels.Labels
+	lblsSet       [][]SymbolizedLabel
+	chnkSet       ChunksIteratorIterator
+
+	currentSeries              *SymbolizedChunksSeries
+	materializedSeriesCallback MaterializedSeriesFunc
+	err                        error
+}
+
+func NewFilterEmptyChunkSymbolizedLabelsSeriesSet(
+	ctx context.Context,
+	lb *labels.ScratchBuilder,
+	lblsSet [][]SymbolizedLabel,
+	symbolsTable *SymbolsTable,
+	chnkSet ChunksIteratorIterator,
+	materializeSeriesCallback MaterializedSeriesFunc,
+) *FilterEmptyChunkSymbolizedLabelsSeriesSet {
+	stringifyFunc := func(symbolizedLabels []SymbolizedLabel) labels.Labels {
+		lbls, err := symbolsTable.DesymbolizeLabels(lb, symbolizedLabels)
+		if err != nil {
+			panic(err)
+		}
+		return lbls
+	}
+	return &FilterEmptyChunkSymbolizedLabelsSeriesSet{
+		ctx: ctx,
+		//b:                          b,
+		//symbolsTable:               symbolsTable,
+		stringifyFunc:              stringifyFunc,
+		lblsSet:                    lblsSet,
+		chnkSet:                    chnkSet,
+		materializedSeriesCallback: materializeSeriesCallback,
+	}
+}
+
+func (s *FilterEmptyChunkSymbolizedLabelsSeriesSet) At() prom_storage.ChunkSeries {
+	return s.currentSeries
+}
+
+func (s *FilterEmptyChunkSymbolizedLabelsSeriesSet) Next() bool {
+	metas := make([]chunks.Meta, 0, 128)
+	for s.chnkSet.Next() {
+		if len(s.lblsSet) == 0 {
+			s.err = errors.New("less labels than chunks, this should not happen")
+			return false
+		}
+		lbls := s.lblsSet[0]
+		s.lblsSet = s.lblsSet[1:]
+		iter := s.chnkSet.At()
+		for iter.Next() {
+			metas = append(metas, iter.At())
+		}
+
+		if iter.Err() != nil {
+			s.err = iter.Err()
+			return false
+		}
+
+		if len(metas) == 0 {
+			// This series has no chunks, skip it and continue to the next
+			continue
+		}
+		metasCpy := make([]chunks.Meta, len(metas))
+		copy(metasCpy, metas) // copying prevents metas from escaping to heap
+
+		s.currentSeries = &SymbolizedChunksSeries{
+			//b:            s.b,
+			//symbolsTable: s.symbolsTable,
+			stringifyFunc: s.stringifyFunc,
+			lbls:          lbls,
+			chks:          metasCpy,
+		}
+		s.err = s.materializedSeriesCallback(s.ctx, s.currentSeries)
+		return s.err == nil
+		// This series has no chunks, skip it and continue to the next
+	}
+	if s.chnkSet.Err() != nil {
+		s.err = s.chnkSet.Err()
+	}
+	if len(s.lblsSet) > 0 {
+		s.err = errors.New("more labels than chunks, this should not happen")
+	}
+	return false
+}
+
+func (s *FilterEmptyChunkSymbolizedLabelsSeriesSet) Err() error {
+	if s.err != nil {
+		return s.err
+	}
+	return s.chnkSet.Err()
+}
+
+func (s *FilterEmptyChunkSymbolizedLabelsSeriesSet) Warnings() annotations.Annotations {
+	return nil
+}
+
+func (s *FilterEmptyChunkSymbolizedLabelsSeriesSet) Close() error {
+	return s.chnkSet.Close()
 }
 
 // FilterEmptyChunkSeriesSet is a ChunkSeriesSet that lazily filters out series with no chunks.
