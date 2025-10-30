@@ -45,8 +45,8 @@ func (c ConcreteChunksSeries) Iterator(_ chunks.Iterator) chunks.Iterator {
 }
 
 type SymbolizedChunksSeries struct {
-	//b            *labels.ScratchBuilder
-	//symbolsTable *SymbolsTable
+	// b            *labels.ScratchBuilder
+	// symbolsTable *SymbolsTable
 	stringifyFunc func([]SymbolizedLabel) labels.Labels
 	lbls          []SymbolizedLabel
 	chks          []chunks.Meta
@@ -93,8 +93,8 @@ func NewNoChunksSymbolizedLabelsSeriesSet(
 	seriesSet := make([]*SymbolizedChunksSeries, len(symbolizedLabels))
 	for i, lbls := range symbolizedLabels {
 		seriesSet[i] = &SymbolizedChunksSeries{
-			//lb:            lb,
-			//symbolsTable: symbolsTable,
+			// lb:            lb,
+			// symbolsTable: symbolsTable,
 			stringifyFunc: stringifyFunc,
 			lbls:          lbls,
 		}
@@ -175,8 +175,8 @@ func (s *NoChunksConcreteLabelsSeriesSet) Close() error {
 // The materialized series callback is applied to each series when the iterator advances during Next().
 type FilterEmptyChunkSymbolizedLabelsSeriesSet struct {
 	ctx context.Context
-	//b            *labels.ScratchBuilder
-	//symbolsTable *SymbolsTable
+	// b            *labels.ScratchBuilder
+	// symbolsTable *SymbolsTable
 	stringifyFunc func([]SymbolizedLabel) labels.Labels
 	lblsSet       [][]SymbolizedLabel
 	chnkSet       ChunksIteratorIterator
@@ -203,8 +203,8 @@ func NewFilterEmptyChunkSymbolizedLabelsSeriesSet(
 	}
 	return &FilterEmptyChunkSymbolizedLabelsSeriesSet{
 		ctx: ctx,
-		//b:                          b,
-		//symbolsTable:               symbolsTable,
+		// b:                          b,
+		// symbolsTable:               symbolsTable,
 		stringifyFunc:              stringifyFunc,
 		lblsSet:                    lblsSet,
 		chnkSet:                    chnkSet,
@@ -243,8 +243,8 @@ func (s *FilterEmptyChunkSymbolizedLabelsSeriesSet) Next() bool {
 		copy(metasCpy, metas) // copying prevents metas from escaping to heap
 
 		s.currentSeries = &SymbolizedChunksSeries{
-			//b:            s.b,
-			//symbolsTable: s.symbolsTable,
+			// b:            s.b,
+			// symbolsTable: s.symbolsTable,
 			stringifyFunc: s.stringifyFunc,
 			lbls:          lbls,
 			chks:          metasCpy,

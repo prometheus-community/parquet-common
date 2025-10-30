@@ -202,7 +202,7 @@ func (m *Materializer) MaterializeSymbolized(ctx context.Context, hints *prom_st
 		return nil, errors.Wrapf(err, "error materializing labels")
 	}
 
-	//seriesSetLabels, rr := m.FilterSeriesLabels(ctx, hints, symbolizedLabels, rr)
+	// seriesSetLabels, rr := m.FilterSeriesLabels(ctx, hints, symbolizedLabels, rr)
 	lb := labels.NewScratchBuilder(10)
 
 	if skipChunks {

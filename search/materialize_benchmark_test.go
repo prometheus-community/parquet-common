@@ -30,7 +30,7 @@ func BenchmarkMaterialize(b *testing.B) {
 	b.Cleanup(func() { _ = bkt.Close() })
 
 	cfg := util.DefaultTestConfig()
-	//cfg.NumberOfSamples = 5_000 // non-trivial chunks
+	// cfg.NumberOfSamples = 5_000 // non-trivial chunks
 	data := util.GenerateTestData(b, st, ctx, cfg)
 	bktw := &bucketWrapper{
 		Bucket: bkt,
@@ -125,13 +125,14 @@ func BenchmarkMaterialize(b *testing.B) {
 
 					var err error
 					var seriesIter ChunkSeriesSetCloser
-
-					if labelsType == "strings" {
+					
+					switch labelsType {
+					case "strings":
 						seriesIter, err = m.Materialize(ctx, nil, 0, data.MinTime, data.MaxTime, false, tc.rr)
 						if err != nil {
 							b.Fatal("error materializing: ", err)
 						}
-					} else if labelsType == "symbols" {
+					case "symbols":
 						seriesIter, err = m.MaterializeSymbolized(ctx, nil, 0, data.MinTime, data.MaxTime, false, tc.rr)
 						if err != nil {
 							b.Fatal("error materializing: ", err)
@@ -168,7 +169,6 @@ func BenchmarkMaterialize(b *testing.B) {
 				}
 				b.ReportMetric(float64(bktw.getRangeCalls.Load())/float64(b.N), "range_calls/op")
 			})
-
 		}
 	}
 }
