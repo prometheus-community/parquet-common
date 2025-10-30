@@ -379,115 +379,6 @@ func (m *Materializer) MaterializeAllLabelValues(ctx context.Context, name strin
 	return r, nil
 }
 
-func (m *Materializer) MaterializeAllLabels(ctx context.Context, rgi int, rr []RowRange) ([][]labels.Label, error) {
-	ctx, span := tracer.Start(ctx, "Materializer.MaterializeAllLabels")
-	var err error
-	defer func() {
-		if err != nil {
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-		}
-		span.End()
-	}()
-
-	totalRowsRequested := totalRows(rr)
-	span.SetAttributes(
-		attribute.Int("row_group_index", rgi),
-		attribute.Int("row_ranges_count", len(rr)),
-		attribute.Int64("total_rows_requested", totalRowsRequested),
-	)
-
-	if err := m.checkRowCountQuota(rr); err != nil {
-		span.SetAttributes(attribute.String("quota_failure", "row_count"))
-		return nil, err
-	}
-
-	// Get column indexes for all rows in the specified ranges
-	columnIndexes, err := m.getColumnIndexes(ctx, rgi, rr)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to get column indexes")
-	}
-
-	// Build mapping of which columns are needed for which row ranges
-	columnToRowRanges, rowRangeToStartIndex, err := m.buildColumnMappings(rr, columnIndexes)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to build collum mapping")
-	}
-
-	// Materialize label values for each column concurrently
-	results := make([][]labels.Label, len(columnIndexes))
-	mtx := sync.Mutex{}
-	errGroup := &errgroup.Group{}
-	errGroup.SetLimit(m.concurrency)
-	labelsRowGroup := m.b.LabelsFile().RowGroups()[rgi]
-
-	span.SetAttributes(attribute.Int("goroutine_pool_limit", m.concurrency))
-
-	for columnIndex, rowRanges := range columnToRowRanges {
-		errGroup.Go(func() error {
-			ctx, span := tracer.Start(ctx, "Materializer.materializeAllLabels.column")
-			var err error
-			defer func() {
-				if err != nil {
-					span.RecordError(err)
-					span.SetStatus(codes.Error, err.Error())
-				}
-				span.End()
-			}()
-
-			// Extract label name from column schema
-			columnChunk := labelsRowGroup.ColumnChunks()[columnIndex]
-			labelName, ok := schema.ExtractLabelFromColumn(m.b.LabelsFile().Schema().Columns()[columnIndex][0])
-			if !ok {
-				return fmt.Errorf("column %d not found in schema", columnIndex)
-			}
-
-			span.SetAttributes(
-				attribute.Int("column_index", columnIndex),
-				attribute.String("label_name", labelName),
-				attribute.Int("row_ranges_count", len(rowRanges)),
-			)
-
-			// Materialize the actual label values for this column
-			labelValues, err := m.materializeColumnSlice(ctx, m.b.LabelsFile(), rgi, rowRanges, columnChunk, false)
-			if err != nil {
-				return errors.Wrap(err, "failed to materialize label values")
-			}
-
-			span.SetAttributes(attribute.Int("label_values_count", len(labelValues)))
-
-			// Assign label values to the appropriate result positions
-			mtx.Lock()
-			defer mtx.Unlock()
-
-			valueIndex := 0
-			for _, rowRange := range rowRanges {
-				startIndex := rowRangeToStartIndex[rowRange]
-
-				for rowInRange := 0; rowInRange < int(rowRange.Count); rowInRange++ {
-					if !labelValues[valueIndex].IsNull() {
-						results[startIndex+rowInRange] = append(results[startIndex+rowInRange], labels.Label{
-							Name:  labelName,
-							Value: util.YoloString(labelValues[valueIndex].ByteArray()),
-						})
-					}
-					valueIndex++
-				}
-			}
-			return nil
-		})
-	}
-	if err := errGroup.Wait(); err != nil {
-		return nil, err
-	}
-
-	span.SetAttributes(
-		attribute.Int("materialized_labels_count", len(results)),
-		attribute.Int("columns_materialized", len(columnToRowRanges)),
-	)
-	return results, nil
-}
-
 // MaterializeLabels retrieves series labels, optionally filtered by projection hints.
 // Returns all labels when projection is disabled, or only requested labels in the hints when enabled.
 // The s_series_hash column is included only when explicitly requested.
@@ -510,10 +401,10 @@ func (m *Materializer) MaterializeLabels(ctx context.Context, hints *prom_storag
 		attribute.Bool("honor_projection_hints", m.honorProjectionHints),
 	)
 
-	// If projection hints are not enabled or hints are nil, fall back to MaterializeAllLabels
-	if !m.honorProjectionHints || hints == nil {
+	// If projection hints are not enabled, materialize all labels by letting it fall through to default case
+	if !m.honorProjectionHints {
 		span.SetAttributes(attribute.String("projection_mode", "all_labels"))
-		return m.MaterializeAllLabels(ctx, rgi, rr)
+		hints = nil
 	}
 
 	// Get column indexes for all rows in the specified ranges
@@ -529,8 +420,13 @@ func (m *Materializer) MaterializeLabels(ctx context.Context, hints *prom_storag
 
 	labelsSchema := m.b.LabelsFile().Schema()
 
+	columnToRowRanges, _, err := m.buildColumnMappings(rr, columnIndexes)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to build column mapping")
+	}
+
 	switch {
-	case hints.ProjectionInclude:
+	case hints != nil && hints.ProjectionInclude:
 		span.SetAttributes(attribute.String("projection_mode", "include"))
 		span.SetAttributes(attribute.StringSlice("projection_labels", hints.ProjectionLabels))
 
@@ -550,14 +446,15 @@ func (m *Materializer) MaterializeLabels(ctx context.Context, hints *prom_storag
 			}
 		}
 
-	case !hints.ProjectionInclude:
+		for columnId := range colsMap {
+			if rowRanges, exists := columnToRowRanges[columnId]; exists {
+				colsMap[columnId] = rowRanges
+			}
+		}
+
+	case hints != nil && !hints.ProjectionInclude:
 		span.SetAttributes(attribute.String("projection_mode", "exclude"))
 		span.SetAttributes(attribute.StringSlice("projection_labels", hints.ProjectionLabels))
-
-		columnToRowRanges, _, err := m.buildColumnMappings(rr, columnIndexes)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to build column mapping")
-		}
 
 		for columnId, rowRanges := range columnToRowRanges {
 			colsMap[columnId] = rowRanges
@@ -589,23 +486,13 @@ func (m *Materializer) MaterializeLabels(ctx context.Context, hints *prom_storag
 
 	default:
 		span.SetAttributes(attribute.String("projection_mode", "all_labels_fallback"))
-		return m.MaterializeAllLabels(ctx, rgi, rr)
+		// Materialize all columns when no projection hints are provided
+		for columnId, rowRanges := range columnToRowRanges {
+			colsMap[columnId] = rowRanges
+		}
 	}
 
 	span.SetAttributes(attribute.Int("columns_to_materialize", len(colsMap)))
-
-	if hints.ProjectionInclude {
-		columnToRowRanges, _, err := m.buildColumnMappings(rr, columnIndexes)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to build column mapping")
-		}
-
-		for columnId := range colsMap {
-			if rowRanges, exists := columnToRowRanges[columnId]; exists {
-				colsMap[columnId] = rowRanges
-			}
-		}
-	}
 
 	results := make([][]labels.Label, len(columnIndexes))
 	mtx := sync.Mutex{}

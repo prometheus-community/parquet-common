@@ -658,7 +658,7 @@ func TestProjectionHints(t *testing.T) {
 		result, err := m.MaterializeLabels(ctx, hints, 0, rr)
 		require.NoError(t, err)
 
-		resultAll, err := m.MaterializeAllLabels(ctx, 0, rr)
+		resultAll, err := m.MaterializeLabels(ctx, &prom_storage.SelectHints{}, 0, rr)
 		require.NoError(t, err)
 
 		require.Equal(t, len(result), len(resultAll))
