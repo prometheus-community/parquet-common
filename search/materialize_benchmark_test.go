@@ -125,7 +125,7 @@ func BenchmarkMaterialize(b *testing.B) {
 
 					var err error
 					var seriesIter ChunkSeriesSetCloser
-					
+
 					switch labelsType {
 					case "strings":
 						seriesIter, err = m.Materialize(ctx, nil, 0, data.MinTime, data.MaxTime, false, tc.rr)
