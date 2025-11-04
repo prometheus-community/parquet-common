@@ -14,3 +14,6 @@ all-tests-with-coverage:
 
 bench-select:
 	$(GOTEST) -bench=BenchmarkSelect -run='^$$' ./queryable/... -benchtime=1s -count=1
+
+lint:
+	golangci-lint -c .golangci.yml run --fix
