@@ -76,7 +76,7 @@ type NoChunksSymbolizedLabelsSeriesSet struct {
 func NewNoChunksSymbolizedLabelsSeriesSet(
 	lb *labels.ScratchBuilder,
 	symbolizedLabels [][]SymbolizedLabel,
-	symbolsTable *StringMapSymbolsTable,
+	symbolsTable SymbolsTable,
 ) *NoChunksSymbolizedLabelsSeriesSet {
 	seriesSet := &NoChunksSymbolizedLabelsSeriesSet{
 		currentSeriesIdx: -1,
@@ -181,7 +181,7 @@ func NewFilterEmptyChunkSymbolizedLabelsSeriesSet(
 	ctx context.Context,
 	lb *labels.ScratchBuilder,
 	lblsSet [][]SymbolizedLabel,
-	symbolsTable *StringMapSymbolsTable,
+	symbolsTable SymbolsTable,
 	chnkSet ChunksIteratorIterator,
 	materializeSeriesCallback MaterializedSeriesFunc,
 ) *FilterEmptyChunkSymbolizedLabelsSeriesSet {

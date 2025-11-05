@@ -299,7 +299,7 @@ func TestMaterializeSymbolizedE2E(t *testing.T) {
 		rr := []RowRange{{From: int64(0), Count: shard.LabelsFile().RowGroups()[0].NumRows()}}
 		ctx, cancel := context.WithCancel(ctx)
 		cancel()
-		_, err = m.MaterializeSymbolized(ctx, nil, 0, data.MinTime, data.MaxTime, false, rr)
+		_, err = m.MaterializeSymbolized(ctx, nil, 0, rr, data.MinTime, data.MaxTime, nil, false)
 		require.ErrorContains(t, err, "context canceled")
 	})
 
@@ -314,7 +314,7 @@ func TestMaterializeSymbolizedE2E(t *testing.T) {
 		m, err := NewMaterializer(s, schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool()), shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback, false)
 		require.NoError(t, err)
 		rr := []RowRange{{From: int64(0), Count: shard.LabelsFile().RowGroups()[0].NumRows()}}
-		_, err = m.MaterializeSymbolized(ctx, nil, 0, data.MinTime, data.MaxTime, false, rr)
+		_, err = m.MaterializeSymbolized(ctx, nil, 0, rr, data.MinTime, data.MaxTime, nil, false)
 		require.NoError(t, err)
 	})
 
@@ -330,7 +330,7 @@ func TestMaterializeSymbolizedE2E(t *testing.T) {
 
 		// Try to materialize more rows than quota allows
 		rr := []RowRange{{From: int64(0), Count: 20}} // 20 rows
-		_, err = m.MaterializeSymbolized(ctx, nil, 0, data.MinTime, data.MaxTime, false, rr)
+		_, err = m.MaterializeSymbolized(ctx, nil, 0, rr, data.MinTime, data.MaxTime, nil, false)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "would fetch too many rows")
 		require.True(t, IsResourceExhausted(err))
@@ -341,7 +341,7 @@ func TestMaterializeSymbolizedE2E(t *testing.T) {
 		require.NoError(t, err)
 
 		rr = []RowRange{{From: int64(0), Count: 50}} // 50 rows
-		series, err := m.MaterializeSymbolized(ctx, nil, 0, data.MinTime, data.MaxTime, false, rr)
+		series, err := m.MaterializeSymbolized(ctx, nil, 0, rr, data.MinTime, data.MaxTime, nil, false)
 		require.NoError(t, err)
 		require.NotEmpty(t, series)
 	})
@@ -358,7 +358,7 @@ func TestMaterializeSymbolizedE2E(t *testing.T) {
 
 		// Try to materialize chunks that exceed the quota
 		rr := []RowRange{{From: int64(0), Count: 100}} // Large range to trigger chunk reading
-		_, err = m.MaterializeSymbolized(ctx, nil, 0, data.MinTime, data.MaxTime, false, rr)
+		_, err = m.MaterializeSymbolized(ctx, nil, 0, rr, data.MinTime, data.MaxTime, nil, false)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "would fetch too many chunk bytes")
 		require.True(t, IsResourceExhausted(err))
@@ -369,7 +369,7 @@ func TestMaterializeSymbolizedE2E(t *testing.T) {
 		require.NoError(t, err)
 
 		rr = []RowRange{{From: int64(0), Count: 10}} // Small range
-		series, err := m.MaterializeSymbolized(ctx, nil, 0, data.MinTime, data.MaxTime, false, rr)
+		series, err := m.MaterializeSymbolized(ctx, nil, 0, rr, data.MinTime, data.MaxTime, nil, false)
 		require.NoError(t, err)
 		require.NotEmpty(t, series)
 	})
@@ -386,7 +386,7 @@ func TestMaterializeSymbolizedE2E(t *testing.T) {
 
 		// Try to materialize data that exceeds the quota
 		rr := []RowRange{{From: int64(0), Count: 100}} // Large range to trigger data reading
-		_, err = m.MaterializeSymbolized(ctx, nil, 0, data.MinTime, data.MaxTime, false, rr)
+		_, err = m.MaterializeSymbolized(ctx, nil, 0, rr, data.MinTime, data.MaxTime, nil, false)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "would fetch too many data bytes")
 		require.True(t, IsResourceExhausted(err))
@@ -397,7 +397,7 @@ func TestMaterializeSymbolizedE2E(t *testing.T) {
 		require.NoError(t, err)
 
 		rr = []RowRange{{From: int64(0), Count: 10}} // Small range
-		series, err := m.MaterializeSymbolized(ctx, nil, 0, data.MinTime, data.MaxTime, false, rr)
+		series, err := m.MaterializeSymbolized(ctx, nil, 0, rr, data.MinTime, data.MaxTime, nil, false)
 		require.NoError(t, err)
 		require.NotEmpty(t, series)
 	})
@@ -452,7 +452,7 @@ func query(t *testing.T, mint, maxt int64, shard storage.ParquetShard, symbolize
 
 		var seriesSetIter ChunkSeriesSetCloser
 		if symbolizeLabels {
-			seriesSetIter, err = m.MaterializeSymbolized(ctx, nil, i, mint, maxt, false, rr)
+			seriesSetIter, err = m.MaterializeSymbolized(ctx, nil, i, rr, mint, maxt, nil, false)
 			require.NoError(t, err)
 		} else {
 			seriesSetIter, err = m.Materialize(ctx, nil, i, mint, maxt, false, rr)
@@ -677,7 +677,7 @@ func TestFilterSeriesSymbolized(t *testing.T) {
 		},
 	}
 
-	symbolsTable := NewSymbolsTable()
+	symbolsTable := NewStringMapSymbolsTable()
 	symbolizedLabels := make([][]SymbolizedLabel, len(sampleLabels))
 	for i, l := range sampleLabels {
 		symbolizedLabels[i] = symbolsTable.SymbolizeLabels(l, nil)

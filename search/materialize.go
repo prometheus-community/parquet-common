@@ -178,7 +178,14 @@ func (m *Materializer) Materialize(ctx context.Context, hints *prom_storage.Sele
 
 // MaterializeSymbolized creates an iterator to reconstruct the ChunkSeries that belong to the specified row ranges (rr).
 // It uses the row group index (rgi) and time bounds (mint, maxt) to filter and decode the series.
-func (m *Materializer) MaterializeSymbolized(ctx context.Context, hints *prom_storage.SelectHints, rgi int, mint, maxt int64, skipChunks bool, rr []RowRange) (ChunkSeriesSetCloser, error) {
+func (m *Materializer) MaterializeSymbolized(
+	ctx context.Context,
+	hints *prom_storage.SelectHints,
+	rgi int, rr []RowRange,
+	mint, maxt int64,
+	symbolsTable SymbolsTable,
+	skipChunks bool,
+) (ChunkSeriesSetCloser, error) {
 	var err error
 	ctx, span := tracer.Start(ctx, "Materializer.Materialize")
 	defer func() {
@@ -197,7 +204,7 @@ func (m *Materializer) MaterializeSymbolized(ctx context.Context, hints *prom_st
 		attribute.Int("row_ranges_count", len(rr)),
 	)
 
-	symbolizedLabels, symbolsTable, err := m.MaterializeLabelsSymbolized(ctx, rgi, rr)
+	symbolizedLabels, symbolsTable, err := m.MaterializeLabelsSymbolized(ctx, rgi, rr, symbolsTable)
 	if err != nil {
 		return nil, errors.Wrapf(err, "error materializing labels")
 	}
@@ -730,7 +737,12 @@ func (m *Materializer) MaterializeLabels(ctx context.Context, hints *prom_storag
 	return results, nil
 }
 
-func (m *Materializer) MaterializeLabelsSymbolized(ctx context.Context, rgi int, rr []RowRange) ([][]SymbolizedLabel, *StringMapSymbolsTable, error) {
+func (m *Materializer) MaterializeLabelsSymbolized(
+	ctx context.Context,
+	rgi int,
+	rr []RowRange,
+	symbolsTable SymbolsTable,
+) ([][]SymbolizedLabel, SymbolsTable, error) {
 	ctx, span := tracer.Start(ctx, "Materializer.MaterializeAllLabels")
 	var err error
 	defer func() {
@@ -766,7 +778,9 @@ func (m *Materializer) MaterializeLabelsSymbolized(ctx context.Context, rgi int,
 	}
 
 	// Materialize label values for each column concurrently
-	resultSymbolTable := NewSymbolsTable()
+	if symbolsTable == nil {
+		symbolsTable = NewStringMapSymbolsTable()
+	}
 	results := make([][]SymbolizedLabel, len(columnIndexes))
 	mtx := sync.Mutex{}
 	errGroup := &errgroup.Group{}
@@ -819,8 +833,8 @@ func (m *Materializer) MaterializeLabelsSymbolized(ctx context.Context, rgi int,
 				for rowInRange := 0; rowInRange < int(rowRange.Count); rowInRange++ {
 					if !labelValues[valueIndex].IsNull() {
 						results[startIndex+rowInRange] = append(results[startIndex+rowInRange], SymbolizedLabel{
-							Name:  resultSymbolTable.Symbolize(labelName),
-							Value: resultSymbolTable.Symbolize(util.YoloString(labelValues[valueIndex].ByteArray())),
+							Name:  symbolsTable.Symbolize(labelName),
+							Value: symbolsTable.Symbolize(util.YoloString(labelValues[valueIndex].ByteArray())),
 						})
 					}
 					valueIndex++
@@ -837,7 +851,7 @@ func (m *Materializer) MaterializeLabelsSymbolized(ctx context.Context, rgi int,
 		attribute.Int("materialized_labels_count", len(results)),
 		attribute.Int("columns_materialized", len(columnToRowRanges)),
 	)
-	return results, resultSymbolTable, nil
+	return results, symbolsTable, nil
 }
 
 // getColumnIndexes retrieves the column index data for all rows in the specified ranges

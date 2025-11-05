@@ -109,10 +109,7 @@ func BenchmarkMaterialize(b *testing.B) {
 
 		for _, labelsType := range []string{"strings", "symbols"} {
 			b.Run(fmt.Sprintf("%s/labels=%s", tc.name, labelsType), func(b *testing.B) {
-				// Warm up
-				//seriesIter, err := m.Materialize(ctx, nil, 0, data.MinTime, data.MaxTime, false, tc.rr)
-				//require.NoError(b, err)
-				//_ = seriesIter.Close()
+				symbolsTable := NewStringMapSymbolsTable()
 
 				b.ReportAllocs()
 				b.ResetTimer()
@@ -133,7 +130,7 @@ func BenchmarkMaterialize(b *testing.B) {
 							b.Fatal("error materializing: ", err)
 						}
 					case "symbols":
-						seriesIter, err = m.MaterializeSymbolized(ctx, nil, 0, data.MinTime, data.MaxTime, false, tc.rr)
+						seriesIter, err = m.MaterializeSymbolized(ctx, nil, 0, tc.rr, data.MinTime, data.MaxTime, symbolsTable, false)
 						if err != nil {
 							b.Fatal("error materializing: ", err)
 						}
@@ -166,6 +163,7 @@ func BenchmarkMaterialize(b *testing.B) {
 					b.ReportMetric(float64(heapAllocDiff/uint64(b.N)), "B-alloc-diff")
 					b.ReportMetric(float64(heapInUseDiff/uint64(b.N)), "B-inuse-diff")
 					_ = seriesIter.Close()
+					symbolsTable.Reset()
 				}
 				b.ReportMetric(float64(bktw.getRangeCalls.Load())/float64(b.N), "range_calls/op")
 			})
