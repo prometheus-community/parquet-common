@@ -14,8 +14,6 @@
 package search
 
 import (
-	"fmt"
-
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/model/labels"
 )
@@ -24,21 +22,27 @@ type SymbolizedLabel struct {
 	Name, Value uint32
 }
 
-type SymbolsTable struct {
+type SymbolsTable interface {
+	SymbolizeLabels(lbls []labels.Label, buf []SymbolizedLabel) []SymbolizedLabel
+	DesymbolizeLabels(symbolizedLabels []SymbolizedLabel, b *labels.ScratchBuilder, sort bool) (labels.Labels, error)
+	Reset()
+}
+
+type StringMapSymbolsTable struct {
 	strings    []string
 	symbolsMap map[string]uint32
 }
 
-// NewSymbolTable returns a symbol table.
-func NewSymbolTable() *SymbolsTable {
-	return &SymbolsTable{
+// NewSymbolsTable returns a symbol table.
+func NewSymbolsTable() *StringMapSymbolsTable {
+	return &StringMapSymbolsTable{
 		// Empty string is required as a first element.
 		symbolsMap: map[string]uint32{"": 0},
 		strings:    []string{""},
 	}
 }
 
-func (t *SymbolsTable) Symbolize(str string) uint32 {
+func (t *StringMapSymbolsTable) Symbolize(str string) uint32 {
 	if ref, ok := t.symbolsMap[str]; ok {
 		return ref
 	}
@@ -48,7 +52,19 @@ func (t *SymbolsTable) Symbolize(str string) uint32 {
 	return ref
 }
 
-func (t *SymbolsTable) Desymbolize(ref uint32) (string, error) {
+func (t *StringMapSymbolsTable) SymbolizeLabels(lbls []labels.Label, buf []SymbolizedLabel) []SymbolizedLabel {
+	result := buf[:0]
+	for _, l := range lbls {
+		result = append(result, SymbolizedLabel{
+			Name:  t.Symbolize(l.Name),
+			Value: t.Symbolize(l.Value),
+		})
+	}
+
+	return result
+}
+
+func (t *StringMapSymbolsTable) Desymbolize(ref uint32) (string, error) {
 	idx := int(ref)
 	if idx >= len(t.strings) {
 		return "", errors.New("symbols ref out of range")
@@ -56,16 +72,32 @@ func (t *SymbolsTable) Desymbolize(ref uint32) (string, error) {
 	return t.strings[idx], nil
 }
 
-func (t *SymbolsTable) DesymbolizeLabels(b *labels.ScratchBuilder, symbolizedLabels []SymbolizedLabel) (labels.Labels, error) {
+func (t *StringMapSymbolsTable) DesymbolizeLabels(
+	symbolizedLabels []SymbolizedLabel, b *labels.ScratchBuilder, sort bool,
+) (labels.Labels, error) {
 	b.Reset()
 	for i := 0; i < len(symbolizedLabels); i++ {
 		nameRef := symbolizedLabels[i].Name
 		valueRef := symbolizedLabels[i].Value
 		if int(nameRef) >= len(t.strings) || int(valueRef) >= len(t.strings) {
-			return labels.EmptyLabels(), fmt.Errorf("labelRefs %d (name) = %d (value) outside of symbols table (size %d)", nameRef, valueRef, len(t.strings))
+			return labels.EmptyLabels(), errors.New("symbols ref out of range")
 		}
 		b.Add(t.strings[nameRef], t.strings[valueRef])
 	}
-	b.Sort()
+	if sort {
+		b.Sort()
+	}
 	return b.Labels(), nil
+}
+
+// Reset clears symbols table.
+func (t *StringMapSymbolsTable) Reset() {
+	// NOTE: Make sure to keep empty symbol.
+	t.strings = t.strings[:1]
+	for k := range t.symbolsMap {
+		if k == "" {
+			continue
+		}
+		delete(t.symbolsMap, k)
+	}
 }

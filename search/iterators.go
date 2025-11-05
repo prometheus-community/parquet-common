@@ -45,18 +45,12 @@ func (c ConcreteChunksSeries) Iterator(_ chunks.Iterator) chunks.Iterator {
 }
 
 type SymbolizedChunksSeries struct {
-	// b            *labels.ScratchBuilder
-	// symbolsTable *SymbolsTable
 	stringifyFunc func([]SymbolizedLabel) labels.Labels
 	lbls          []SymbolizedLabel
 	chks          []chunks.Meta
 }
 
 func (c SymbolizedChunksSeries) Labels() labels.Labels {
-	//lbls, err := c.stringifyFunc(c.b, c.lbls)
-	//if err != nil {
-	//	panic(err)
-	//}
 	return c.stringifyFunc(c.lbls)
 }
 
@@ -74,43 +68,45 @@ type ChunkSeriesSetCloser interface {
 }
 
 type NoChunksSymbolizedLabelsSeriesSet struct {
-	seriesSet        []*SymbolizedChunksSeries
+	innerSeriesSet   []*SymbolizedChunksSeries
 	currentSeriesIdx int
+	err              error
 }
 
 func NewNoChunksSymbolizedLabelsSeriesSet(
 	lb *labels.ScratchBuilder,
 	symbolizedLabels [][]SymbolizedLabel,
-	symbolsTable *SymbolsTable,
+	symbolsTable *StringMapSymbolsTable,
 ) *NoChunksSymbolizedLabelsSeriesSet {
+	seriesSet := &NoChunksSymbolizedLabelsSeriesSet{
+		currentSeriesIdx: -1,
+	}
+
 	stringifyFunc := func(symbolizedLabels []SymbolizedLabel) labels.Labels {
-		lbls, err := symbolsTable.DesymbolizeLabels(lb, symbolizedLabels)
+		lbls, err := symbolsTable.DesymbolizeLabels(symbolizedLabels, lb, true)
 		if err != nil {
-			panic(err)
+			seriesSet.err = err
 		}
 		return lbls
 	}
-	seriesSet := make([]*SymbolizedChunksSeries, len(symbolizedLabels))
+	innerSeriesSet := make([]*SymbolizedChunksSeries, len(symbolizedLabels))
 	for i, lbls := range symbolizedLabels {
-		seriesSet[i] = &SymbolizedChunksSeries{
-			// lb:            lb,
-			// symbolsTable: symbolsTable,
+		innerSeriesSet[i] = &SymbolizedChunksSeries{
 			stringifyFunc: stringifyFunc,
 			lbls:          lbls,
 		}
 	}
-	return &NoChunksSymbolizedLabelsSeriesSet{
-		seriesSet:        seriesSet,
-		currentSeriesIdx: -1,
-	}
+	seriesSet.innerSeriesSet = innerSeriesSet
+
+	return seriesSet
 }
 
 func (s *NoChunksSymbolizedLabelsSeriesSet) At() prom_storage.ChunkSeries {
-	return s.seriesSet[s.currentSeriesIdx]
+	return s.innerSeriesSet[s.currentSeriesIdx]
 }
 
 func (s *NoChunksSymbolizedLabelsSeriesSet) Next() bool {
-	if s.currentSeriesIdx+1 == len(s.seriesSet) {
+	if s.currentSeriesIdx+1 == len(s.innerSeriesSet) {
 		return false
 	}
 	s.currentSeriesIdx++
@@ -169,14 +165,9 @@ func (s *NoChunksConcreteLabelsSeriesSet) Close() error {
 	return nil
 }
 
-// FilterEmptyChunkSymbolizedLabelsSeriesSet is a ChunkSeriesSet that lazily filters out series with no chunks.
-// It takes a set of materialized labels and a lazy iterator of chunks.Iterators;
-// the labels and iterators are iterated in tandem to yield series with chunks.
-// The materialized series callback is applied to each series when the iterator advances during Next().
+// FilterEmptyChunkSymbolizedLabelsSeriesSet is a FilterEmptyChunkSeriesSet with a symbolized label set.
 type FilterEmptyChunkSymbolizedLabelsSeriesSet struct {
-	ctx context.Context
-	// b            *labels.ScratchBuilder
-	// symbolsTable *SymbolsTable
+	ctx           context.Context
 	stringifyFunc func([]SymbolizedLabel) labels.Labels
 	lblsSet       [][]SymbolizedLabel
 	chnkSet       ChunksIteratorIterator
@@ -190,26 +181,27 @@ func NewFilterEmptyChunkSymbolizedLabelsSeriesSet(
 	ctx context.Context,
 	lb *labels.ScratchBuilder,
 	lblsSet [][]SymbolizedLabel,
-	symbolsTable *SymbolsTable,
+	symbolsTable *StringMapSymbolsTable,
 	chnkSet ChunksIteratorIterator,
 	materializeSeriesCallback MaterializedSeriesFunc,
 ) *FilterEmptyChunkSymbolizedLabelsSeriesSet {
-	stringifyFunc := func(symbolizedLabels []SymbolizedLabel) labels.Labels {
-		lbls, err := symbolsTable.DesymbolizeLabels(lb, symbolizedLabels)
-		if err != nil {
-			panic(err)
-		}
-		return lbls
-	}
-	return &FilterEmptyChunkSymbolizedLabelsSeriesSet{
-		ctx: ctx,
-		// b:                          b,
-		// symbolsTable:               symbolsTable,
-		stringifyFunc:              stringifyFunc,
+	seriesSet := &FilterEmptyChunkSymbolizedLabelsSeriesSet{
+		ctx:                        ctx,
 		lblsSet:                    lblsSet,
 		chnkSet:                    chnkSet,
 		materializedSeriesCallback: materializeSeriesCallback,
 	}
+
+	stringifyFunc := func(symbolizedLabels []SymbolizedLabel) labels.Labels {
+		lbls, err := symbolsTable.DesymbolizeLabels(symbolizedLabels, lb, true)
+		if err != nil {
+			seriesSet.err = err
+		}
+		return lbls
+	}
+	seriesSet.stringifyFunc = stringifyFunc
+
+	return seriesSet
 }
 
 func (s *FilterEmptyChunkSymbolizedLabelsSeriesSet) At() prom_storage.ChunkSeries {

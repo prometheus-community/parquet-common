@@ -197,16 +197,20 @@ func (m *Materializer) MaterializeSymbolized(ctx context.Context, hints *prom_st
 		attribute.Int("row_ranges_count", len(rr)),
 	)
 
-	symbolizedLabels, symbolsTable, err := m.MaterializeAllLabelsSymbolized(ctx, rgi, rr)
+	symbolizedLabels, symbolsTable, err := m.MaterializeLabelsSymbolized(ctx, rgi, rr)
 	if err != nil {
 		return nil, errors.Wrapf(err, "error materializing labels")
 	}
 
-	// seriesSetLabels, rr := m.FilterSeriesLabels(ctx, hints, symbolizedLabels, rr)
+	filteredSymbolizedLabels, rr, err := m.FilterSeriesLabelsSymbolized(ctx, hints, symbolizedLabels, symbolsTable, rr)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to filter symbolized labels")
+	}
+
 	lb := labels.NewScratchBuilder(10)
 
 	if skipChunks {
-		return NewNoChunksSymbolizedLabelsSeriesSet(&lb, symbolizedLabels, symbolsTable), nil
+		return NewNoChunksSymbolizedLabelsSeriesSet(&lb, filteredSymbolizedLabels, symbolsTable), nil
 	}
 
 	chksIter, err := m.MaterializeChunks(ctx, rgi, mint, maxt, rr)
@@ -214,9 +218,9 @@ func (m *Materializer) MaterializeSymbolized(ctx context.Context, hints *prom_st
 		return nil, errors.Wrap(err, "materializer failed to create chunks iterator")
 	}
 
-	seriesSetIter := NewFilterEmptyChunkSymbolizedLabelsSeriesSet(ctx, &lb, symbolizedLabels, symbolsTable, chksIter, m.materializedSeriesCallback)
+	seriesSetIter := NewFilterEmptyChunkSymbolizedLabelsSeriesSet(ctx, &lb, filteredSymbolizedLabels, symbolsTable, chksIter, m.materializedSeriesCallback)
 
-	span.SetAttributes(attribute.Int("materialized_series_count", len(symbolizedLabels)))
+	span.SetAttributes(attribute.Int("materialized_series_count", len(filteredSymbolizedLabels)))
 	return seriesSetIter, nil
 }
 
@@ -281,6 +285,76 @@ func (m *Materializer) FilterSeriesLabels(ctx context.Context, hints *prom_stora
 	}
 
 	return seriesLabels, filteredRR
+}
+
+func (m *Materializer) FilterSeriesLabelsSymbolized(
+	ctx context.Context,
+	hints *prom_storage.SelectHints,
+	sLbls [][]SymbolizedLabel,
+	symbolsTable SymbolsTable,
+	rr []RowRange,
+) ([][]SymbolizedLabel, []RowRange, error) {
+	labelsFilter, ok := m.materializedLabelsFilterCallback(ctx, hints)
+	if !ok {
+		return sLbls, rr, nil
+	}
+
+	defer labelsFilter.Close()
+
+	lb := labels.NewScratchBuilder(10)
+	filteredLabels := make([][]SymbolizedLabel, 0, len(sLbls))
+	filteredRR := make([]RowRange, 0, len(rr))
+	var currentRange RowRange
+	inRange := false
+	seriesIdx := 0
+
+	for _, rowRange := range rr {
+		for i := int64(0); i < rowRange.Count; i++ {
+			actualRowID := rowRange.From + i
+			lbls, err := symbolsTable.DesymbolizeLabels(sLbls[seriesIdx], &lb, false)
+			if err != nil {
+				return nil, nil, errors.Wrapf(err, "failed to desymbolize series labels")
+			}
+
+			if labelsFilter.Filter(lbls) {
+				filteredLabels = append(filteredLabels, sLbls[seriesIdx])
+
+				// Handle row range collection
+				if !inRange {
+					// Start new range
+					currentRange = RowRange{
+						From:  actualRowID,
+						Count: 1,
+					}
+					inRange = true
+				} else if actualRowID == currentRange.From+currentRange.Count {
+					// Extend current range
+					currentRange.Count++
+				} else {
+					// Save current range and start new range (non-contiguous)
+					filteredRR = append(filteredRR, currentRange)
+					currentRange = RowRange{
+						From:  actualRowID,
+						Count: 1,
+					}
+				}
+			} else {
+				// Save current range and reset when we hit a non-matching series
+				if inRange {
+					filteredRR = append(filteredRR, currentRange)
+					inRange = false
+				}
+			}
+			seriesIdx++
+		}
+	}
+
+	// Save the final range if we have one
+	if inRange {
+		filteredRR = append(filteredRR, currentRange)
+	}
+
+	return filteredLabels, filteredRR, nil
 }
 
 // MaterializeAllLabelNames extracts and returns all label names from the schema
@@ -656,7 +730,7 @@ func (m *Materializer) MaterializeLabels(ctx context.Context, hints *prom_storag
 	return results, nil
 }
 
-func (m *Materializer) MaterializeAllLabelsSymbolized(ctx context.Context, rgi int, rr []RowRange) ([][]SymbolizedLabel, *SymbolsTable, error) {
+func (m *Materializer) MaterializeLabelsSymbolized(ctx context.Context, rgi int, rr []RowRange) ([][]SymbolizedLabel, *StringMapSymbolsTable, error) {
 	ctx, span := tracer.Start(ctx, "Materializer.MaterializeAllLabels")
 	var err error
 	defer func() {
@@ -692,7 +766,7 @@ func (m *Materializer) MaterializeAllLabelsSymbolized(ctx context.Context, rgi i
 	}
 
 	// Materialize label values for each column concurrently
-	resultSymbolTable := NewSymbolTable()
+	resultSymbolTable := NewSymbolsTable()
 	results := make([][]SymbolizedLabel, len(columnIndexes))
 	mtx := sync.Mutex{}
 	errGroup := &errgroup.Group{}
