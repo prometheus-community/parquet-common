@@ -602,7 +602,8 @@ func (m *mockSortingColumn) Descending() bool { return false }
 func (m *mockSortingColumn) NullsFirst() bool { return false }
 
 // TestConstraintCacheKeyShardCollision exercises the constraint cache to ensure that
-// there are no collisions causing incorrect results. This reproduces a found bug.
+// there are no collisions causing incorrect results. This reproduces a bug fixed
+// in https://github.com/prometheus-community/parquet-common/pull/126.
 func TestConstraintCacheKeyShardCollision(t *testing.T) {
 	type s struct {
 		A string `parquet:",optional,dict"`

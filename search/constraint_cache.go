@@ -21,6 +21,7 @@ type RowRangesForConstraintsCache interface {
 }
 
 func constraintsCacheKey(shard storage.ParquetShard, rgIdx int, cs []Constraint) string {
+	// <shard name>:rgidx-<row group index>:<constraint1>:<constraint2>:...:<constraintn>
 	s := make([]string, len(cs)+2)
 	s[0] = shard.Name()
 	s[1] = "rgidx-" + strconv.Itoa(rgIdx)
