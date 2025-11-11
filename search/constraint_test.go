@@ -22,7 +22,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/oklog/ulid/v2"
 	"github.com/parquet-go/parquet-go"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/require"
@@ -32,6 +34,7 @@ import (
 )
 
 func buildFile[T any](t testing.TB, rows []T) storage.ParquetShard {
+	name := ulid.MustNewDefault(time.Now()).String()
 	buf := bytes.NewBuffer(nil)
 	w := parquet.NewGenericWriter[T](buf, parquet.PageBufferSize(10))
 	for _, row := range rows {
@@ -45,16 +48,16 @@ func buildFile[T any](t testing.TB, rows []T) storage.ParquetShard {
 	bkt, err := filesystem.NewBucket(t.TempDir())
 	require.NoError(t, err)
 	reader := bytes.NewReader(buf.Bytes())
-	require.NoError(t, bkt.Upload(context.Background(), "pipe/0.labels.parquet", reader))
+	require.NoError(t, bkt.Upload(context.Background(), name+"/0.labels.parquet", reader))
 
 	// Lets create a mocked chunks file
 	_, err = reader.Seek(0, io.SeekStart)
 	require.NoError(t, err)
-	require.NoError(t, bkt.Upload(context.Background(), "pipe/0.chunks.parquet", reader))
+	require.NoError(t, bkt.Upload(context.Background(), name+"/0.chunks.parquet", reader))
 
 	bucketOpener := storage.NewParquetBucketOpener(bkt)
 	shard, err := storage.NewParquetShardOpener(
-		context.Background(), "pipe", bucketOpener, bucketOpener, 0,
+		context.Background(), name, bucketOpener, bucketOpener, 0,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -597,6 +600,45 @@ type mockSortingColumn struct {
 func (m *mockSortingColumn) Path() []string   { return []string{m.pathName} }
 func (m *mockSortingColumn) Descending() bool { return false }
 func (m *mockSortingColumn) NullsFirst() bool { return false }
+
+// TestConstraintCacheKeyShardCollision exercises the constraint cache to ensure that
+// there are no collisions causing incorrect results. This reproduces a bug fixed
+// in https://github.com/prometheus-community/parquet-common/pull/126.
+func TestConstraintCacheKeyShardCollision(t *testing.T) {
+	type s struct {
+		A string `parquet:",optional,dict"`
+	}
+
+	shard1 := buildFile(t, []s{
+		{A: "foo"},
+		{A: "bar"},
+	})
+	shard2 := buildFile(t, []s{
+		{A: "baz"},
+		{A: "qux"},
+	})
+
+	cache := NewConstraintRowRangeCacheSyncMap()
+
+	constraints := []Constraint{
+		Equal("A", parquet.ValueOf("foo")),
+	}
+	err := Initialize(shard1.LabelsFile(), constraints...)
+	require.NoError(t, err)
+	rr1, err := Filter(context.Background(), shard1, 0, cache, constraints...)
+	require.NoError(t, err)
+	require.Equal(t, []RowRange{{From: 0, Count: 1}}, rr1)
+
+	// The same query for a different shard, should have a different result
+	constraints = []Constraint{
+		Equal("A", parquet.ValueOf("foo")),
+	}
+	err = Initialize(shard2.LabelsFile(), constraints...)
+	require.NoError(t, err)
+	rr2, err := Filter(context.Background(), shard2, 0, cache, constraints...)
+	require.NoError(t, err)
+	require.Empty(t, rr2)
+}
 
 func TestSortConstraintsBySortingColumns(t *testing.T) {
 	tests := []struct {
