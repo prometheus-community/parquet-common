@@ -25,7 +25,7 @@ func constraintsCacheKey(shard storage.ParquetShard, rgIdx int, cs []Constraint)
 	s[0] = shard.Name()
 	s[1] = "rgidx-" + strconv.Itoa(rgIdx)
 	for i, c := range cs {
-		s[i] = c.String()
+		s[i+2] = c.String()
 	}
 	return strings.Join(s, ":")
 }
