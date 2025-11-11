@@ -785,6 +785,7 @@ func BenchmarkSelect(b *testing.B) {
 			b.ReportMetric(float64(cbkt.bsGetRange.Load())/float64(b.N), "bytes_get_range/op")
 			b.ReportMetric(float64(parquet.Buffers.Stats.BufferGets.Load())/float64(b.N), "buffer-gets/op")
 			b.ReportMetric(float64(parquet.Buffers.Stats.BufferPuts.Load())/float64(b.N), "buffer-puts/op")
+			b.ReportMetric(float64(parquet.Buffers.Stats.PeakGetPutDiff.Load())/float64(b.N), "buffer-peak-get-put-diff/op")
 			b.ReportMetric(float64(parquet.Buffers.Stats.BytesAllocated.Load())/float64(b.N), "slab-pool-bytes-alloc/op")
 			b.ReportMetric(float64(parquet.Buffers.Stats.BytesReleased.Load())/float64(b.N), "slab-pool-bytes-released/op")
 		})

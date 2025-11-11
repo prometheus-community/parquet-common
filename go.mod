@@ -101,4 +101,4 @@ require (
 	k8s.io/utils v0.0.0-20241104163129-6fe5fd82f078 // indirect
 )
 
-replace github.com/parquet-go/parquet-go => github.com/francoposa/parquet-go v0.0.0-20251111183239-c760bf329869
+replace github.com/parquet-go/parquet-go => github.com/francoposa/parquet-go v0.0.0-20251111192057-a984373777c2
