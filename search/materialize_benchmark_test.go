@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/parquet-go/parquet-go"
 	"github.com/prometheus/prometheus/tsdb/chunkenc"
 	"github.com/prometheus/prometheus/util/teststorage"
 	"github.com/stretchr/testify/require"
@@ -152,6 +153,10 @@ func BenchmarkMaterialize(b *testing.B) {
 				heapInUseDiff := m2.HeapInuse - m1.HeapInuse
 				b.ReportMetric(float64(heapAllocDiff/uint64(b.N)), "B-alloc-diff")
 				b.ReportMetric(float64(heapInUseDiff/uint64(b.N)), "B-inuse-diff")
+				b.ReportMetric(float64(parquet.Buffers.Stats.BufferGets.Load())/float64(b.N), "buffer-gets/op")
+				b.ReportMetric(float64(parquet.Buffers.Stats.BufferPuts.Load())/float64(b.N), "buffer-puts/op")
+				b.ReportMetric(float64(parquet.Buffers.Stats.BytesAllocated.Load())/float64(b.N), "slab-pool-bytes-alloc/op")
+				b.ReportMetric(float64(parquet.Buffers.Stats.BytesReleased.Load())/float64(b.N), "slab-pool-bytes-released/op")
 				_ = seriesIter.Close()
 			}
 			b.ReportMetric(float64(bktw.getRangeCalls.Load())/float64(b.N), "range_calls/op")

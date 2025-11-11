@@ -1,15 +1,15 @@
 module github.com/prometheus-community/parquet-common
 
-go 1.24.0
-
-toolchain go1.24.2
+go 1.24.10
 
 require (
 	github.com/dennwc/varint v1.0.0
 	github.com/efficientgo/core v1.0.0-rc.3
 	github.com/hashicorp/go-multierror v1.1.1
+	github.com/oklog/ulid/v2 v2.1.1
 	github.com/parquet-go/parquet-go v0.25.1
 	github.com/pkg/errors v0.9.1
+	github.com/prometheus/common v0.66.1
 	github.com/prometheus/prometheus v0.305.1-0.20250911094942-594f9d63a5f9
 	github.com/stretchr/testify v1.11.1
 	github.com/thanos-io/objstore v0.0.0-20250317105316-a0136a6f898d
@@ -66,13 +66,12 @@ require (
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/mwitkow/go-conntrack v0.0.0-20190716064945-2f068394615f // indirect
-	github.com/oklog/ulid/v2 v2.1.1 // indirect
+	github.com/parquet-go/bitpack v0.1.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.22 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/prometheus/client_golang v1.23.2 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
-	github.com/prometheus/common v0.66.1 // indirect
 	github.com/prometheus/otlptranslator v0.0.2 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect
 	github.com/prometheus/sigv4 v0.2.0 // indirect
@@ -87,7 +86,7 @@ require (
 	golang.org/x/exp v0.0.0-20250106191152-7588d65b2ba8 // indirect
 	golang.org/x/net v0.43.0 // indirect
 	golang.org/x/oauth2 v0.30.0 // indirect
-	golang.org/x/sys v0.35.0 // indirect
+	golang.org/x/sys v0.37.0 // indirect
 	golang.org/x/text v0.28.0 // indirect
 	golang.org/x/time v0.12.0 // indirect
 	google.golang.org/api v0.239.0 // indirect
@@ -101,3 +100,5 @@ require (
 	k8s.io/klog/v2 v2.130.1 // indirect
 	k8s.io/utils v0.0.0-20241104163129-6fe5fd82f078 // indirect
 )
+
+replace github.com/parquet-go/parquet-go => github.com/francoposa/parquet-go v0.0.0-20251111183239-c760bf329869
