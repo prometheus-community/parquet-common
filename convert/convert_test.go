@@ -197,6 +197,155 @@ func Test_Convert_TSDB(t *testing.T) {
 	}
 }
 
+func Test_Convert_TSDB_SingleRowReader(t *testing.T) {
+	ctx := context.Background()
+
+	tc := []struct {
+		dataColDuration        time.Duration
+		step                   time.Duration
+		numberOfSamples        int
+		expectedNumberOfChunks int
+		expectedPointsPerChunk int
+	}{
+		{
+			dataColDuration:        time.Hour,
+			step:                   time.Hour,
+			numberOfSamples:        3,
+			expectedNumberOfChunks: 3,
+			expectedPointsPerChunk: 1,
+		},
+		{
+			dataColDuration:        time.Hour,
+			step:                   time.Hour,
+			numberOfSamples:        48,
+			expectedNumberOfChunks: 48,
+			expectedPointsPerChunk: 1,
+		},
+		{
+			dataColDuration:        8 * time.Hour,
+			step:                   time.Hour / 2,
+			numberOfSamples:        10,
+			expectedNumberOfChunks: 1,
+			expectedPointsPerChunk: 10,
+		},
+		{
+			dataColDuration:        8 * time.Hour,
+			step:                   time.Hour / 2,
+			numberOfSamples:        32,
+			expectedNumberOfChunks: 2,
+			expectedPointsPerChunk: 16,
+		},
+	}
+
+	for _, tt := range tc {
+		t.Run(fmt.Sprintf("dataColDurationMs:%v,step:%v,numberOfSamples:%v", tt.dataColDuration.Hours(), tt.step.Seconds(), tt.numberOfSamples), func(t *testing.T) {
+			st := teststorage.New(t)
+			t.Cleanup(func() { _ = st.Close() })
+
+			bkt, err := filesystem.NewBucket(t.TempDir())
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = bkt.Close() })
+
+			app := st.Appender(ctx)
+			seriesHash := make(map[uint64]struct{})
+			totalSeries := 1200
+			for i := 0; i != totalSeries; i++ {
+				for j := 0; j < tt.numberOfSamples; j++ {
+					lbls := labels.FromStrings("__name__", "foo", "bar", fmt.Sprintf("%d", 2*i))
+					seriesHash[lbls.Hash()] = struct{}{}
+					_, err := app.Append(0, lbls, (tt.step * time.Duration(j)).Milliseconds(), float64(i))
+					require.NoError(t, err)
+				}
+			}
+
+			require.NoError(t, app.Commit())
+			h := st.Head()
+
+			// Don't specify WithNumRowGroups to trigger singleTSDBRowReader path (defaults to math.MaxInt32)
+			opts := []ConvertOption{
+				WithSortBy(labels.MetricName, "bar"),
+				WithColDuration(tt.dataColDuration),
+				WithRowGroupSize(100),
+				WithReadConcurrency(4),
+				WithWriteConcurrency(2),
+			}
+			// build equivalent config for ease of assertion with methods that take cfg
+			cfg := DefaultConvertOpts
+			for _, opt := range opts {
+				opt(&cfg)
+			}
+
+			shardCount, err := ConvertTSDBBlock(
+				ctx, bkt,
+				h.MinTime(), h.MaxTime(), []Convertible{h},
+				promslog.NewNopLogger(),
+				opts...,
+			)
+			require.NoError(t, err)
+			// singleTSDBRowReader should produce exactly 1 shard
+			require.Equal(t, 1, shardCount)
+
+			bucketOpener := storage.NewParquetBucketOpener(bkt)
+
+			allSeries := make([]labels.Labels, 0, totalSeries)
+			for shardIdx := range shardCount {
+				shard, err := storage.NewParquetShardOpener(
+					ctx, DefaultConvertOpts.name, bucketOpener, bucketOpener, shardIdx,
+				)
+				require.NoError(t, err)
+
+				require.Equal(t, len(shard.LabelsFile().RowGroups()), len(shard.ChunksFile().RowGroups()))
+				series, chunks, err := readSeries(t, shard)
+				require.NoError(t, err)
+
+				// All series should be in the single shard
+				require.Equal(t, totalSeries, len(series))
+				require.Equal(t, totalSeries, len(chunks))
+
+				// Verify series hash column exists and is accessible in working context
+				_, ok := shard.LabelsFile().Schema().Lookup(schema.SeriesHashColumn)
+				require.True(t, ok, "series hash column should exist")
+
+				// Make sure the chunk page bounds are empty
+				for _, ci := range shard.ChunksFile().ColumnIndexes() {
+					for _, value := range append(ci.MinValues, ci.MaxValues...) {
+						require.Empty(t, value)
+					}
+				}
+
+				// For singleTSDBRowReader, verify the basic structure is correct
+				// The column index structure may differ from the sharded case,
+				// so we focus on verifying all data is present rather than detailed index structure
+				_, ok = shard.LabelsFile().Schema().Lookup(schema.ColIndexesColumn)
+				require.True(t, ok)
+				// Verify that column indexes exist (structure may differ from sharded case)
+				columnIndexes := shard.LabelsFile().ColumnIndexes()
+				require.NotEmpty(t, columnIndexes, "column indexes should exist")
+
+				for i, s := range series {
+					require.Contains(t, seriesHash, s.Hash())
+					require.Len(t, chunks[i], tt.expectedNumberOfChunks)
+					totalSamples := 0
+					for _, c := range chunks[i] {
+						require.Equal(t, tt.expectedPointsPerChunk, c.Chunk.NumSamples())
+						totalSamples += c.Chunk.NumSamples()
+					}
+					require.Equal(t, tt.numberOfSamples, totalSamples)
+				}
+				allSeries = append(allSeries, series...)
+			}
+
+			// make sure the series are sorted
+			for i := 0; i < len(allSeries)-1; i++ {
+				require.LessOrEqual(t, allSeries[i].Get(labels.MetricName), allSeries[i+1].Get(labels.MetricName))
+				if allSeries[i].Get(labels.MetricName) == allSeries[i+1].Get(labels.MetricName) {
+					require.LessOrEqual(t, allSeries[i].Get("bar"), allSeries[i+1].Get("bar"))
+				}
+			}
+		})
+	}
+}
+
 func BenchmarkConvertTSDBParallel(b *testing.B) {
 	ctx := context.Background()
 
