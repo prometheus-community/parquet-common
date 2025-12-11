@@ -644,6 +644,37 @@ func TestProjectionHints(t *testing.T) {
 		}
 	})
 
+	t.Run("ProjectionExcludeNoLabels", func(t *testing.T) {
+		m, err := NewMaterializer(s, schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool()), shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback, true)
+		require.NoError(t, err)
+
+		// ProjectionInclude is false but no projection labels specified
+		// This should materialize all columns (default case behavior)
+		hints := &prom_storage.SelectHints{
+			ProjectionLabels:  []string{},
+			ProjectionInclude: false,
+		}
+
+		rr := []RowRange{{From: 0, Count: 10}}
+
+		result, err := m.MaterializeLabels(ctx, hints, 0, rr)
+		require.NoError(t, err)
+		require.NotEmpty(t, result)
+
+		// Get result with no hints for comparison (should materialize all labels)
+		resultAll, err := m.MaterializeLabels(ctx, nil, 0, rr)
+		require.NoError(t, err)
+
+		// When ProjectionInclude is false with no labels, it should behave like the default case
+		// and materialize all columns
+		require.Equal(t, len(result), len(resultAll))
+		for i := range result {
+			// Should have the same number of labels as the default case
+			require.Equal(t, len(result[i]), len(resultAll[i]),
+				"Should materialize all labels when ProjectionInclude is false with no projection labels")
+		}
+	})
+
 	t.Run("NoProjectionHints", func(t *testing.T) {
 		m, err := NewMaterializer(s, schema.NewPrometheusParquetChunksDecoder(chunkenc.NewPool()), shard, 10, UnlimitedQuota(), UnlimitedQuota(), UnlimitedQuota(), NoopMaterializedSeriesFunc, NoopMaterializedLabelsFilterCallback, false)
 		require.NoError(t, err)
