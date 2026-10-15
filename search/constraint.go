@@ -270,6 +270,7 @@ type SymbolTable struct {
 	dict parquet.Dictionary
 	syms []int32
 	defs []byte
+	idx  []int32
 }
 
 func (s *SymbolTable) Get(r int) parquet.Value {
@@ -280,6 +281,14 @@ func (s *SymbolTable) Get(r int) parquet.Value {
 	default:
 		return s.dict.Index(i)
 	}
+}
+
+func (s *SymbolTable) DecodeBuffer(buf []parquet.Value, from, to int) {
+	s.idx = slices.Grow(s.idx, to-from)[:to-from]
+	for j := from; j < to; j++ {
+		s.idx[j-from] = s.syms[j]
+	}
+	s.dict.Lookup(s.idx, buf)
 }
 
 func (s *SymbolTable) GetIndex(i int) int32 {
@@ -539,6 +548,7 @@ func (ec *equalConstraint) filter(ctx context.Context, rgIdx int, primary bool, 
 	defer func() { _ = pgs.Close() }()
 
 	symbols := new(SymbolTable)
+	buf := make([]parquet.Value, 1024)
 	for _, p := range readPgs {
 		pfrom := p.From()
 		pto := p.To()
@@ -550,6 +560,7 @@ func (ec *equalConstraint) filter(ctx context.Context, rgIdx int, primary bool, 
 		if err != nil {
 			return nil, fmt.Errorf("unable to read page: %w", err)
 		}
+		symbols.Reset(pg)
 
 		// The page has the value, we need to find the matching row ranges
 		n := int(pg.NumRows())
@@ -558,7 +569,6 @@ func (ec *equalConstraint) filter(ctx context.Context, rgIdx int, primary bool, 
 		var l, r int
 		switch {
 		case cidx.IsAscending() && primary:
-			symbols.Reset(pg)
 			l = sort.Search(n, func(i int) bool { return ec.comp(ec.val, symbols.Get(i)) <= 0 })
 			r = sort.Search(n, func(i int) bool { return ec.comp(ec.val, symbols.Get(i)) < 0 })
 
@@ -567,9 +577,10 @@ func (ec *equalConstraint) filter(ctx context.Context, rgIdx int, primary bool, 
 			}
 		default:
 			off, count := bl, 0
-			symbols.ResetWithRange(pg, bl, br)
+			buf = slices.Grow(buf, br-bl)[:br-bl]
+			symbols.DecodeBuffer(buf, bl, br)
 			for j := bl; j < br; j++ {
-				if !ec.matches(symbols.Get(j)) {
+				if !ec.matches(buf[j-bl]) {
 					if count != 0 {
 						res = append(res, RowRange{pfrom + int64(off), int64(count)})
 					}
